@@ -9,6 +9,15 @@
 **Tech Stack:** Python 3.12+, `uv`, `ruff`, `mypy --strict`, `pytest`, `hypothesis`, Pydantic v2, Docker (containment), PyYAML, Typer, httpx.
 
 **Spec:** `docs/superpowers/specs/2026-08-11-agent-perimeter-design.md`
+**Revision (binding):** `docs/superpowers/specs/2026-08-29-agent-perimeter-plan-revision.md` — **read it first.** It corrects blocking defects in Tasks 4, 8, 9 and 11. Where it and this plan disagree, the revision wins.
+
+> **Blocking corrections to this week, summarised.** Evidence and detail in the revision.
+> - **Task 4** — drop the hand-written seccomp profile; omit `--security-opt seccomp=…` so Docker's default applies. The custom allowlist is missing syscalls CPython needs (`unlinkat`, `rt_sigsuspend`, `membarrier`, `socketpair`, …) and is x86_64-only, so it breaks real servers and every ARM host. Keep it as an optional flag with a test proving a real Python MCP server runs under it. Add `--env HOME=/tmp` (no writable home under `--read-only`) and `--ulimit nofile`. Revision §7.2.
+> - **Task 4** — **one long-lived container per scan**, not per request. Per-request containers destroy server-minted handle state, break every multi-step probe, and make the Week-3 eval harness uncomputable (~4,000 launches with MCPTox). Revision §7.1.
+> - **Task 4** — document the `npx`/`uvx` two-phase launch: materialise the package with network in a build step, then run with `--network none`. Otherwise the most common stdio server form cannot be scanned at all. Revision §7.3.
+> - **Task 8** — the fingerprinter must **observe or abstain**. Do not grant `MRTR`, `PARAM_HEADERS`, `SUBSCRIPTIONS_LISTEN` or `STATELESS_META` from the presence of `server/discover`; remove `STATELESS_META` from `Feature`; take the *highest* advertised revision, not the first; give an unparseable revision claim a caveat that does not lie about what the server answered. Revision §2.1–§2.2.
+> - **Task 9** — the Streamable HTTP transport as specified **cannot talk to any conforming server**. `_meta` belongs **inside `params`**; the required `MCP-Protocol-Version` header is missing; `Mcp-Name` must come from `params.name`/`params.uri` and only for `tools/call`, `resources/read`, `prompts/get`. Also parse `text/event-stream` responses. Revision §1.3.
+> - **Task 11** — **remove the `/var/run/docker.sock` mount.** A container holding the Docker socket is host root, and that container is the one parsing untrusted JSON-RPC. Revision §1.7.
 
 ## Global Constraints
 
@@ -621,7 +630,7 @@ git commit -m "feat: add ScopeFile and fail-closed authorisation guard (DoD 3)"
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `Transport` Protocol with `request(method: str, params: dict[str, object] | None = None) -> dict[str, object]` and `close() -> None`; `TransportError(Exception)`; `LaunchSpec(image, command, timeout_s, allow_network, memory, cpus, env)`; `ContainmentError(TransportError)`; `docker_args(spec) -> list[str]`; `StdioTransport(spec)`. Tasks 5, 8 and 11 depend on these.
+- Produces: `Transport` Protocol with `request(method: str, params: dict[str, object] | None = None) -> dict[str, object]` and `close() -> None`; `TransportError(Exception)` carrying an optional JSON-RPC `code: int | None`; `LaunchSpec(image, command, timeout_s, allow_network, memory, cpus, env, hardened_seccomp, launch_phase)`; `ContainmentError(TransportError)`; `docker_args(spec) -> list[str]`; `build_two_phase_image(install_command, *, tag, base_image) -> str`; `StdioTransport(spec)` — one container for the whole scan, not one per request. Tasks 5, 8 and 11 depend on these.
 
 **Why this is built before any check:** B3. Launching a stdio MCP server means executing an arbitrary binary from an untrusted source. Unsandboxed, the first malicious server owns the machine and every credential on it.
 
@@ -638,7 +647,7 @@ touch agent_perimeter/transport/__init__.py tests/transport/__init__.py
 # tests/transport/test_stdio.py
 import pytest
 
-from agent_perimeter.transport.stdio import LaunchSpec, docker_args
+from agent_perimeter.transport.stdio import SECCOMP_PROFILE, LaunchSpec, docker_args, two_phase_dockerfile
 
 
 def test_docker_args_enforce_every_containment_control() -> None:
@@ -652,7 +661,25 @@ def test_docker_args_enforce_every_containment_control() -> None:
     assert "--memory 256m" in joined
     assert "--pids-limit 128" in joined
     assert "--tmpfs /tmp" in joined
+    assert "--ulimit nofile" in joined
+    assert "HOME=/tmp" in joined
     assert " -v " not in joined, "no host mounts, ever"
+
+
+def test_docker_default_seccomp_applies_unless_hardened_is_requested() -> None:
+    """Docker's own default profile blocks the dangerous set (mount, ptrace,
+    bpf, kexec, reboot, keyring calls) and is exercised across every
+    architecture. The hand-written allowlist in seccomp.json is missing
+    syscalls CPython needs (unlinkat, rt_sigsuspend, restart_syscall,
+    membarrier, clock_nanosleep, socketpair, mremap, eventfd2, renameat2,
+    ftruncate, getgroups, sched_getparam) and covers only x86_64 — so it is
+    opt-in, never the default.
+    """
+    default = " ".join(docker_args(LaunchSpec(image="i", command=["c"])))
+    assert "seccomp=" not in default
+
+    hardened = " ".join(docker_args(LaunchSpec(image="i", command=["c"], hardened_seccomp=True)))
+    assert f"seccomp={SECCOMP_PROFILE}" in hardened
 
 
 def test_allow_network_is_explicit_and_off_by_default() -> None:
@@ -666,6 +693,16 @@ def test_allow_network_is_explicit_and_off_by_default() -> None:
 def test_zero_timeout_is_rejected() -> None:
     with pytest.raises(ValueError, match="timeout_s"):
         LaunchSpec(image="i", command=["c"], timeout_s=0)
+
+
+def test_two_phase_dockerfile_installs_with_network_at_build_time() -> None:
+    """npx -y <pkg> and uvx <pkg> both need network on every launch to
+    resolve the package. Materialising the install into an image at build
+    time — the one step that runs with network — is what lets the actual
+    scan run every request with --network none."""
+    dockerfile = two_phase_dockerfile(["npm", "install", "-g", "@scope/server"], "node:20-slim")
+    assert dockerfile.startswith("FROM node:20-slim\n")
+    assert "RUN npm install -g @scope/server" in dockerfile
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -683,7 +720,17 @@ from typing import Protocol
 
 
 class TransportError(Exception):
-    """The transport could not complete a request."""
+    """The transport could not complete a request.
+
+    `code` carries the JSON-RPC error code when one was observed (e.g. from
+    a `server/discover` failure) — 2026-07-28 allocates specific codes as a
+    deterministic revision fingerprint (Task 8), so it travels with the
+    exception rather than being lost in a formatted message string.
+    """
+
+    def __init__(self, message: str, *, code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class Transport(Protocol):
@@ -696,7 +743,19 @@ class Transport(Protocol):
     def close(self) -> None: ...
 ```
 
-- [ ] **Step 5: Write `seccomp.json`**
+- [ ] **Step 5: Write `seccomp.json` — an optional, hardened profile, not the default**
+
+Docker's own default seccomp profile already blocks the dangerous set
+(`mount`, `ptrace`, `bpf`, `kexec`, `reboot`, keyring calls) and is exercised
+across every architecture Docker runs on. This hand-written allowlist is
+kept only for operators who explicitly want a stricter one via
+`hardened_seccomp=True` — it must not be the default, because a missing
+syscall surfaces as a confusing `EPERM` indistinguishable from a protocol
+error, and the original list omitted syscalls CPython itself needs
+(`unlinkat`, `rt_sigsuspend`, `restart_syscall`, `membarrier`,
+`clock_nanosleep`, `socketpair`, `mremap`, `eventfd2`, `renameat2`,
+`ftruncate`, `getgroups`, `sched_getparam`) and covered only `x86_64`,
+breaking every ARM host (Apple Silicon, ARM CI runners).
 
 ```json
 {
@@ -705,23 +764,31 @@ class Transport(Protocol):
     {
       "architecture": "SCMP_ARCH_X86_64",
       "subArchitectures": ["SCMP_ARCH_X86", "SCMP_ARCH_X32"]
+    },
+    {
+      "architecture": "SCMP_ARCH_AARCH64",
+      "subArchitectures": ["SCMP_ARCH_ARM"]
     }
   ],
   "syscalls": [
     {
       "names": [
         "accept4", "arch_prctl", "brk", "capget", "capset", "chdir", "clock_getres",
-        "clock_gettime", "clone", "clone3", "close", "connect", "dup", "dup2", "dup3",
-        "epoll_create1", "epoll_ctl", "epoll_pwait", "execve", "exit", "exit_group",
-        "faccessat", "faccessat2", "fchdir", "fcntl", "fstat", "fstatfs", "futex",
-        "getcwd", "getdents64", "getegid", "geteuid", "getgid", "getpid", "getppid",
-        "getrandom", "getrlimit", "gettid", "getuid", "ioctl", "lseek", "madvise",
-        "mmap", "mprotect", "munmap", "nanosleep", "newfstatat", "openat", "pipe2",
-        "poll", "ppoll", "prctl", "pread64", "prlimit64", "pwrite64", "read",
-        "readlink", "readlinkat", "rseq", "rt_sigaction", "rt_sigprocmask",
-        "rt_sigreturn", "sched_getaffinity", "sched_yield", "set_robust_list",
-        "set_tid_address", "setgid", "setgroups", "setuid", "sigaltstack", "socket",
-        "statfs", "statx", "sysinfo", "tgkill", "uname", "wait4", "write", "writev"
+        "clock_gettime", "clock_nanosleep", "clone", "clone3", "close", "connect",
+        "dup", "dup2", "dup3", "epoll_create1", "epoll_ctl", "epoll_pwait",
+        "eventfd2", "execve", "exit", "exit_group", "faccessat", "faccessat2",
+        "fchdir", "fcntl", "fstat", "fstatfs", "ftruncate", "futex", "getcwd",
+        "getdents64", "getegid", "geteuid", "getgid", "getgroups", "getpid",
+        "getppid", "getrandom", "getrlimit", "gettid", "getuid", "ioctl", "lseek",
+        "madvise", "membarrier", "mmap", "mprotect", "mremap", "munmap",
+        "nanosleep", "newfstatat", "openat", "pipe2", "poll", "ppoll", "prctl",
+        "pread64", "prlimit64", "pwrite64", "read", "readlink", "readlinkat",
+        "renameat2", "restart_syscall", "rseq", "rt_sigaction", "rt_sigprocmask",
+        "rt_sigreturn", "rt_sigsuspend", "sched_getaffinity", "sched_getparam",
+        "sched_yield", "set_robust_list", "set_tid_address", "setgid",
+        "setgroups", "setuid", "sigaltstack", "socket", "socketpair", "statfs",
+        "statx", "sysinfo", "tgkill", "uname", "unlinkat", "wait4", "write",
+        "writev"
       ],
       "action": "SCMP_ACT_ALLOW"
     }
@@ -736,17 +803,34 @@ class Transport(Protocol):
 """Containerised launcher for stdio MCP servers.
 
 Scanning a stdio MCP server means executing an untrusted binary. Every launch
-is confined: non-root, read-only rootfs, no network unless explicitly required,
-tmpfs scratch, seccomp, capability drop, memory/CPU/PID caps, hard timeout,
-and no host mounts under any circumstances.
+is confined: non-root, read-only rootfs, no network unless explicitly
+required, tmpfs scratch, capability drop, no-new-privileges, memory/CPU/PID
+caps, a hard wall-clock budget, and no host mounts under any circumstances.
+
+One container runs for the *whole scan*, not one per JSON-RPC request. A
+fresh container per call would discard whatever handle state the server
+minted on an earlier request — 2026-07-28 requires cross-request state to be
+an explicit server-minted handle, so a multi-step probe only works if every
+call in it reaches the same process, and at eval-harness scale (~4,000
+launches with MCPTox) a container per request is not runnable in CI either.
+Requests are newline-delimited JSON-RPC framed over a persistent
+stdin/stdout pipe; the container is torn down once, at the end of the scan.
+
+Docker's *default* seccomp profile is applied unless `hardened_seccomp=True`
+is set — see `seccomp.json`'s own note on why the hand-written allowlist is
+opt-in rather than the default.
 """
 
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
+import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from agent_perimeter.transport.base import TransportError
 
@@ -761,11 +845,16 @@ class ContainmentError(TransportError):
 class LaunchSpec:
     image: str
     command: list[str]
-    timeout_s: int = 30
+    timeout_s: int = 300  # hard wall-clock budget for the whole scan, not one request
     allow_network: bool = False
     memory: str = "256m"
     cpus: str = "0.5"
     env: dict[str, str] = field(default_factory=dict)
+    hardened_seccomp: bool = False  # opt in to the hand-written allowlist; default is Docker's own
+    launch_phase: Literal["direct", "two_phase_build"] = "direct"
+    """Which launch path produced `image` — recorded so a scan can report
+    which targets needed the npx/uvx two-phase build (see
+    `build_two_phase_image` below and revision §7.3)."""
 
     def __post_init__(self) -> None:
         if self.timeout_s <= 0:
@@ -780,13 +869,16 @@ def docker_args(spec: LaunchSpec) -> list[str]:
         "--user", "65534:65534",
         "--read-only",
         "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+        "--env", "HOME=/tmp",
         "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges",
-        "--security-opt", f"seccomp={SECCOMP_PROFILE}",
         "--memory", spec.memory,
         "--cpus", spec.cpus,
         "--pids-limit", "128",
+        "--ulimit", "nofile=1024:1024",
     ]
+    if spec.hardened_seccomp:
+        args += ["--security-opt", f"seccomp={SECCOMP_PROFILE}"]
     if not spec.allow_network:
         args += ["--network", "none"]
     for key, value in spec.env.items():
@@ -796,75 +888,188 @@ def docker_args(spec: LaunchSpec) -> list[str]:
     return args
 
 
-class StdioTransport:
-    """One JSON-RPC request per container run. Stateless by construction.
+def two_phase_dockerfile(install_command: list[str], base_image: str) -> str:
+    """A Dockerfile that fetches the package at build time, with network.
 
-    ponytail: one container per request is slower than a persistent process,
-    but the 2026-07-28 protocol is stateless so there is no session to keep,
-    and a fresh container per request is the strongest containment available.
-    If scan latency becomes the bottleneck, pool containers per target.
+    `npx -y @scope/server` and `uvx some-server` both need network on every
+    launch to resolve the package — the most common stdio invocation in the
+    wild, and unscannable under `--network none` without this. `docker
+    build` runs with the host's network regardless of the flags `docker run`
+    will use later, so materialising the package here, once, is what lets
+    every actual scan request run with `--network none`.
+    """
+    install = " ".join(shlex.quote(part) for part in install_command)
+    return f"FROM {base_image}\nRUN {install}\n"
+
+
+def build_two_phase_image(install_command: list[str], *, tag: str, base_image: str) -> str:
+    """Build step only — runs WITH network. The resulting image needs none.
+
+    Not exercised in CI without network access to the package registry.
+    Tag the `LaunchSpec` that uses the resulting image with
+    `launch_phase="two_phase_build"` so a scan can record which targets
+    needed it — "we could not scan npx servers" is a coverage hole that
+    should be visible, not silent (revision §7.3).
+    """
+    with tempfile.TemporaryDirectory() as build_dir:
+        Path(build_dir, "Dockerfile").write_text(
+            two_phase_dockerfile(install_command, base_image), encoding="utf-8"
+        )
+        subprocess.run(
+            ["docker", "build", "-t", tag, build_dir],
+            check=True,
+            capture_output=True,
+        )
+    return tag
+
+
+class StdioTransport:
+    """One long-lived container for the whole scan.
+
+    `docker run -i` is started once, on construction. Every `request()`
+    writes one newline-delimited JSON-RPC line to its stdin and reads one
+    back from its stdout — the framing the fixture, and every real stdio
+    server, already speaks. A `threading.Timer` enforces the scan's hard
+    wall-clock budget by killing the process; a blocked read then sees EOF
+    and raises `ContainmentError` rather than hanging forever.
     """
 
     def __init__(self, spec: LaunchSpec) -> None:
         self._spec = spec
+        self._next_id = 1
+        self._deadline_exceeded = False
+        self._process: subprocess.Popen[str] = subprocess.Popen(
+            docker_args(spec),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        self._timer = threading.Timer(spec.timeout_s, self._on_deadline)
+        self._timer.daemon = True
+        self._timer.start()
+
+    @property
+    def launch_phase(self) -> str:
+        return self._spec.launch_phase
+
+    def _on_deadline(self) -> None:
+        self._deadline_exceeded = True
+        self._process.kill()
 
     def request(
         self, method: str, params: dict[str, object] | None = None
     ) -> dict[str, object]:
+        if self._process.stdin is None or self._process.stdout is None:
+            msg = "Container process has no stdio pipes."
+            raise TransportError(msg)
+
+        request_id = self._next_id
+        self._next_id += 1
         payload = json.dumps(
-            {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
+            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
         )
         try:
-            completed = subprocess.run(
-                docker_args(self._spec),
-                input=payload,
-                capture_output=True,
-                text=True,
-                timeout=self._spec.timeout_s,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            msg = f"Container exceeded its {self._spec.timeout_s}s limit and was killed."
+            self._process.stdin.write(payload + "\n")
+            self._process.stdin.flush()
+        except (BrokenPipeError, OSError) as exc:
+            msg = f"Container stopped accepting input: {exc}"
             raise ContainmentError(msg) from exc
 
-        if completed.returncode == 137:
-            msg = "Container was killed for exceeding its memory limit."
-            raise ContainmentError(msg)
+        line = self._process.stdout.readline()
+        if not line:
+            if self._deadline_exceeded:
+                msg = f"Container exceeded its {self._spec.timeout_s}s limit and was killed."
+                raise ContainmentError(msg)
+            stderr = self._process.stderr.read()[:400] if self._process.stderr else ""
+            msg = (
+                f"No JSON-RPC response for {method}. Container exited "
+                f"(code {self._process.returncode}). stderr: {stderr}"
+            )
+            raise TransportError(msg)
 
-        for line in completed.stdout.splitlines():
-            if not line.strip():
-                continue
-            try:
-                message = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if "result" in message:
-                result: dict[str, object] = message["result"]
-                return result
-            if "error" in message:
-                msg = f"Server returned an error for {method}: {message['error']}"
-                raise TransportError(msg)
-
-        msg = f"No JSON-RPC response for {method}. stderr: {completed.stderr[:400]}"
-        raise TransportError(msg)
+        message = json.loads(line)
+        if "error" in message:
+            error = message["error"]
+            code = error.get("code") if isinstance(error, dict) else None
+            msg = f"Server returned an error for {method}: {error}"
+            raise TransportError(msg, code=code if isinstance(code, int) else None)
+        result: dict[str, object] = message.get("result", {})
+        return result
 
     def close(self) -> None:
-        """No persistent process to close — each request is its own container."""
+        self._timer.cancel()
+        if self._process.poll() is None:
+            if self._process.stdin is not None:
+                self._process.stdin.close()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait(timeout=5)
 ```
 
 - [ ] **Step 7: Run tests to verify they pass**
 
 Run: `uv run pytest tests/transport/test_stdio.py -v --no-cov`
-Expected: 3 passed
+Expected: 5 passed
 
-- [ ] **Step 8: Typecheck and commit**
+- [ ] **Step 8: Prove one container serves a multi-request sequence (Revision §7.1)**
+
+A per-request container cannot carry state a server minted on an earlier
+call. Prove the replacement does, with a tiny in-process counter — no image
+build required, so this runs anywhere Docker does.
+
+```python
+# tests/transport/test_stdio.py (append to the same file)
+import shutil
+
+import pytest
+
+from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
+
+_COUNTING_SERVER = (
+    "import json, sys\n"
+    "count = 0\n"
+    "for line in sys.stdin:\n"
+    "    if not line.strip():\n"
+    "        continue\n"
+    "    count += 1\n"
+    "    msg = json.loads(line)\n"
+    "    reply = {'jsonrpc': '2.0', 'id': msg.get('id'), 'result': {'count': count}}\n"
+    "    print(json.dumps(reply), flush=True)\n"
+)
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker unavailable")
+def test_one_container_serves_a_multi_request_sequence() -> None:
+    """The container is not restarted between calls, so state accumulates —
+    exactly what a server-minted handle needs to survive across requests."""
+    transport = StdioTransport(
+        LaunchSpec(image="python:3.12-slim", command=["python3", "-c", _COUNTING_SERVER])
+    )
+    try:
+        first = transport.request("ping")
+        second = transport.request("ping")
+        third = transport.request("ping")
+    finally:
+        transport.close()
+
+    assert (first["count"], second["count"], third["count"]) == (1, 2, 3)
+```
+
+Run: `uv run pytest tests/transport/test_stdio.py -v --no-cov`
+Expected: 6 passed (or 5 passed, 1 skipped if Docker is unavailable).
+
+- [ ] **Step 9: Typecheck and commit**
 
 Run: `uv run mypy --strict agent_perimeter`
 Expected: `Success: no issues found`
 
 ```bash
 git add agent_perimeter/transport tests/transport
-git commit -m "feat: add containerised stdio launcher with seccomp and no host mounts"
+git commit -m "feat: add containerised stdio launcher, one container per scan"
 ```
 
 ---
@@ -1024,10 +1229,11 @@ git commit -m "test: prove stdio containment against a hostile fixture (DoD 4)"
 - Create: `tests/fixtures/servers/server.py`
 - Create: `tests/fixtures/servers/Dockerfile`
 - Test: `tests/fixtures/servers/test_fixture_self.py`
+- Test: `tests/transport/test_seccomp_compat.py`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: a fixture MCP server whose protocol revision and injected flaw are selected by `AP_FIXTURE_REVISION` (`2025-11-25` | `2026-07-28`) and `AP_FIXTURE_FLAW` (`none` | `cache_scope_public` | `missing_result_type` | `param_header`). Exposes `handle(message: dict) -> dict` for in-process testing. Tasks 8 and 11 test against it; Week 2 extends the flaw matrix.
+- Produces: a fixture MCP server whose protocol revision and injected flaw are selected by `AP_FIXTURE_REVISION` (`2025-11-25` | `2026-07-28`) and `AP_FIXTURE_FLAW` (`none` | `cache_scope_public` | `missing_result_type` | `param_header`). Exposes `handle(message: dict) -> dict` for in-process testing. Tasks 8 and 11 test against it; Week 2 extends the flaw matrix. Also gives Task 4's seccomp fix a real Python MCP server to prove itself against (Revision §7.2).
 
 **Why one parameterised server and not ten:** brief §11 requires each fixture to be vulnerable to exactly one thing. Each *instance* is. Ten separate server builds would be days of work for the same guarantee.
 
@@ -1212,6 +1418,67 @@ git add tests/fixtures/servers
 git commit -m "test: add parameterised MCP fixture server with revision and flaw matrix"
 ```
 
+- [ ] **Step 6: Prove the sandbox runs this real server under both seccomp profiles (Revision §7.2)**
+
+Task 4 makes Docker's default seccomp profile the default and keeps the
+hand-written allowlist in `seccomp.json` as an opt-in `hardened_seccomp`
+flag. Prove a real Python MCP server — this fixture — completes a request
+under both, so a missing syscall is caught here rather than reported later
+as a false finding about the target.
+
+```python
+# tests/transport/test_seccomp_compat.py
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
+
+IMAGE = "agent-perimeter-fixture:test"
+FIXTURE = Path(__file__).parents[1] / "fixtures" / "servers"
+
+pytestmark = pytest.mark.skipif(shutil.which("docker") is None, reason="docker unavailable")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def build_image() -> None:
+    subprocess.run(
+        ["docker", "build", "-t", IMAGE, str(FIXTURE)], check=True, capture_output=True
+    )
+
+
+@pytest.mark.parametrize("hardened_seccomp", [False, True])
+def test_server_completes_a_request_under_the_profile(hardened_seccomp: bool) -> None:
+    transport = StdioTransport(
+        LaunchSpec(
+            image=IMAGE,
+            command=[],
+            env={"AP_FIXTURE_REVISION": "2026-07-28", "AP_FIXTURE_FLAW": "none"},
+            hardened_seccomp=hardened_seccomp,
+        )
+    )
+    try:
+        result = transport.request("server/discover")
+    finally:
+        transport.close()
+    assert result["protocolVersions"] == ["2026-07-28"]
+```
+
+Run: `uv run pytest tests/transport/test_seccomp_compat.py -v --no-cov`
+Expected: 2 passed (skipped if Docker is unavailable). If the
+`hardened_seccomp=True` case fails with an `EPERM`-shaped error while the
+default case passes, `seccomp.json` is still missing a syscall — fix the
+allowlist, do not weaken this test.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add tests/transport/test_seccomp_compat.py
+git commit -m "test: prove a real Python MCP server runs under both seccomp profiles"
+```
+
 ---
 
 ### Task 7: Feature model and revision bundles
@@ -1272,7 +1539,6 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'agent_perimeter.model
   - subscribe_unsubscribe
 2026-07-28:
   - server_discover
-  - stateless_meta
   - result_type
   - cacheable_result
   - mrtr
@@ -1303,8 +1569,11 @@ FEATURES_YAML = Path(__file__).parents[1] / "transport" / "features.yaml"
 
 
 class Feature(StrEnum):
+    """No `STATELESS_META` member: that would describe the *client's*
+    request shape, not something the server does — a version-implies-feature
+    proxy this design otherwise avoids. See revision §2.1."""
+
     SERVER_DISCOVER = "server_discover"
-    STATELESS_META = "stateless_meta"
     RESULT_TYPE = "result_type"
     CACHEABLE_RESULT = "cacheable_result"
     MRTR = "mrtr"
@@ -1360,16 +1629,20 @@ git commit -m "feat: add Feature model and revision bundles loaded from YAML"
 - Test: `tests/transport/test_revision.py`
 
 **Interfaces:**
-- Consumes: `Transport`, `TransportError` (Task 4); `Feature`, `Revision`, `FeatureSet` (Task 7); `Claim`, `Method`, `Derivation` (Task 2).
-- Produces: `Fingerprint(revision_claimed: Revision | None, features: FeatureSet, claim: Claim)` and `fingerprint(transport: Transport) -> Fingerprint`. Task 11 consumes both.
+- Consumes: `Transport`, `TransportError` (Task 4); `Feature`, `Revision`, `FeatureSet` (Task 7); `Claim`, `Method`, `Derivation` (Task 2); `handle()` from the Task 6 fixture, for the integration test only.
+- Produces: `Fingerprint(revision_claimed: Revision | None, features: FeatureSet, claim: Claim, protocol_versions_advertised: tuple[str, ...], discover_error_code: int | None)` and `fingerprint(transport: Transport) -> Fingerprint`. Task 11 consumes both.
 
-**The load-bearing behaviour:** the claimed revision and the observed feature set are established *independently*. Their disagreement is the `conformance_mismatch` finding in Week 2, which is only detectable because they are separated here.
+**The load-bearing behaviour:** the claimed revision and the observed feature set are established *independently*. Their disagreement is the `conformance_mismatch` finding in Week 2, which is only detectable because they are separated here. Just as load-bearing: every feature in the observed set was actually seen. None is granted just because `server/discover` succeeded or a revision was claimed — a check that needs an unobservable feature (`MRTR`, `SUBSCRIPTIONS_LISTEN`) skips honestly instead of firing on a fiction.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/transport/test_revision.py
+import importlib.util
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from agent_perimeter._contracts import Derivation, Method
 from agent_perimeter.model.feature import Feature, Revision
@@ -1442,10 +1715,24 @@ def test_claim_and_observation_can_disagree() -> None:
     assert Feature.CACHEABLE_RESULT not in result.features
 
 
+def test_discover_alone_does_not_grant_unobservable_features() -> None:
+    """MRTR and SUBSCRIPTIONS_LISTEN cannot be observed passively — the first
+    needs a multi-step probe, the second an open stream. SESSION_HEADER is an
+    HTTP-only property with no channel to see it through here. A server
+    answering server/discover must not cause any of them to be granted.
+    """
+    result = fingerprint(
+        FakeTransport({"server/discover": MODERN_DISCOVER, "tools/list": MODERN_TOOLS})
+    )
+    assert Feature.MRTR not in result.features
+    assert Feature.SUBSCRIPTIONS_LISTEN not in result.features
+    assert Feature.SESSION_HEADER not in result.features
+
+
 def test_unresponsive_server_yields_unknown_revision() -> None:
     result = fingerprint(FakeTransport({"tools/list": {"tools": []}}))
     assert result.revision_claimed is None
-    assert result.claim.caveat is not None
+    assert result.claim.caveat == "Server answered neither server/discover nor initialize."
 
 
 def test_fingerprint_carries_a_probe_derived_claim() -> None:
@@ -1456,11 +1743,172 @@ def test_fingerprint_carries_a_probe_derived_claim() -> None:
     assert result.claim.derivation is Derivation.PROBE
 
 
-def test_unknown_revision_string_does_not_crash() -> None:
+def test_unknown_revision_string_gets_an_honest_caveat_naming_it() -> None:
     transport = FakeTransport(
         {"server/discover": {"protocolVersions": ["2027-01-01"]}, "tools/list": {}}
     )
-    assert fingerprint(transport).revision_claimed is None
+    result = fingerprint(transport)
+    assert result.revision_claimed is None
+    assert result.protocol_versions_advertised == ("2027-01-01",)
+    assert "2027-01-01" in (result.claim.caveat or "")
+    assert "neither" not in (result.claim.caveat or "")
+
+
+def test_known_older_revision_gets_an_accurate_caveat_not_the_no_response_lie() -> None:
+    """2025-06-18 predates this scanner's two recognised Revision members,
+    but the server did answer — the caveat must say so, never claim silence.
+    """
+    transport = FakeTransport(
+        {
+            "initialize": {"protocolVersion": "2025-06-18", "capabilities": {}},
+            "tools/list": {"tools": []},
+        }
+    )
+    result = fingerprint(transport)
+    assert result.revision_claimed is None
+    assert result.protocol_versions_advertised == ("2025-06-18",)
+    assert Feature.INITIALIZE_HANDSHAKE in result.features
+    assert "2025-06-18" in (result.claim.caveat or "")
+    assert "neither" not in (result.claim.caveat or "")
+
+
+def test_discover_error_code_is_captured_for_week_2s_conformance_check() -> None:
+    """-32042 is a unique fingerprint for 2025-11-25 and -32001/-32003/-32004
+    fingerprint a pre-final release-candidate build (revision §2.3) — Week
+    2's revision.error_code_conformance is built on this field, so Week 1
+    only has to prove the code survives to the Fingerprint.
+    """
+
+    class ErroringTransport:
+        def request(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            if method == "server/discover":
+                raise TransportError("Method not found", code=-32601)
+            if method == "initialize":
+                return {"protocolVersion": "2025-11-25", "capabilities": {}}
+            return {"tools": []}
+
+        def close(self) -> None: ...
+
+    result = fingerprint(ErroringTransport())
+    assert result.discover_error_code == -32601
+
+
+def test_param_headers_is_observed_from_a_real_annotation_not_a_property_named_for_it() -> None:
+    """x-mcp-header is an annotation inside a parameter's own schema — its
+    value is the header-name suffix — not a property that happens to be
+    named x-mcp-header."""
+    tools_with_annotation = {
+        "resultType": "complete",
+        "tools": [
+            {
+                "name": "get_weather",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"region": {"type": "string", "x-mcp-header": "Region"}},
+                },
+            }
+        ],
+    }
+    result = fingerprint(
+        FakeTransport({"server/discover": MODERN_DISCOVER, "tools/list": tools_with_annotation})
+    )
+    assert Feature.PARAM_HEADERS in result.features
+
+
+def test_param_headers_is_absent_when_no_property_carries_the_annotation() -> None:
+    result = fingerprint(
+        FakeTransport({"server/discover": MODERN_DISCOVER, "tools/list": MODERN_TOOLS})
+    )
+    assert Feature.PARAM_HEADERS not in result.features
+
+
+class _InProcessTransport:
+    """Adapts the Task-6 fixture's handle() into a Transport. No Docker
+    required — this is what lets the integration test below run fast."""
+
+    def __init__(self, handle: Any) -> None:
+        self._handle = handle
+        self._next_id = 1
+
+    def request(
+        self, method: str, params: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        request_id = self._next_id
+        self._next_id += 1
+        reply = self._handle(
+            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
+        )
+        if "error" in reply:
+            code = reply["error"].get("code") if isinstance(reply["error"], dict) else None
+            raise TransportError(f"{method}: {reply['error']}", code=code)
+        result: dict[str, object] = reply["result"]
+        return result
+
+    def close(self) -> None: ...
+
+
+FIXTURE = Path(__file__).parents[1] / "fixtures" / "servers" / "server.py"
+
+
+def _load_fixture(revision: str, flaw: str, monkeypatch: pytest.MonkeyPatch) -> Any:
+    monkeypatch.setenv("AP_FIXTURE_REVISION", revision)
+    monkeypatch.setenv("AP_FIXTURE_FLAW", flaw)
+    spec = importlib.util.spec_from_file_location(f"fx_{revision}_{flaw}", FIXTURE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("revision", "flaw", "expected"),
+    [
+        (
+            "2026-07-28",
+            "none",
+            frozenset(
+                {Feature.SERVER_DISCOVER, Feature.EXTENSIONS, Feature.RESULT_TYPE, Feature.CACHEABLE_RESULT}
+            ),
+        ),
+        (
+            "2026-07-28",
+            "cache_scope_public",
+            frozenset(
+                {Feature.SERVER_DISCOVER, Feature.EXTENSIONS, Feature.RESULT_TYPE, Feature.CACHEABLE_RESULT}
+            ),
+        ),
+        (
+            "2026-07-28",
+            "missing_result_type",
+            frozenset({Feature.SERVER_DISCOVER, Feature.EXTENSIONS, Feature.CACHEABLE_RESULT}),
+        ),
+        (
+            # The fixture's param_header flaw adds a *property named*
+            # x-mcp-header rather than annotating an existing one — the
+            # wrong shape per revision §1.8, left for Week 2's fixture-matrix
+            # pass to correct. PARAM_HEADERS must stay absent against it:
+            # this proves the detector has no false positive on that shape.
+            "2026-07-28",
+            "param_header",
+            frozenset(
+                {Feature.SERVER_DISCOVER, Feature.EXTENSIONS, Feature.RESULT_TYPE, Feature.CACHEABLE_RESULT}
+            ),
+        ),
+        ("2025-11-25", "none", frozenset({Feature.INITIALIZE_HANDSHAKE})),
+    ],
+)
+def test_fingerprint_against_the_real_fixture_asserts_the_feature_set_exactly(
+    revision: str, flaw: str, expected: frozenset[Feature], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No feature is ever asserted that the fixture did not actually
+    produce. This runs the real fingerprint(), not a hand-built Fingerprint
+    — the eval-harness defect the revision describes (§4.3) is exactly a
+    suite that stopped doing this."""
+    module = _load_fixture(revision, flaw, monkeypatch)
+    result = fingerprint(_InProcessTransport(module.handle))
+    assert result.features == expected
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1477,6 +1925,17 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'agent_perimeter.trans
 There is no handshake to negotiate in 2026-07-28: `initialize` was removed and
 `server/discover` is mandatory. So this does not negotiate — it observes, and
 it observes the claim and the behaviour separately, on purpose.
+
+Observe or abstain. A feature is only ever added to the observed FeatureSet
+when this module actually saw evidence of it — never because a revision was
+claimed, and never because some other feature happened to be present. `MRTR`
+and `SUBSCRIPTIONS_LISTEN` cannot be observed passively (the first needs a
+multi-step probe, the second an open stream) and are never granted here; a
+check requiring either skips with `FEATURE_ABSENT`, which is the honest
+outcome. `SESSION_HEADER` is an HTTP-transport property with no channel to
+observe it through the generic `Transport` protocol used here, so it too is
+never granted — not even over stdio, and not over HTTP either until a
+transport exposes response headers to this module.
 """
 
 from __future__ import annotations
@@ -1488,48 +1947,101 @@ from agent_perimeter._contracts import Claim, Derivation, Method
 from agent_perimeter.model.feature import Feature, FeatureSet, Revision
 from agent_perimeter.transport.base import Transport, TransportError
 
+# Widely-deployed revisions this scanner has no Revision member for. Naming
+# them lets an unparseable claim carry an honest, specific caveat instead of
+# the generic "no response at all" one (revision §2.2).
+KNOWN_OLDER_REVISIONS = ("2025-06-18", "2025-03-26")
+
 
 @dataclass(frozen=True)
 class Fingerprint:
     revision_claimed: Revision | None
     features: FeatureSet
     claim: Claim
+    protocol_versions_advertised: tuple[str, ...] = ()
+    """The full `protocolVersions` (or single `protocolVersion`) the server
+    sent, whether or not any entry parsed to a known `Revision`."""
+    discover_error_code: int | None = None
+    """The JSON-RPC error code observed when `server/discover` failed, if
+    any. Week 2's `revision.error_code_conformance` is built on this field."""
 
 
-def _claimed_revision(transport: Transport) -> tuple[Revision | None, set[Feature]]:
+def _highest_known(versions: tuple[str, ...]) -> Revision | None:
+    """The highest *known* advertised revision, not the first — a server
+    advertising both must not be recorded as the older one (revision §2.2).
+    """
+    known_values = {r.value for r in Revision}
+    known = [Revision(v) for v in versions if v in known_values]
+    return max(known) if known else None
+
+
+def _revision_caveat(
+    versions: tuple[str, ...], *, discover_answered: bool, initialize_answered: bool
+) -> str | None:
+    if not versions:
+        if discover_answered or initialize_answered:
+            return "Server answered but sent no parseable protocol version."
+        return "Server answered neither server/discover nor initialize."
+    older = [v for v in versions if v in KNOWN_OLDER_REVISIONS]
+    if older:
+        known = ", ".join(r.value for r in Revision)
+        return f"Server claims protocol revision {older[0]!r}, which predates the revisions this scanner recognises ({known})."
+    return f"Server claims an unrecognised protocol revision: {list(versions)!r}."
+
+
+def _claimed_revision(
+    transport: Transport,
+) -> tuple[Revision | None, set[Feature], tuple[str, ...], int | None]:
+    """Try server/discover, falling back to initialize.
+
+    Returns (revision, observed_features, advertised_versions,
+    discover_error_code).
+    """
     observed: set[Feature] = set()
+    discover_error_code: int | None = None
 
     try:
         discover: dict[str, object] | None = transport.request("server/discover")
-    except TransportError:
+    except TransportError as exc:
         discover = None
+        discover_error_code = exc.code
 
     if discover is not None:
         observed.add(Feature.SERVER_DISCOVER)
-        observed.add(Feature.STATELESS_META)
         capabilities = discover.get("capabilities")
         if isinstance(capabilities, dict) and "extensions" in capabilities:
             observed.add(Feature.EXTENSIONS)
-        versions = discover.get("protocolVersions")
-        if isinstance(versions, list):
-            for candidate in versions:
-                try:
-                    return Revision(str(candidate)), observed
-                except ValueError:
-                    continue
-        return None, observed
+        versions_raw = discover.get("protocolVersions")
+        versions = tuple(str(v) for v in versions_raw) if isinstance(versions_raw, list) else ()
+        return _highest_known(versions), observed, versions, discover_error_code
 
     try:
         initialized = transport.request("initialize")
     except TransportError:
-        return None, observed
+        return None, observed, (), discover_error_code
 
     observed.add(Feature.INITIALIZE_HANDSHAKE)
-    observed.add(Feature.SESSION_HEADER)
-    try:
-        return Revision(str(initialized.get("protocolVersion"))), observed
-    except ValueError:
-        return None, observed
+    version = initialized.get("protocolVersion")
+    versions = (str(version),) if version is not None else ()
+    return _highest_known(versions), observed, versions, discover_error_code
+
+
+def _has_header_annotation(tool: object) -> bool:
+    """PARAM_HEADERS is observed, not inferred: does any parameter's own
+    schema carry an `x-mcp-header` annotation (its value the header-name
+    suffix)? A property merely *named* `x-mcp-header` does not count."""
+    if not isinstance(tool, dict):
+        return False
+    schema = tool.get("inputSchema")
+    if not isinstance(schema, dict):
+        return False
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return False
+    return any(
+        isinstance(prop_schema, dict) and "x-mcp-header" in prop_schema
+        for prop_schema in properties.values()
+    )
 
 
 def _observed_features(transport: Transport) -> set[Feature]:
@@ -1543,33 +2055,47 @@ def _observed_features(transport: Transport) -> set[Feature]:
         observed.add(Feature.RESULT_TYPE)
     if "ttlMs" in listing or "cacheScope" in listing:
         observed.add(Feature.CACHEABLE_RESULT)
+
+    tools = listing.get("tools")
+    if isinstance(tools, list) and any(_has_header_annotation(tool) for tool in tools):
+        observed.add(Feature.PARAM_HEADERS)
+
     return observed
 
 
 def fingerprint(transport: Transport) -> Fingerprint:
     """Establish the claimed revision and the observed features, independently."""
-    claimed, from_claim = _claimed_revision(transport)
+    claimed, from_claim, versions, discover_error_code = _claimed_revision(transport)
     features = from_claim | _observed_features(transport)
 
-    if Feature.SERVER_DISCOVER in features:
-        features |= {Feature.MRTR, Feature.PARAM_HEADERS, Feature.SUBSCRIPTIONS_LISTEN}
+    caveat = None
+    if claimed is None:
+        caveat = _revision_caveat(
+            versions,
+            discover_answered=Feature.SERVER_DISCOVER in features,
+            initialize_answered=Feature.INITIALIZE_HANDSHAKE in features,
+        )
 
     claim = Claim(
         value=claimed.value if claimed is not None else None,
         method=Method.DETERMINISTIC,
         derivation=Derivation.PROBE,
         observed_at=datetime.now(UTC),
-        caveat=None
-        if claimed is not None
-        else "Server answered neither server/discover nor initialize",
+        caveat=caveat,
     )
-    return Fingerprint(revision_claimed=claimed, features=frozenset(features), claim=claim)
+    return Fingerprint(
+        revision_claimed=claimed,
+        features=frozenset(features),
+        claim=claim,
+        protocol_versions_advertised=versions,
+        discover_error_code=discover_error_code,
+    )
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/transport/test_revision.py -v --no-cov`
-Expected: 6 passed
+Expected: 15 passed
 
 - [ ] **Step 5: Typecheck and commit**
 
@@ -1578,7 +2104,7 @@ Expected: `Success: no issues found`
 
 ```bash
 git add agent_perimeter/transport/revision.py tests/transport/test_revision.py
-git commit -m "feat: fingerprint claimed revision and observed features independently"
+git commit -m "feat: fingerprint claimed revision and observed features independently, observe-or-abstain"
 ```
 
 ---
@@ -1593,12 +2119,14 @@ git commit -m "feat: fingerprint claimed revision and observed features independ
 - Consumes: `TransportError` (Task 4).
 - Produces: `StreamableHttpTransport(url: str, *, timeout_s: float = 30.0, contact_url: str)` implementing `Transport`. Task 11 selects it when the target is a URL.
 
-**Spec detail:** 2026-07-28 requires `Mcp-Method` and `Mcp-Name` headers on Streamable HTTP POSTs. There is no `Mcp-Session-Id` — it was removed. The user agent carries a contact URL, per B10.
+**Spec detail:** 2026-07-28 requires `_meta` nested inside `params` (not a sibling of it) and an `MCP-Protocol-Version` header on every POST whose value matches `_meta`'s protocol version — a mismatch is a `400` + `HeaderMismatch` (`-32020`). `Mcp-Name` is sourced from `params.name` or `params.uri` and sent only for `tools/call`, `resources/read`, `prompts/get` — never on `tools/list`. `Mcp-Method` always equals `method`. There is no `Mcp-Session-Id` — it was removed. A response MAY arrive as `text/event-stream` instead of a single JSON body. The user agent carries a contact URL, per B10.
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/transport/test_streamable_http.py
+import json
+
 import httpx
 import pytest
 
@@ -1606,6 +2134,7 @@ from agent_perimeter.transport.base import TransportError
 from agent_perimeter.transport.streamable_http import StreamableHttpTransport
 
 CONTACT = "https://example.test/agent-perimeter"
+PROTOCOL_VERSION = "2026-07-28"
 
 
 def _transport(handler: object) -> StreamableHttpTransport:
@@ -1614,33 +2143,87 @@ def _transport(handler: object) -> StreamableHttpTransport:
     return transport
 
 
-def test_required_headers_are_sent_and_no_session_header() -> None:
-    seen: dict[str, str] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.update(request.headers)
-        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {"tools": []}})
-
-    _transport(handler).request("tools/list")
-    assert seen["mcp-method"] == "tools/list"
-    assert "mcp-name" in seen
-    assert "mcp-session-id" not in seen
-    assert CONTACT in seen["user-agent"]
-
-
-def test_protocol_version_travels_in_meta() -> None:
+def test_meta_is_nested_inside_params_not_a_sibling() -> None:
     seen: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        import json
-
         seen.update(json.loads(request.content))
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}})
 
     _transport(handler).request("tools/list")
-    meta = seen["_meta"]
+    assert "_meta" not in seen
+    params = seen["params"]
+    assert isinstance(params, dict)
+    meta = params["_meta"]
     assert isinstance(meta, dict)
-    assert meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28"
+    assert meta["io.modelcontextprotocol/protocolVersion"] == PROTOCOL_VERSION
+    assert "io.modelcontextprotocol/clientCapabilities" in meta
+
+
+def test_protocol_version_header_matches_the_meta_value() -> None:
+    seen_headers: dict[str, str] = {}
+    seen_body: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.update(request.headers)
+        seen_body.update(json.loads(request.content))
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}})
+
+    _transport(handler).request("tools/list")
+    params = seen_body["params"]
+    assert isinstance(params, dict)
+    meta = params["_meta"]
+    assert isinstance(meta, dict)
+    assert seen_headers["mcp-protocol-version"] == meta["io.modelcontextprotocol/protocolVersion"]
+
+
+def test_mcp_method_equals_the_request_method() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(request.headers)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}})
+
+    _transport(handler).request("resources/list")
+    assert seen["mcp-method"] == "resources/list"
+
+
+def test_mcp_name_present_only_for_the_three_named_methods_and_sourced_from_params() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(request.headers)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}})
+
+    _transport(handler).request("tools/list")
+    assert "mcp-name" not in seen
+
+    _transport(handler).request("tools/call", {"name": "read_file"})
+    assert seen["mcp-name"] == "read_file"
+
+    _transport(handler).request("resources/read", {"uri": "file:///x"})
+    assert seen["mcp-name"] == "file:///x"
+
+
+def test_no_session_header_is_ever_sent() -> None:
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(request.headers)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}})
+
+    _transport(handler).request("tools/list")
+    assert "mcp-session-id" not in seen
+    assert CONTACT in seen["user-agent"]
+
+
+def test_sse_response_is_parsed_from_its_final_data_event() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = 'event: message\ndata: {"jsonrpc": "2.0", "id": 1, "result": {"tools": []}}\n\n'
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    result = _transport(handler).request("tools/list")
+    assert result == {"tools": []}
 
 
 def test_json_rpc_error_is_raised() -> None:
@@ -1649,8 +2232,9 @@ def test_json_rpc_error_is_raised() -> None:
             200, json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "nope"}}
         )
 
-    with pytest.raises(TransportError, match="nope"):
+    with pytest.raises(TransportError, match="nope") as excinfo:
         _transport(handler).request("server/discover")
+    assert excinfo.value.code == -32601
 
 
 def test_http_error_status_is_raised() -> None:
@@ -1659,6 +2243,18 @@ def test_http_error_status_is_raised() -> None:
 
     with pytest.raises(TransportError, match="503"):
         _transport(handler).request("tools/list")
+
+
+def test_modern_header_mismatch_error_code_is_captured() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"jsonrpc": "2.0", "id": 1, "error": {"code": -32020, "message": "HeaderMismatch"}},
+        )
+
+    with pytest.raises(TransportError) as excinfo:
+        _transport(handler).request("tools/list")
+    assert excinfo.value.code == -32020
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1673,11 +2269,20 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'agent_perimeter.trans
 """Streamable HTTP transport for MCP 2026-07-28.
 
 Protocol-level sessions and the Mcp-Session-Id header were removed in this
-revision, so nothing here carries session state. Mcp-Method and Mcp-Name are
-required on every POST.
+revision, so nothing here carries session state. `_meta` lives inside
+`params`, not beside it. Every POST carries an `MCP-Protocol-Version` header
+matching `_meta`'s protocol version — a server MUST reject a mismatch with
+`400` + `HeaderMismatch` (`-32020`). `Mcp-Method` always equals `method`;
+`Mcp-Name` is sourced from the request's own `params.name` or `params.uri`
+and sent only for `tools/call`, `resources/read`, `prompts/get` — sending it
+on every request is itself the header/body mismatch a conforming server
+rejects. A response MAY arrive as `text/event-stream` instead of a single
+JSON body; the final `data:` event is the JSON-RPC response.
 """
 
 from __future__ import annotations
+
+import json
 
 import httpx
 
@@ -1686,6 +2291,51 @@ from agent_perimeter.transport.base import TransportError
 CLIENT_NAME = "agent-perimeter"
 CLIENT_VERSION = "0.1.0"
 PROTOCOL_VERSION = "2026-07-28"
+NAMED_METHODS = {"tools/call", "resources/read", "prompts/get"}
+
+
+def _mcp_name(method: str, params: dict[str, object] | None) -> str | None:
+    """Mcp-Name is required only for the three named methods, sourced from
+    the request's own params — never the client's own name."""
+    if method not in NAMED_METHODS or not params:
+        return None
+    name = params.get("name", params.get("uri"))
+    return str(name) if name is not None else None
+
+
+def _error_code(response: httpx.Response) -> int | None:
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = error.get("code")
+    return code if isinstance(code, int) else None
+
+
+def _parse_sse(text: str) -> dict[str, object]:
+    """A server MAY answer any request with an SSE stream. Take the final
+    `data:` event as the JSON-RPC response."""
+    data_lines = [
+        line[len("data:") :].strip() for line in text.splitlines() if line.startswith("data:")
+    ]
+    if not data_lines:
+        msg = "SSE response contained no data: event"
+        raise TransportError(msg)
+    result: dict[str, object] = json.loads(data_lines[-1])
+    return result
+
+
+def _parse_body(response: httpx.Response) -> dict[str, object]:
+    content_type = response.headers.get("content-type", "")
+    if content_type.startswith("text/event-stream"):
+        return _parse_sse(response.text)
+    result: dict[str, object] = response.json()
+    return result
 
 
 class StreamableHttpTransport:
@@ -1697,36 +2347,43 @@ class StreamableHttpTransport:
     def request(
         self, method: str, params: dict[str, object] | None = None
     ) -> dict[str, object]:
+        request_params = dict(params or {})
+        request_params["_meta"] = {
+            "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+            "io.modelcontextprotocol/clientInfo": {
+                "name": CLIENT_NAME,
+                "version": CLIENT_VERSION,
+            },
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }
         body = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": method,
-            "params": params or {},
-            "_meta": {
-                "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
-                "io.modelcontextprotocol/clientInfo": {
-                    "name": CLIENT_NAME,
-                    "version": CLIENT_VERSION,
-                },
-                "io.modelcontextprotocol/clientCapabilities": {},
-            },
+            "params": request_params,
         }
         headers = {
             "Mcp-Method": method,
-            "Mcp-Name": CLIENT_NAME,
+            "MCP-Protocol-Version": PROTOCOL_VERSION,
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
             "User-Agent": f"{CLIENT_NAME}/{CLIENT_VERSION} (+{self._contact_url})",
         }
+        name = _mcp_name(method, params)
+        if name is not None:
+            headers["Mcp-Name"] = name
+
         response = self._client.post(self._url, json=body, headers=headers)
         if response.status_code >= 400:
             msg = f"{self._url} returned {response.status_code} for {method}."
-            raise TransportError(msg)
+            raise TransportError(msg, code=_error_code(response))
 
-        message = response.json()
+        message = _parse_body(response)
         if "error" in message:
-            msg = f"Server returned an error for {method}: {message['error']}"
-            raise TransportError(msg)
+            error = message["error"]
+            code = error.get("code") if isinstance(error, dict) else None
+            msg = f"Server returned an error for {method}: {error}"
+            raise TransportError(msg, code=code if isinstance(code, int) else None)
         result: dict[str, object] = message.get("result", {})
         return result
 
@@ -1737,7 +2394,7 @@ class StreamableHttpTransport:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/transport/test_streamable_http.py -v --no-cov`
-Expected: 4 passed
+Expected: 9 passed
 
 - [ ] **Step 5: Typecheck and commit**
 
@@ -1746,7 +2403,7 @@ Expected: `Success: no issues found`
 
 ```bash
 git add agent_perimeter/transport/streamable_http.py tests/transport/test_streamable_http.py
-git commit -m "feat: add Streamable HTTP transport with required 2026-07-28 headers"
+git commit -m "fix: nest _meta in params, send MCP-Protocol-Version, scope Mcp-Name, parse SSE"
 ```
 
 ---
@@ -2184,8 +2841,6 @@ Note: the check list passed to `applicable` is empty in Week 1 — no checks exi
 services:
   app:
     build: .
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       AP_CONTACT_URL: ${AP_CONTACT_URL}
     depends_on:
@@ -2207,7 +2862,9 @@ POSTGRES_PASSWORD=change-me-locally
 AP_CONTACT_URL=https://github.com/USER/agent-perimeter
 ```
 
-The Docker socket mount is on the *scanner*, which needs to launch sibling containers. It is never mounted into a scanned server's container — Task 4 emits no `-v` flags at all.
+No `/var/run/docker.sock` mount, ever. A container holding the Docker socket can start a privileged container mounting `/` — the socket *is* host root — and `app` is the process that parses JSON-RPC from untrusted servers, unbounded schemas and downloaded tarballs. One parser bug with the socket mounted is host root; that is not a trade this scanner makes.
+
+This means `app` cannot launch the containerised stdio launcher itself: the stdio path runs on the **host**, via the `agent-perimeter` CLI (Task 11's `scan` command) on a machine with Docker installed — the CLI is the actual product for stdio targets, not a service behind this compose file. `docker compose up` brings up `app` and `postgres` for the HTTP-target and future UI paths only. A containerised stdio path reachable from `app` is out of scope for v1 — rootless Docker with user-namespace remapping, or a socket proxy constrained to `POST /containers/create` with an enforced policy, is a v1.1 idea, not needed here.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -2243,8 +2900,13 @@ All of these must hold before Week 2 starts:
 
 **Two research deliverables run in parallel with the code and gate Week 2, per spec §12:**
 
-- [ ] **B12 reading, 8–10 hours.** The NSA/CISA MCP Cybersecurity Information Sheet, the CoSAI MCP security paper, the OWASP MCP Top 10 and the MCP Security Cheat Sheet, end to end. Reproduce two or three published MCP attacks by hand. The ten `checks/revision/` checks in Week 2 are unwriteable without this.
-- [ ] **Source-level verification of the competitive claim.** Clone `snyk/agent-scan`, `cisco-ai-defense/mcp-scanner` and `getjavelin/ramparts`; grep for `2026-07-28`, `server/discover`, `resultType`, `cacheScope`, `x-mcp-header`. Record the findings, with commit SHAs and retrieval dates, in `docs/methodology.md`. **If any of the three already implements revision awareness, stop and revisit positioning before Week 2** — the entire (d) differentiator rests on this being true, and the current evidence is documentation-level only.
+- [ ] **B12 reading, 8–10 hours.** The NSA/CISA MCP Cybersecurity Information Sheet, the CoSAI MCP security paper, the OWASP MCP Top 10 and the MCP Security Cheat Sheet, end to end. Reproduce two or three published MCP attacks by hand. The ten `checks/revision/` checks in Week 2 are unwriteable without this. **Deliverable: a committed `docs/threat-model.md` writing up the reproduced attacks.** Eight hours with no artifact is unverifiable, which is not a standard this project can hold others to and not itself.
+- [ ] **Source-level verification of the competitive claim.** Clone `snyk/agent-scan` (2,971★, Apache-2.0, active), `cisco-ai-defense/mcp-scanner` (1,051★, Apache-2.0, active) and **`highflame-ai/ramparts`** (96★ — `getjavelin/ramparts` is a 301 redirect, confirmed 29 Aug 2026). Grep for `2026-07-28`, `server/discover`, `resultType`, `cacheScope`, `x-mcp-header`, **`-32020`** and **`Mcp-Protocol-Version`**. Record the findings, with commit SHAs and retrieval dates, in `docs/methodology.md`. **If any of the three already implements revision awareness, stop and revisit positioning before Week 2** — the entire (d) differentiator rests on this being true, and the current evidence is documentation-level only.
+- [ ] **Request-shape conformance test passes** — `_meta` nested inside `params`; `protocolVersion` and `clientCapabilities` present; `MCP-Protocol-Version` header present and equal to the `_meta` value; `Mcp-Method` equal to `method`; `Mcp-Name` present **iff** the method is `tools/call`, `resources/read` or `prompts/get`, sourced from `params`. Revision §1.3.
+- [ ] **Containment suite passes under Docker's default seccomp profile**, and a real Python MCP server runs to completion inside the sandbox. Revision §7.2.
+- [ ] **One long-lived container per scan**: a multi-request sequence observes state the server set on an earlier request. Revision §7.1.
+- [ ] **No feature is asserted that was not observed** — an integration test runs the real fingerprinter against the fixture at each configuration and asserts the resulting `FeatureSet` exactly. Revision §2.1.
+- [ ] **No `/var/run/docker.sock` mount appears in `docker-compose.yml`.** Revision §1.7.
 
 ---
 

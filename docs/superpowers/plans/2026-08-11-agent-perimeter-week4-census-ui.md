@@ -9,8 +9,24 @@
 **Tech Stack:** Python 3.12+, `uv`, `ruff`, `mypy --strict`, `pytest`, `hypothesis`, Pydantic v2, SQLAlchemy 2 + alembic, httpx, Jinja2, FastAPI. Web: Next.js 15 (App Router), TypeScript strict, Tailwind v4, Playwright, axe-core.
 
 **Spec:** `docs/superpowers/specs/2026-08-11-agent-perimeter-design.md`
+**Revision (binding):** `docs/superpowers/specs/2026-08-29-agent-perimeter-plan-revision.md` — **read it first.** Where it and this plan disagree, the revision wins.
 
-**Prerequisite:** Week 3 completion gate passed — 29 checks registered, capability graph rendering with per-edge derivation, `docs/methodology.md` carrying a per-check precision/recall table regenerated in CI.
+> **Blocking corrections to this week, summarised.** Everything below was verified against the live registry API on 29 August 2026.
+> - **Task 2 — the census stops at 100 servers and reports it as complete.** The plan reads `metadata["next_cursor"]`; the live field is **`nextCursor`**. `.get("next_cursor")` returns `None` on page one, the loop logs "exhausted after 1 pages", and `population_is_complete` is `True`. That publishes a census of 100 of 4,000+ servers **asserting completeness** — the exact failure this product exists to reject, in the artifact that is the marketing. Add a loud guard against single-page termination. Revision §1.4.
+> - **Task 2 — use `?version=latest` and de-duplicate on `name`.** 33 % of unfiltered rows are older versions of the same server (100 rows → 67 unique names), so the population inflates by roughly half. The filter is supported and verified.
+> - **Task 2 — ~70 % of the registry has no artifact.** In a 100-row sample, 71 entries carry only `remotes` and 30 carry `packages` (29 npm : 1 pypi). Add a `remotes` field to `RegistryEntry` and a `distribution` column to `census_record` (`package_npm | package_pypi | package_other | remote_only | none`). `registryType` also takes `oci`/`nuget`/`mcpb`, which `_coords` currently merges into "no coordinates".
+> - **Task 5 — the registry exposes no download counts at all** (verified: no `downloads`, `stars`, `install_count` or popularity field in any row). Tier-2 ranking must come from `pypistats.org` and `api.npmjs.org`, which is what the plan does — but say so in `SELECTION_METHOD`, and record that the registry itself offers no popularity signal.
+> - **Task 7 — the headline claim is not supportable from artifacts alone.** "What fraction of the public MCP ecosystem" cannot be answered from artifacts for ~70 % of servers. **Decided 29 August 2026:** report it as a **two-stratum estimate** — artifact-derived for the npm/PyPI stratum, `server/discover`-derived for a sample of `remote_only` — with both `n`s, both methods and both intervals shown separately and **never pooled into one unqualified number**. Revision §1.5.
+> - **New task — Tier 3, the remote-stratum sample.** Seeded random n = 100 from the `remote_only` stratum; **one unauthenticated `server/discover` per host and nothing else** — no `initialize`, no `tools/list`, no fallback, no retry; a non-answer is recorded as `unreachable` and that host is never contacted again, including on a re-run. Confined to `agent_perimeter/census/tier3.py`. Honour `robots.txt`, rate-limit, contact URL in `User-Agent`, opt-out list checked before every request. `derived_from = LIVE_DISCOVER`; observe-or-abstain applies unchanged. Publish the seed and the frame snapshot; publish `docs/security.md` describing the traffic **before the first request goes out**. Revision §1.5.
+> - **Task 4 — the SDK-pin inference is unvalidated and may be inverted.** Most packages declare a *range*, not a pin, so a lower bound says nothing about the runtime SDK. **Add a ground-truth task:** install n = 30 fetchable packages into the Week-1 container, live-fingerprint them, and publish the agreement rate as the basis for `ARTIFACT_CONFIDENCE`. Running your own copy of a public package in your own sandbox is not third-party probing. Distinguish *pin* / *floor* / *unconstrained*, and treat unconstrained as `unknown`. Revision §1.6.
+> - **New task — real-world precision.** Take a random n = 100 from the census population, run the deterministic suite over their tool metadata, and **manually adjudicate every firing** as TP or FP. Publish precision from that real population, separately from fixture-corpus recall, with the adjudication log. This is the highest-leverage change in the revision: it converts differentiator (c) from a self-graded exam into the most defensible artifact in the category, and it is the only way the revision §3 false-positive modes surface before a customer finds them. Revision §4.2.
+> - **Task 17 — no Docker socket in any compose file.** A container holding `/var/run/docker.sock` is host root, and that container parses untrusted JSON-RPC. `POST /api/scans` with a stdio target returns a clear refusal directing the user to the CLI. Revision §1.7.
+> - **Task 3 — use `tarfile.extractall(filter="data")`** (Python 3.12) rather than the hand-rolled member walk: it rejects traversal, symlinks, **hardlinks**, devices and setuid bits, and is maintained upstream. Keep the size caps; add a per-file cap. `test_the_module_never_executes_an_artifact` greps for strings — keep it, but assert the `data` filter, which is the thing that actually matters. Revision §5.7.
+> - **Cloning untrusted repos runs on the host.** `git clone` of a hostile repository is a code-execution surface, and `git log -p --all` with `capture_output=True` buffers a whole repository in memory. Clone with `--no-checkout --filter=blob:none`, `core.hooksPath=/dev/null`, templates disabled, **inside the Week-1 container**; stream the log output. B3's reasoning applies here with equal force. Revision §5.4.
+> - **Task 6 — `test_passive_only` walks the import graph one level deep,** while claiming "can never reach". Make it transitive.
+> - **Task 5 — `n` is per ecosystem, so `tier2_n=200` yields up to 400.** Given the ~29:1 npm:PyPI split, the PyPI "top 200" is effectively a census of PyPI. Report each ecosystem's `n` and population separately.
+
+**Prerequisite:** Week 3 completion gate passed — 33 checks registered (25 from Week 2's revised gate, 4 `active/`, 2 `injection/`, 2 `policy/`), capability graph rendering with per-edge derivation, `docs/methodology.md` carrying a per-check precision/recall table regenerated in CI.
 
 ## Global Constraints
 
@@ -29,7 +45,7 @@ Carried verbatim from Weeks 1–3. Every task's requirements implicitly include 
 
 ## Constraints specific to this week
 
-- **Public-registry scanning is passive only.** The census may fetch the registry API and published package artifacts. It may never connect to, invoke a tool on, or send a `server/discover` to a third-party server. Task 6 enforces this structurally, not by convention.
+- **Public-registry scanning is passive only. [REVISED 29 Aug 2026]** Tiers 1–2 may fetch the registry API and published package artifacts, and nothing else. **Tier 3 may send exactly one unauthenticated `server/discover` per sampled host, and nothing else** — never `initialize`, never `tools/list`, never a tool invocation, never a retry. Task 6 enforces both structurally rather than by convention: the literal host allowlist for every census module except `agent_perimeter/census/tier3.py`, and for `tier3.py` an assertion that it contains exactly one JSON-RPC method string (`server/discover`) and no host literal at all. Revision §1.5.
 - **Aggregate statistics only in the published report.** No third-party server named, reply or no reply. Task 7 enforces this with a test over the rendered output.
 - **Downloaded artifacts are never executed.** Not `setup.py`, not `npm install`, not an import. Extraction is guarded against path traversal, symlinks and decompression bombs.
 - **Secrets found during the census bypass the embargo clock entirely** — notify owner and platform immediately, never publish, never validate.
@@ -958,6 +974,7 @@ Create `tests/census/test_passive_only.py`:
 
 ```python
 import ast
+import re
 from pathlib import Path
 
 FORBIDDEN_PREFIXES = (
@@ -989,7 +1006,12 @@ def test_census_can_never_reach_a_transport_or_an_active_check() -> None:
     assert offences == [], f"census reached a live-traffic module: {offences}"
 
 
-def test_census_only_talks_to_the_allowed_hosts() -> None:
+TIER3 = Path("agent_perimeter/census/tier3.py")
+_METHOD_RE = re.compile(r"^[a-z]+/[a-zA-Z]+$")
+
+
+def test_every_module_but_tier3_talks_only_to_the_allowed_hosts() -> None:
+    """Tiers 1-2 are artifact-only: the host list is closed and literal."""
     allowed = {
         "registry.modelcontextprotocol.io",
         "pypi.org",
@@ -998,13 +1020,48 @@ def test_census_only_talks_to_the_allowed_hosts() -> None:
         "api.npmjs.org",
     }
     src = "\n".join(
-        p.read_text(encoding="utf-8") for p in Path("agent_perimeter/census").rglob("*.py")
+        p.read_text(encoding="utf-8")
+        for p in Path("agent_perimeter/census").rglob("*.py")
+        if p != TIER3
     )
-    import re
-
     hosts = set(re.findall(r"https://([a-z0-9.\-]+)/", src))
     assert hosts <= allowed, f"unexpected host in census: {hosts - allowed}"
+
+
+def test_tier3_sends_exactly_one_method_and_owns_no_host() -> None:
+    """Tier 3's targets come from the frame, so it is constrained by shape, not by host.
+
+    This is the guarantee that makes a live `server/discover` passive discovery
+    rather than an active probe. It must be impossible to widen by accident.
+    """
+    src = TIER3.read_text(encoding="utf-8")
+
+    methods = {
+        node.value
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and _METHOD_RE.fullmatch(node.value)
+    }
+    assert methods == {"server/discover"}, f"tier3 may send only server/discover, found {methods}"
+
+    hosts = set(re.findall(r"https://([a-z0-9.\-]+)/", src))
+    assert hosts == set(), f"tier3 must take every target from the frame, found {hosts}"
 ```
+
+The second test is why Tier 3 is confined to one module. `methods == {"server/discover"}`
+is an **equality, not a subset**: adding `initialize` or `tools/list` fails it, and so does
+deleting the constant the request is built from — a guard that silently passes once the
+thing it guards is removed is worse than no guard. Step 3 breaks both directions.
+
+It walks the **AST**, not the raw source, so a docstring explaining which methods Tier 3
+deliberately does *not* send cannot false-fire it; a substring regex over the source does.
+Both directions were exercised against synthetic modules before this plan shipped.
+
+The strictness is deliberate and worth stating, because a future contributor will hit it:
+*any* `word/word` string constant in `tier3.py` fails this test, not just a JSON-RPC method.
+The module is thirty lines whose entire job is one request. There is no legitimate second
+path-shaped constant, and permitting one is how the boundary erodes.
 
 Run: `uv run pytest tests/census/test_passive_only.py`
 Expected: passes trivially now (no `run.py` yet) — **which is why Step 3 deliberately tries to break it.**
@@ -2314,7 +2371,8 @@ git tag -a v0.1.0 -m "Agent Perimeter v0.1.0"
 - [ ] `uv run pytest` passes, coverage at or above 75%
 - [ ] `mypy --strict`, `ruff check`, `ruff format --check` all clean
 - [ ] `npx tsc --noEmit`, `npm run lint`, `npx playwright test` all clean
-- [ ] The census reaches the registry, PyPI and npm only — proven by `test_passive_only.py`, and the guard has been seen to fail when deliberately broken
+- [ ] Tiers 1–2 reach the registry, PyPI and npm only, and Tier 3 sends exactly one `server/discover` per sampled host and nothing else — both proven by `test_passive_only.py`, and **each** guard has been seen to fail when deliberately broken
+- [ ] The Tier-3 seed, frame snapshot and opt-out list are published with the raw data, and `docs/security.md` was published before the first Tier-3 request went out
 - [ ] No downloaded artifact is ever executed, imported or evaluated — proven by test
 - [ ] Artifact-derived confidence is strictly below live-probe confidence — proven by test
 - [ ] `fetch_failures` appears in the report even when zero
