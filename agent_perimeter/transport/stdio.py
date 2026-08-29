@@ -50,6 +50,21 @@ class ContainmentError(TransportError):
     """The sandboxed process breached or exceeded its confinement."""
 
 
+def _bounded_tail(file: IO[str], limit: int = 400) -> str:
+    """Read at most `limit` characters — never the whole file first.
+
+    Used for the stderr excerpt embedded in an error message. `file.read()`
+    followed by a `[:limit]` slice would materialize the entire (attacker-
+    inflated) stream in host memory just to keep a few hundred characters
+    of it — a hostile server can scale that to a host OOM.
+    """
+    try:
+        file.seek(0)
+        return file.read(limit)
+    except (OSError, ValueError):
+        return ""
+
+
 def _reject_docker_flag_injection(value: str, field_name: str) -> None:
     """Fail closed on anything that could be parsed as a `docker` flag.
 
@@ -222,13 +237,6 @@ class StdioTransport:
         self._kill_container()
         self._process.kill()
 
-    def _stderr_tail(self) -> str:
-        try:
-            self._stderr_file.seek(0)
-            return self._stderr_file.read()[:400]
-        except (OSError, ValueError):
-            return ""
-
     def request(
         self, method: str, params: dict[str, object] | None = None
     ) -> dict[str, object]:
@@ -261,7 +269,8 @@ class StdioTransport:
                     raise ContainmentError(msg)
                 msg = (
                     f"No JSON-RPC response for {method}. Container exited "
-                    f"(code {self._process.returncode}). stderr: {self._stderr_tail()}"
+                    f"(code {self._process.returncode}). "
+                    f"stderr: {_bounded_tail(self._stderr_file)}"
                 )
                 raise TransportError(msg)
 
@@ -283,9 +292,15 @@ class StdioTransport:
                 msg = f"JSON-RPC response for {method} was not a JSON object: {line.strip()!r}"
                 raise TransportError(msg)
 
-            if message.get("id") != request_id:
+            if message.get("id") != request_id and "error" not in message:
                 # A notification/progress message, or a stale response to an
                 # earlier call — not this request's answer. Keep waiting.
+                # An error frame is never discarded even with a mismatched
+                # id: JSON-RPC 2.0 mandates `id: null` when the server
+                # couldn't determine the request id, so a legitimate error
+                # would otherwise be silently dropped, burning the scan's
+                # whole wall-clock budget waiting for a match that never
+                # comes (and losing the error `code` Task 8 depends on).
                 continue
 
             if "error" in message:
