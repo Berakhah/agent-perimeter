@@ -1,7 +1,9 @@
 # Agent Perimeter — Design
 
-**Status:** approved (brainstorming, 27 August 2026)
+**Status:** approved (brainstorming, 27 August 2026) · **revised 29 August 2026**
 **Scope:** weeks 1–4. v1 only.
+
+> **Supersession.** `2026-08-29-agent-perimeter-plan-revision.md` audits this document and all four plans against the primary sources, live, on 29 August 2026. Where it and this document disagree, **the revision wins** — it carries the evidence. Read it before executing any plan.
 **Sources of truth:** `../Starting_Documents/00-SHARED-FOUNDATION.md`, `../Starting_Documents/01-AGENT-PERIMETER.md`. Where this document and a brief disagree, the brief wins unless the disagreement is recorded in §1 below as a decision.
 
 ---
@@ -19,7 +21,7 @@ Every open decision from brief §13 and the cross-cutting subset of `00` §12, r
 | 3 | Injection simulation aggressiveness | **Split A/B.** v1 ships claim A (deterministic path-proof, canary + capability graph). Claim B (does *this* agent bite) ships as a documented BYO-agent adapter. |
 | 4 | Disclosure embargo | **90 days, aggregate-only always.** No named third-party server, reply or no reply. Secrets bypass the clock entirely: notify owner and platform immediately, never publish, never validate. |
 | 5 | Registry scan scope | **Two-tier.** Tier 1: full census of the official registry via its documented API. Tier 2: top ~200 by downloads, full check suite. Two populations, reported separately. |
-| 5b | *(added during design)* Census measurement method | **Public artifacts only.** PyPI/npm plus the registry API. Zero unsolicited traffic to third-party servers. Live `server/discover` stays scope-file-gated like any active probe. |
+| 5b | *(added during design)* Census measurement method | **[REVISED 29 Aug 2026] Public artifacts, plus a sampled `server/discover` of the remote stratum.** Tiers 1–2 are artifacts only — PyPI/npm plus the registry API, zero unsolicited traffic. **Tier 3** sends one unauthenticated `server/discover` to each of n = 100 randomly sampled `remote_only` endpoints, under the registry-collection rules (robots.txt, rate limit, contact URL, opt-out list, no retry), because ~70 % of the registry ships no artifact to measure. Anything beyond that single method — `initialize`, `tools/list`, any probe — stays scope-file-gated. Revision §1.5. |
 | 6 | Publish own false-positive rate | **Yes — per check class**, on both the local fixture corpus and third-party MCPTox. No single headline scalar. Corpus and analysis script published. |
 | 7 | Licence | **Apache-2.0.** |
 
@@ -60,7 +62,13 @@ Security-relevant minor changes — the basis of the `checks/revision/` family:
 - `x-mcp-header`: custom HTTP headers sourced **from tool parameters**. Required `Mcp-Method` / `Mcp-Name` headers make header/body mismatch a downgrade path.
 - `CacheableResult`: `ttlMs` and `cacheScope` (`public`/`private`) required on list results. `cacheScope: public` on a sensitive listing is a cache-poisoning primitive.
 - `inputSchema`/`outputSchema` loosened to full JSON Schema 2020-12 with `$ref` resolution and composition-keyword bounds.
-- OAuth: `iss` validation required (RFC 9207); `application_type` required in DCR; credentials keyed by issuer. **DCR (RFC 7591) deprecated** in favour of Client ID Metadata Documents.
+- OAuth: `application_type` required in DCR; credentials keyed by issuer. **DCR (RFC 7591) deprecated** in favour of Client ID Metadata Documents. **[REVISED]** `iss` is **not** required of servers: the AS **SHOULD** include it and the *client* **MUST** validate a *present* `iss`. A server omitting `iss` is conformant — flagging it is a false positive.
+- **[REVISED — added, missed by the original reading]** Error-code allocation policy: `-32020` `HeaderMismatch`, `-32021` `MissingRequiredClientCapability`, `-32022` `UnsupportedProtocolVersion`; `-32002` and `-32042` **MUST NOT** be emitted by this revision. These are free, deterministic revision fingerprints — `-32042` uniquely identifies `2025-11-25`, and `-32001/-32003/-32004` identify a release-candidate build. See revision §2.3.
+- **[REVISED — added]** `icons` on `Implementation`/`Tool`/`Prompt`/`Resource`, with normative consumer requirements (scheme allowlist, no cross-origin redirects, no credentials, magic-byte validation, size bounds, SVG treated as executable). A whole unshipped check family. See revision §6.1.
+- **[REVISED — added]** `Origin` validation **MUST** and localhost binding **SHOULD** on Streamable HTTP, against DNS rebinding. See revision §6.2.
+- **[REVISED — added]** OpenTelemetry `traceparent`/`tracestate`/`baggage` reserved in `_meta`; deterministic `tools/list` ordering **SHOULD**; unsolicited task handles now permitted. See revision §6.3–§6.5.
+- **[REVISED — corrected]** `serverInfo` is **SHOULD**, is not verified by the protocol, and implementations **SHOULD NOT** rely on it for security decisions. It is not "echoed" as a requirement.
+- **[REVISED — corrected]** `x-mcp-header` is an **annotation inside a parameter's schema** whose value names the header suffix (`Mcp-Param-{Name}`), not a property called `x-mcp-header`. Values are Base64-encoded by conforming clients, so an unconstrained string is *not* a header-injection primitive. See revision §1.8.
 
 Deprecated: Roots, Sampling, Logging; the HTTP+SSE transport; DCR.
 
@@ -74,7 +82,7 @@ Open-source, shipping today:
 |---|---|---|---|---|
 | `agent-scan` (was `mcp-scan`) | **Snyk** (acquired Invariant Labs, Jun 2025) | Multi-IDE discovery, 15+ risk classes, tool poisoning, rug-pull pinning, MDM monitoring | Apache-2.0 | ~3k stars, requires a Snyk API token |
 | `mcp-scanner` | Cisco AI Defense | YARA, LLM, Cisco API, VirusTotal, behavioural, CVE; source analysis across 10 languages | Apache-2.0 | ~1.1k stars |
-| Ramparts | getjavelin | 40 YARA rules, evasion-resistant decoding, LLM semantic, OSV.dev, OWASP tagging | Apache-2.0 | ~96 stars, static only |
+| Ramparts | **`highflame-ai/ramparts`** (was `getjavelin` — redirect confirmed 29 Aug 2026) | 40 YARA rules, evasion-resistant decoding, LLM semantic, OSV.dev, OWASP tagging | Apache-2.0 | 96 stars, static only |
 | MCP-Scanner | Knostic | Shodan-based internet-facing MCP discovery | — | closest to deployment posture |
 | mcpscanner / MCPScan / Golf / agent-audit | Pangea, Ant Group, others | Hosted AI-Guard; static taint plus LLM; local IDE config checks | — | smaller |
 
@@ -100,7 +108,9 @@ Agent Perimeter is **the first MCP scanner that knows which revision of the prot
 
 The buyer sentence is unchanged: *"You wired an agent into your internal systems. I will show you, with a reproduction for each finding, exactly what an attacker can make it do."*
 
-The report's headline claim, which nobody else can currently make: **what fraction of the public MCP ecosystem can support `2026-07-28`, one month after it shipped.**
+The report's headline claim, which nobody else can currently make: **[REVISED 29 Aug 2026]** *of the N servers in the MCP registry, what fraction show `2026-07-28` support one month after it shipped* — stated as a **two-stratum estimate**: artifact-derived for servers distributed as an npm or PyPI package, and `server/discover`-derived for a random sample of the `remote_only` stratum. Both strata, both methods and both intervals are reported separately and **never pooled into one unqualified number**.
+
+The original wording was **not supportable by an artifact-only method**. Verified 29 August 2026: of a 100-row registry sample, 71 entries carry only `remotes` and 30 carry `packages`, so artifacts characterise roughly 30 % of the population. **Decided 29 August 2026:** rather than narrow the claim to the artifact stratum or enumerate all ~4,000 endpoints, sample the remote stratum — n = 100, one unauthenticated `server/discover` each, seeded and reproducible, under the registry-collection rules with a published opt-out. That bounds the otherwise unmeasured 70 % to roughly ±10 pp for 100 requests instead of 4,000. Revision §1.5 carries the full resolution, the Tier-3 constraints and the revised passive-only guarantee.
 
 (d) has an estimated shelf life of roughly six months. That suits a four-week project; it does not suit a two-year one. (c) is durable and is what remains once the incumbents catch up on the spec, which is why both ship in v1.
 
@@ -181,7 +191,21 @@ Rationale over a version-set matrix: it handles partial implementers correctly, 
 
 Separating claim from observation yields `conformance_mismatch`, a finding class that requires this separation to exist at all.
 
-**Census target, with no live traffic:** registry API, then package coordinates, then the PyPI/npm artifact, then parse the pinned MCP SDK version, then static-scan the source for a `server/discover` handler and `_meta` handling. Emits a `FeatureSet` with `derived_from = ARTIFACT` and confidence strictly below a live probe's.
+**[REVISED] Observe or abstain.** The Week-1 plan violates this section: observing `server/discover` unconditionally *grants* `MRTR`, `PARAM_HEADERS`, `SUBSCRIPTIONS_LISTEN` and `STATELESS_META`, which re-introduces version-implies-feature through the back door and leaves `conformance_mismatch` able to fire on only 2 of 8 features. Binding rules:
+
+- Only `SERVER_DISCOVER`, `RESULT_TYPE`, `CACHEABLE_RESULT` and `EXTENSIONS` are passively observable as specified.
+- `PARAM_HEADERS` is observable from the presence of an `x-mcp-header` annotation in any tool schema — derive it from the listing, not the revision.
+- `MRTR` and `SUBSCRIPTIONS_LISTEN` are **not** passively observable. Never assert them; dependent checks skip with `FEATURE_ABSENT`.
+- `SESSION_HEADER` is an HTTP response-header observation and is meaningless over stdio.
+- `STATELESS_META` describes the *client's* request shape, not the server's. **Remove it from `Feature`.**
+- Take the **highest** known entry of `protocolVersions`, not the first; record the full advertised set.
+- Follow the specification's normative backward-compatibility probe (POST first; on `400` inspect the body for `-32020/-32021/-32022` before falling back to `initialize`; `404` + `-32601` distinguishes modern-unknown-method from legacy).
+
+See revision §2.1–§2.3.
+
+**Census target, tiers 1–2, with no live traffic:** registry API, then package coordinates, then the PyPI/npm artifact, then parse the declared MCP SDK constraint — distinguishing *pin* / *floor* / *unconstrained*, treating unconstrained as `unknown` (revision §1.6) — then static-scan the source for a `server/discover` handler and `_meta` handling. Emits a `FeatureSet` with `derived_from = ARTIFACT` and confidence strictly below a live probe's, calibrated against the n = 30 live-fingerprint agreement rate.
+
+**Census target, tier 3 — the only live traffic in the census:** for a seeded random n = 100 of the `remote_only` stratum, one unauthenticated `server/discover` and nothing else. Emits a `FeatureSet` with `derived_from = LIVE_DISCOVER`, subject to the observe-or-abstain rules above unchanged — an answer grants only what it states. Revision §1.5.
 
 ---
 
