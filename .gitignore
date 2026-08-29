@@ -4,3 +4,12 @@ node_modules/
 .env
 .DS_Store
 .worktrees/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/

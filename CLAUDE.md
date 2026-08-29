@@ -1,7 +1,7 @@
 # Agent Perimeter
 
 Security posture scanner for MCP servers and tool-using agents.
-Weeks 1–4 · Accent: signal amber `oklch(0.72 0.16 68)` · Licence: TBD (Apache-2.0 vs AGPL — open decision)
+Weeks 1–4 · Accent: signal amber `oklch(0.72 0.16 68)` · Licence: Apache-2.0
 
 **Pitch:** *"You wired an agent into your internal systems. I will show you, with a reproduction for each finding, exactly what an attacker can make it do."*
 
