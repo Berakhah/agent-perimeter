@@ -10,7 +10,7 @@ column anywhere that could hold a raw secret value, which a test asserts.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import (
     JSON,
@@ -31,6 +31,12 @@ def _uuid() -> str:
 
 def _now() -> datetime:
     return datetime.now(UTC)
+
+
+# Documented default retention window for a secret fingerprint. A fingerprint
+# is not the credential, but B4 still asks for a bound rather than unbounded
+# accumulation of even a hashed, HMAC'd record.
+DEFAULT_RETENTION = timedelta(days=90)
 
 
 class Base(DeclarativeBase):
@@ -134,6 +140,9 @@ class SecretFinding(Base):
     last4: Mapped[str] = mapped_column(String(4))
     location: Mapped[str] = mapped_column(Text)
     validated: Mapped[bool] = mapped_column(Boolean, default=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: _now() + DEFAULT_RETENTION
+    )
 
     __table_args__ = (
         CheckConstraint("validated = false", name="ck_secret_finding_never_validated"),

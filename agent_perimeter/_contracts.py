@@ -91,3 +91,54 @@ class Claim(BaseModel):
 
 
 Claim.model_rebuild()
+
+
+class SecretFingerprint:
+    """A secret recorded so it can be recognised but never recovered.
+
+    bok-core requirement 2 — see spec section 8. The constructor takes the raw
+    value, derives what is needed, and retains none of it. There is no attribute,
+    repr or serialisation from which the original can be reconstructed.
+
+    Hard constraint 3: the raw value never reaches the database, the logs, the
+    SARIF, or a screenshot, and is never tested against a live service.
+    """
+
+    __slots__ = ("sha256", "entropy", "prefix", "last4", "location")
+
+    def __init__(
+        self, *, sha256: str, entropy: float, prefix: str, last4: str, location: str
+    ) -> None:
+        self.sha256 = sha256
+        self.entropy = entropy
+        self.prefix = prefix
+        self.last4 = last4
+        self.location = location
+
+    @classmethod
+    def of(cls, value: str, *, location: str) -> SecretFingerprint:
+        import hashlib
+        import math
+        from collections import Counter
+
+        counts = Counter(value)
+        length = len(value)
+        entropy = (
+            -sum((n / length) * math.log2(n / length) for n in counts.values())
+            if length
+            else 0.0
+        )
+
+        return cls(
+            sha256=hashlib.sha256(value.encode()).hexdigest(),
+            entropy=entropy,
+            prefix=value[:4],
+            last4=value[-4:],
+            location=location,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"SecretFingerprint(sha256={self.sha256[:12]}…, "
+            f"entropy={self.entropy:.2f}, location={self.location!r})"
+        )
