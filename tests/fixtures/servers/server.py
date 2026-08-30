@@ -37,8 +37,18 @@ def _tools_list_result() -> dict:
 
     if FLAW == "missing_result_type":
         del result["resultType"]
-    if FLAW == "param_header":
-        result["tools"][0]["inputSchema"]["properties"]["x-mcp-header"] = {"type": "string"}
+
+    header_prop = result["tools"][0]["inputSchema"]["properties"]
+    if FLAW == "param_header_bad_token":
+        header_prop["region"] = {"type": "string", "x-mcp-header": "Re gion"}
+    elif FLAW == "param_header_crlf":
+        header_prop["region"] = {"type": "string", "x-mcp-header": "Region\r\nX-Evil: 1"}
+    elif FLAW == "param_header_behind_oneof":
+        header_prop["region"] = {"oneOf": [{"type": "string", "x-mcp-header": "Region"}]}
+    elif FLAW == "param_header_number":
+        header_prop["region"] = {"type": "number", "x-mcp-header": "Region"}
+    elif FLAW == "param_header_valid":
+        header_prop["region"] = {"type": "string", "x-mcp-header": "Region"}
     return result
 
 
