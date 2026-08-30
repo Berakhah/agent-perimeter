@@ -1,0 +1,92 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "properties": {
+        "features_observed": [
+          "server_discover"
+        ],
+        "revision_claimed": "2026-07-28",
+        "target": "https://mcp.example.test/rpc"
+      },
+      "results": [
+        {
+          "level": "warning",
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "https://mcp.example.test/rpc/revision.cache_scope",
+                  "kind": "resource",
+                  "name": "revision.cache_scope"
+                }
+              ],
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "C:\\Users\\Berakhah\\AppData\\Local\\Temp\\pytest-of-Berakhah\\pytest-246\\test_matches_the_committed_gol0\\.agent-perimeter\\https-mcp-example-test-rpc.mcp-profile.json"
+                },
+                "region": {
+                  "endColumn": 1,
+                  "endLine": 1,
+                  "startColumn": 1,
+                  "startLine": 1
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Tool listing is marked publicly cacheable\n\nEvidence:\n\"cacheScope\": \"public\"\n\nReproduce:\nagent-perimeter scan --target https://mcp.example.test/rpc --only revision.cache_scope"
+          },
+          "partialFingerprints": {
+            "agentPerimeter/v1": "3b3a352f0f5aafa0345af4c9a21110d0",
+            "primaryLocationLineHash": "d2daab24dd89688f"
+          },
+          "properties": {
+            "confidence": null,
+            "cwe": "CWE-524",
+            "derivation": "schema",
+            "method": "deterministic",
+            "redacted": false,
+            "security-severity": 5.0,
+            "taxonomy_refs": [
+              "owasp-llm:LLM02"
+            ]
+          },
+          "ruleId": "revision.cache_scope"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "informationUri": "https://github.com/USER/agent-perimeter",
+          "name": "agent-perimeter",
+          "rules": [
+            {
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://genai.owasp.org/llmrisk/llm02-sensitive-information-disclosure/",
+              "id": "revision.cache_scope",
+              "name": "revision_cache_scope",
+              "properties": {
+                "cwe": "CWE-524",
+                "tags": [
+                  "security",
+                  "CWE-524",
+                  "owasp-llm:LLM02"
+                ],
+                "taxonomy_refs": [
+                  "owasp-llm:LLM02"
+                ]
+              },
+              "shortDescription": {
+                "text": "Tool listing is marked publicly cacheable"
+              }
+            }
+          ],
+          "version": "0.1.0"
+        }
+      }
+    }
+  ],
+  "version": "2.1.0"
+}
