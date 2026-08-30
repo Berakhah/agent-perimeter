@@ -188,6 +188,50 @@ def test_hard_timeout_actually_kills_the_container() -> None:
     assert not still_running, f"container {name} is still running after the hard timeout"
 
 
+@pytest.mark.skipif(_DOCKER_UNAVAILABLE, reason="docker unavailable")
+def test_close_kills_container_even_if_stdin_close_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """I5 regression: closing a buffered stdin flushes it first, so a
+    BrokenPipeError/OSError there (the process may already be dying) must
+    never skip `_kill_container()` — the deadline timer is disarmed on the
+    line right before, so nothing else would ever kill a still-running
+    container on the daemon if that raise went unhandled. Verified against
+    the live daemon, not just that `close()` doesn't raise."""
+    transport = StdioTransport(
+        LaunchSpec(
+            image="python:3.12-slim",
+            command=["python3", "-c", "import time; time.sleep(600)"],
+            timeout_s=600,
+        )
+    )
+    name = transport.container_name
+    assert transport._process.stdin is not None
+
+    def _raise_broken_pipe() -> None:
+        raise BrokenPipeError("simulated: peer already closed the connection")
+
+    monkeypatch.setattr(transport._process.stdin, "close", _raise_broken_pipe)
+
+    transport.close()  # must not raise, and must still kill the container
+
+    deadline = time.monotonic() + 20
+    still_running = True
+    while time.monotonic() < deadline:
+        out = subprocess.run(
+            ["docker", "ps", "-q", "--filter", f"name={name}"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if not out:
+            still_running = False
+            break
+        time.sleep(0.5)
+
+    assert not still_running, f"container {name} is still running after close()"
+
+
 _STDERR_FLOODING_SERVER = (
     "import json, sys\n"
     "sys.stderr.write('x' * 200000)\n"
