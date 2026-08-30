@@ -104,6 +104,29 @@ def test_a_thousand_deep_nested_schema_does_not_raise_and_produces_a_bound_findi
     assert any("depth" in f.title.lower() or "bound" in f.title.lower() for f in findings)
 
 
+def test_heavy_legitimate_ref_reuse_is_not_a_false_positive_recursion_finding() -> None:
+    """150 distinct properties sharing one small, non-cyclic $defs entry is a
+    plausible real-world shape (a batch tool with many optional fields all
+    typed as Address/Money/DateRange) — not a DoS shape. A validator resolves
+    a $defs entry once and caches it; this check must do the same, or heavy
+    legitimate reuse reads as a false-positive CWE-674 recursion finding.
+    """
+    schema: dict[str, object] = {
+        "type": "object",
+        "$defs": {
+            "Address": {
+                "type": "object",
+                "properties": {
+                    "street": {"type": "string"},
+                    "city": {"type": "string"},
+                },
+            }
+        },
+        "properties": {f"addr{i}": {"$ref": "#/$defs/Address"} for i in range(150)},
+    }
+    assert CHECK.run(_context(schema)) == []
+
+
 def test_collect_refs_is_iterative_not_recursive() -> None:
     import inspect
 

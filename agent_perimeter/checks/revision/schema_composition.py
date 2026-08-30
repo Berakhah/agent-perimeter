@@ -68,6 +68,20 @@ def _resolve_local_pointer(root: object, ref: str) -> object | None:
     return current
 
 
+class _RefClosed:
+    """Sentinel pushed onto the walk stack right after a local ref's target:
+    since the stack is genuinely LIFO-depth-first (a subtree's entire
+    descendants are drained before its earlier sibling is popped), this
+    marker is only popped once that whole subtree has been fully walked —
+    the classic iterative-postorder trick, giving `_collect_refs` a
+    white/gray/black coloring of ref pointers without ever recursing."""
+
+    __slots__ = ("ref",)
+
+    def __init__(self, ref: str) -> None:
+        self.ref = ref
+
+
 def _collect_refs(node: object, found: list[str]) -> None:
     """Iterative, explicit-stack walk. No Python call recursion, ever.
 
@@ -76,20 +90,32 @@ def _collect_refs(node: object, found: list[str]) -> None:
     crossed — the caller turns that into a finding about the target, per
     revision 5.1's "containment event" framing, not a silent truncation.
 
-    A local ("#/...") ref is resolved against the document root and pushed
-    back onto the stack, so a self-referential chain keeps growing
-    depth/node-count until it trips a bound — that bound *is* the recursion
-    finding (revision 5.3's replacement for pattern-matching a cycle, which a
-    restructured reference chain could dodge). An external ref is only ever
-    collected as a string here, never resolved — no network URI is followed.
+    A local ("#/...") ref is resolved against the document root and walked.
+    `ref_state` tracks each local pointer as "in_progress" (currently on the
+    walk's own ancestor chain — seeing it again *is* a genuine cycle, caught
+    immediately via SchemaBoundExceeded, CWE-674) or "done" (its subtree was
+    already walked once, found clean, and is never re-walked or re-counted).
+    Without that second state, heavy legitimate reuse of one small $defs
+    entry from hundreds of unrelated properties — not a cycle, just a shared
+    type — would eventually trip the node/subschema-count bounds and read as
+    a false-positive DoS finding, which is exactly the failure mode this
+    project's own testing bar treats as worse than a gap. A real JSON Schema
+    validator resolves each $defs entry once and caches it; this mirrors
+    that. An external ref is only ever collected as a string here, never
+    resolved — no network URI is followed.
     """
     root = node
     stack: list[tuple[object, int]] = [(node, 0)]
     subschema_count = 0
     total_nodes = 0
+    ref_state: dict[str, str] = {}
 
     while stack:
         current, depth = stack.pop()
+        if isinstance(current, _RefClosed):
+            ref_state[current.ref] = "done"
+            continue
+
         total_nodes += 1
         if total_nodes > MAX_TOTAL_NODES:
             raise SchemaBoundExceeded("total node count", MAX_TOTAL_NODES)
@@ -104,9 +130,15 @@ def _collect_refs(node: object, found: list[str]) -> None:
             if isinstance(ref, str):
                 found.append(ref)
                 if ref.startswith("#"):
-                    target = _resolve_local_pointer(root, ref)
-                    if target is not None:
-                        stack.append((target, depth + 1))
+                    state = ref_state.get(ref)
+                    if state == "in_progress":
+                        raise SchemaBoundExceeded("self-referential $ref", 1)
+                    if state is None:
+                        target = _resolve_local_pointer(root, ref)
+                        if target is not None:
+                            ref_state[ref] = "in_progress"
+                            stack.append((_RefClosed(ref), depth))
+                            stack.append((target, depth + 1))
             for value in current.values():
                 stack.append((value, depth + 1))
         elif isinstance(current, list):
@@ -146,21 +178,21 @@ class SchemaCompositionCheck:
             try:
                 _collect_refs(tool.input_schema, refs)
             except SchemaBoundExceeded as exc:
-                # This *is* the recursion / DoS-shape finding now — a bound
-                # exceeded during the walk cannot be evaded by restructuring
-                # the $ref chain the way pattern-matching for a cycle could.
-                findings.append(
-                    self._finding(
-                        context,
-                        tool.name,
-                        f"{exc.kind}={exc.limit}",
-                        (
-                            f"Tool {tool.name!r} schema exceeds the {exc.kind} bound "
-                            f"({exc.limit}) — a Denial-of-Service shape the "
-                            f"specification asks implementations to bound"
-                        ),
-                        "CWE-674",
+                # This *is* the recursion / DoS-shape finding now — a genuine
+                # cycle is caught the moment a $ref reappears on its own
+                # ancestor chain, and any other bound exceeded during the
+                # walk cannot be evaded by restructuring the $ref chain the
+                # way pattern-matching for a cycle could.
+                if exc.kind == "self-referential $ref":
+                    title = f"Tool {tool.name!r} schema contains a self-referential $ref cycle"
+                else:
+                    title = (
+                        f"Tool {tool.name!r} schema exceeds the {exc.kind} bound "
+                        f"({exc.limit}) — a Denial-of-Service shape the "
+                        f"specification asks implementations to bound"
                     )
+                findings.append(
+                    self._finding(context, tool.name, f"{exc.kind}={exc.limit}", title, "CWE-674")
                 )
                 continue
             for ref in refs:
