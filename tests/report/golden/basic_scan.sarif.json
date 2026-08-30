@@ -23,7 +23,7 @@
               ],
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "<scan-profile>"
+                  "uri": ".agent-perimeter/https-mcp-example-test-rpc.mcp-profile.json"
                 },
                 "region": {
                   "endColumn": 1,
@@ -39,7 +39,7 @@
           },
           "partialFingerprints": {
             "agentPerimeter/v1": "3b3a352f0f5aafa0345af4c9a21110d0",
-            "primaryLocationLineHash": "<scan-profile-line-hash>"
+            "primaryLocationLineHash": "fc4342d8cde03d0c"
           },
           "properties": {
             "confidence": null,
@@ -69,6 +69,7 @@
               "name": "revision_cache_scope",
               "properties": {
                 "cwe": "CWE-524",
+                "security-severity": "5.0",
                 "tags": [
                   "security",
                   "CWE-524",

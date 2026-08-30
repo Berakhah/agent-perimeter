@@ -16,4 +16,4 @@ jobs:
       - run: uv run mypy --strict agent_perimeter
       - run: uv run pytest
       - name: Validate SARIF golden against 2.1.0 schema
-        run: uv run pytest tests/report/test_sarif.py -v
+        run: uv run pytest tests/report/test_sarif.py -v --no-cov

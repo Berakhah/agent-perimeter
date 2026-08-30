@@ -108,10 +108,9 @@ def test_config_derived_finding_is_anchored_to_its_real_file(tmp_path: Path) -> 
 def test_runtime_finding_is_anchored_to_a_scan_profile_that_exists_on_disk(tmp_path: Path) -> None:
     result = _sarif(_finding(), workspace=tmp_path)["runs"][0]["results"][0]  # type: ignore[index]
     uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
-    profile_path = Path(uri)
-    assert profile_path.exists()
-    assert profile_path.name.endswith(".mcp-profile.json")
-    assert profile_path.is_relative_to(tmp_path / ".agent-perimeter")
+    assert (tmp_path / uri).exists()
+    assert uri.endswith(".mcp-profile.json")
+    assert uri.startswith(".agent-perimeter/")
 
 
 def test_partial_fingerprint_is_stable_across_runs() -> None:
