@@ -43,7 +43,13 @@ def test_process_does_not_run_as_root() -> None:
 
 
 def test_memory_bomb_is_killed() -> None:
-    assert _run("memory", timeout_s=60).returncode != 0
+    """`returncode != 0` alone would also pass for a bad image, wrong
+    command, or missing env — none of which prove the OOM killer actually
+    fired. 137 is 128 + SIGKILL(9): the exit code a Linux container reports
+    when the kernel's OOM killer sends it SIGKILL, confirmed against this
+    fixture on this Docker daemon via `docker inspect -f
+    '{{.State.OOMKilled}}'` (returns `true` alongside this exact exit code)."""
+    assert _run("memory", timeout_s=60).returncode == 137
 
 
 def test_hang_hits_the_hard_timeout() -> None:

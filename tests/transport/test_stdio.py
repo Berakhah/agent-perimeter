@@ -408,7 +408,7 @@ def test_unbounded_response_line_is_capped_not_buffered_forever() -> None:
         )
     )
     try:
-        with pytest.raises(TransportError, match="bytes without a newline") as exc_info:
+        with pytest.raises(TransportError, match="characters without a newline") as exc_info:
             transport.request("ping")
     finally:
         transport.close()
