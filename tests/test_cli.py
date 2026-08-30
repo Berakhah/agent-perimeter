@@ -44,9 +44,7 @@ def test_active_mode_without_scope_file_refuses() -> None:
     assert "scope file" in result.stdout
 
 
-def test_active_mode_with_scope_file_is_accepted(
-    tmp_path: Path, stub_fingerprint: None
-) -> None:
+def test_active_mode_with_scope_file_is_accepted(tmp_path: Path, stub_fingerprint: None) -> None:
     scope = tmp_path / "scope.json"
     scope.write_text(
         json.dumps(
@@ -62,9 +60,12 @@ def test_active_mode_with_scope_file_is_accepted(
         app,
         [
             "scan",
-            "--target", "https://mcp.example.test/rpc",
-            "--mode", "active",
-            "--scope-file", str(scope),
+            "--target",
+            "https://mcp.example.test/rpc",
+            "--mode",
+            "active",
+            "--scope-file",
+            str(scope),
         ],
     )
     assert result.exit_code == 0
