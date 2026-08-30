@@ -112,6 +112,11 @@ def _rules(findings: list[Finding]) -> list[dict[str, object]]:
                 "cwe": finding.cwe,
                 "taxonomy_refs": list(finding.taxonomy_refs),
                 "tags": ["security", finding.cwe, *finding.taxonomy_refs],
+                # GitHub documents security-severity on the rule (reportingDescriptor),
+                # not the result — every shipping SARIF producer (CodeQL, Semgrep,
+                # Trivy, Grype) puts it here, as a string. Without it GitHub falls
+                # back to `level`, collapsing CRITICAL and HIGH into one bucket.
+                "security-severity": str(SEVERITY_TO_SECURITY_SEVERITY[finding.severity]),
             },
         }
     return list(rules.values())
@@ -172,7 +177,12 @@ def _results(findings: list[Finding], target: str, *, workspace: Path) -> list[d
             uri, line = finding.location.uri, finding.location.line
         else:
             profile_line += 1
-            uri, line = str(profile_path), profile_line
+            # A raw absolute filesystem path is not a valid URI reference per
+            # SARIF 2.1.0 section 3.4.3 (Windows backslashes included), and
+            # GitHub can't map an absolute path back to a file in the scanned
+            # repo. scan_profile_path() always nests under workspace, so this
+            # is always a valid relative subpath.
+            uri, line = profile_path.relative_to(workspace).as_posix(), profile_line
         results.append(_result(finding, target, uri=uri, line=line))
     return results
 
