@@ -55,10 +55,11 @@ class TokenPassthroughCheck:
             properties = tool.input_schema.get("properties")
             if not isinstance(properties, dict):
                 continue
-            corroborated = _has_outbound_destination(properties)
             for name in properties:
                 if not CREDENTIAL_NAME.search(str(name)):
                     continue
+                other_properties = {n: s for n, s in properties.items() if n != name}
+                corroborated = _has_outbound_destination(other_properties)
                 severity = self.severity if corroborated else Severity.MEDIUM
                 findings.append(
                     Finding(

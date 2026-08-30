@@ -65,6 +65,17 @@ def test_secrets_manager_shaped_tool_with_no_outbound_destination_is_medium() ->
     assert findings[0].severity is Severity.MEDIUM
 
 
+def test_self_matching_name_does_not_self_corroborate() -> None:
+    # `webhook_secret` matches both CREDENTIAL_NAME ("secret") and
+    # OUTBOUND_NAME ("webhook") — a single-parameter tool must not use the
+    # credential parameter itself as its own outbound corroboration.
+    findings = token_passthrough.CHECK.run(
+        _context({"webhook_secret": {"type": "string"}}, features=MODERN)
+    )
+    assert len(findings) == 1
+    assert findings[0].severity is Severity.MEDIUM
+
+
 def test_credential_shaped_names_are_recognised() -> None:
     for name in ("api_key", "apiKey", "authorization", "access_token", "secret"):
         assert token_passthrough.CHECK.run(_context({name: {"type": "string"}}, features=MODERN)), (
