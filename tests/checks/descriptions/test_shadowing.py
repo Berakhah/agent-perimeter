@@ -96,3 +96,20 @@ def test_tool_mentioning_its_own_name_is_clean() -> None:
     assert CHECK.run(
         _context(ToolRecord(name="send_email", description="send_email delivers a message."))
     ) == []
+
+
+def test_tool_with_imperative_self_reference_same_case_is_clean() -> None:
+    # A tool with an imperative phrase about itself in the same case must be clean.
+    findings = CHECK.run(
+        _context(ToolRecord(name="send_email", description="Before calling send_email, validate input."))
+    )
+    assert findings == []
+
+
+def test_tool_with_imperative_self_reference_cross_case_is_clean() -> None:
+    # A tool referencing itself in different case via an imperative phrase must be clean.
+    # This is the case that fails with case-sensitive equality.
+    findings = CHECK.run(
+        _context(ToolRecord(name="Send_Email", description="Before calling send_email, validate input."))
+    )
+    assert findings == []
