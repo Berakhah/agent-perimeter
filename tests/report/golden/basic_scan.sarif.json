@@ -23,7 +23,7 @@
               ],
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "C:\\Users\\Berakhah\\AppData\\Local\\Temp\\pytest-of-Berakhah\\pytest-246\\test_matches_the_committed_gol0\\.agent-perimeter\\https-mcp-example-test-rpc.mcp-profile.json"
+                  "uri": "<scan-profile>"
                 },
                 "region": {
                   "endColumn": 1,
@@ -39,7 +39,7 @@
           },
           "partialFingerprints": {
             "agentPerimeter/v1": "3b3a352f0f5aafa0345af4c9a21110d0",
-            "primaryLocationLineHash": "d2daab24dd89688f"
+            "primaryLocationLineHash": "<scan-profile-line-hash>"
           },
           "properties": {
             "confidence": null,
