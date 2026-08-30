@@ -42,8 +42,11 @@ from agent_perimeter.transport.base import TransportError
 SECCOMP_PROFILE = Path(__file__).parent / "seccomp.json"
 
 # Generous cap for one JSON-RPC response line: bounds host memory against a
-# server that floods stdout with a newline-free stream (I4).
-_MAX_RESPONSE_LINE_BYTES = 512 * 1024
+# server that floods stdout with a newline-free stream (I4). `readline()` on
+# this text-mode stream takes a character count, not a byte count, so under
+# UTF-8 the actual bound on host memory can be up to ~4x this many bytes —
+# still a bound, just a looser one than the name alone would suggest.
+_MAX_RESPONSE_LINE_CHARS = 512 * 1024
 
 
 class ContainmentError(TransportError):
@@ -274,7 +277,7 @@ class StdioTransport:
             raise ContainmentError(msg) from exc
 
         while True:
-            line = self._process.stdout.readline(_MAX_RESPONSE_LINE_BYTES)
+            line = self._process.stdout.readline(_MAX_RESPONSE_LINE_CHARS)
             if not line:
                 if self._deadline_exceeded:
                     msg = f"Container exceeded its {self._spec.timeout_s}s limit and was killed."
@@ -286,10 +289,10 @@ class StdioTransport:
                 )
                 raise TransportError(msg)
 
-            if len(line) >= _MAX_RESPONSE_LINE_BYTES and not line.endswith("\n"):
+            if len(line) >= _MAX_RESPONSE_LINE_CHARS and not line.endswith("\n"):
                 msg = (
                     f"Response line for {method} exceeded "
-                    f"{_MAX_RESPONSE_LINE_BYTES} bytes without a newline; refusing to "
+                    f"{_MAX_RESPONSE_LINE_CHARS} characters without a newline; refusing to "
                     "buffer further."
                 )
                 raise TransportError(msg)

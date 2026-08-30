@@ -9,10 +9,12 @@ from __future__ import annotations
 import os
 import shlex
 from datetime import date
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
 import typer
+from pydantic import ValidationError
 
 from agent_perimeter.checks.registry import applicable, summarise_skips
 from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile, require_scope
@@ -22,6 +24,15 @@ from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
 from agent_perimeter.transport.streamable_http import StreamableHttpTransport
 
 DEFAULT_CONTACT_URL = "https://github.com/USER/agent-perimeter"
+
+
+class ScanMode(StrEnum):
+    """A free-form `str` let `--mode actve` (typo) silently run a passive
+    scan with no warning. An enum makes Typer reject an invalid value
+    outright instead of misinterpreting it as "not active"."""
+
+    PASSIVE = "passive"
+    ACTIVE = "active"
 
 
 def _parse_env(pairs: list[str]) -> dict[str, str]:
@@ -63,7 +74,7 @@ def main(ctx: typer.Context) -> None:
 @app.command()
 def scan(
     target: Annotated[str, typer.Option(help="A URL, or a stdio command to launch.")],
-    mode: Annotated[str, typer.Option(help="passive or active")] = "passive",
+    mode: Annotated[ScanMode, typer.Option(help="passive or active")] = ScanMode.PASSIVE,
     scope_file: Annotated[Path | None, typer.Option(help="Authorisation for active mode.")] = None,
     image: Annotated[
         str, typer.Option(help="Container image for stdio targets.")
@@ -73,10 +84,14 @@ def scan(
         typer.Option(help="Environment variable KEY=VALUE for a stdio target, may be repeated."),
     ] = [],  # noqa: B006 -- read-only; typer needs a concrete default, never mutated
 ) -> None:
-    scope = ScopeFile.model_validate_json(scope_file.read_text()) if scope_file else None
+    try:
+        scope = ScopeFile.model_validate_json(scope_file.read_text()) if scope_file else None
+    except (OSError, ValidationError) as exc:
+        typer.echo(f"Could not read scope file: {exc}")
+        raise typer.Exit(code=2) from None
     env_dict = _parse_env(env)
 
-    if mode == "active":
+    if mode == ScanMode.ACTIVE:
         if scope is None:
             typer.echo(
                 "Active mode requires a scope file naming target, authorising_party, "
@@ -89,7 +104,11 @@ def scan(
             typer.echo(str(exc))
             raise typer.Exit(code=2) from None
 
-    transport = _build_transport(target, image, env_dict)
+    try:
+        transport = _build_transport(target, image, env_dict)
+    except ValueError as exc:
+        typer.echo(f"Invalid configuration: {exc}")
+        raise typer.Exit(code=2) from None
     try:
         result: Fingerprint = fingerprint(transport)
     finally:
