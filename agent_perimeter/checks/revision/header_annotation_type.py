@@ -27,8 +27,15 @@ def _type_violation(
     if schema_type == "integer":
         node: object = tool_schema
         for part in pointer.removeprefix("#/").split("/"):
-            if part and isinstance(node, dict):
+            if not part:
+                continue
+            if isinstance(node, dict):
                 node = node.get(part, {})
+            elif isinstance(node, list) and part.isdigit():
+                index = int(part)
+                node = node[index] if 0 <= index < len(node) else {}
+            else:
+                node = {}
         bound = node.get("maximum") if isinstance(node, dict) else None
         if isinstance(bound, int | float) and abs(bound) > JS_SAFE_INTEGER:
             return f"declared maximum {bound} exceeds the JS safe integer range"

@@ -152,6 +152,28 @@ def test_integer_outside_js_safe_range_is_reported() -> None:
     assert len(header_annotation_type.CHECK.run(_context(schema))) == 1
 
 
+def test_integer_outside_js_safe_range_behind_oneof_is_still_reported() -> None:
+    """Regression: the pointer segment addressing a oneOf branch is a list
+    index (e.g. .../oneOf/0), not a dict key. _type_violation's manual
+    pointer re-walk must follow it into the list, not silently give up and
+    report no maximum bound."""
+    schema = {
+        "type": "object",
+        "properties": {
+            "region": {
+                "oneOf": [
+                    {
+                        "type": "integer",
+                        "x-mcp-header": "Region",
+                        "maximum": 2**53,
+                    }
+                ]
+            }
+        },
+    }
+    assert len(header_annotation_type.CHECK.run(_context(schema))) == 1
+
+
 def test_string_typed_annotation_is_clean_for_type_check() -> None:
     assert header_annotation_type.CHECK.run(_context(_schema(**{"x-mcp-header": "Region"}))) == []
 
