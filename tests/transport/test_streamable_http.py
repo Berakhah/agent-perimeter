@@ -170,6 +170,30 @@ def test_malformed_sse_data_payload_raises_transport_error() -> None:
         _transport(handler).request("tools/list")
 
 
+def test_deeply_nested_json_body_raises_transport_error_not_recursion_error() -> None:
+    """A hostile server can send arbitrarily nested JSON to crash the scanner
+    process instead of just failing this one request."""
+    nesting = 20000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = b"[" * nesting + b"]" * nesting
+        return httpx.Response(200, content=body, headers={"content-type": "application/json"})
+
+    with pytest.raises(TransportError):
+        _transport(handler).request("tools/list")
+
+
+def test_deeply_nested_sse_payload_raises_transport_error_not_recursion_error() -> None:
+    nesting = 20000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = "event: message\ndata: " + "[" * nesting + "]" * nesting + "\n\n"
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    with pytest.raises(TransportError):
+        _transport(handler).request("tools/list")
+
+
 def test_non_dict_result_raises_transport_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": ["not", "a", "dict"]})

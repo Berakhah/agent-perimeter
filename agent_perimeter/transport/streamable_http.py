@@ -38,7 +38,7 @@ def _mcp_name(method: str, params: dict[str, object] | None) -> str | None:
 def _error_code(response: httpx.Response) -> int | None:
     try:
         payload = response.json()
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     if not isinstance(payload, dict):
         return None
@@ -60,7 +60,7 @@ def _parse_sse(text: str) -> dict[str, object]:
         raise TransportError(msg)
     try:
         result = json.loads(data_lines[-1])
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, RecursionError) as exc:
         msg = "SSE response contained malformed JSON in its final data: event"
         raise TransportError(msg) from exc
     if not isinstance(result, dict):
@@ -75,7 +75,7 @@ def _parse_body(response: httpx.Response) -> dict[str, object]:
         return _parse_sse(response.text)
     try:
         result = response.json()
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         msg = f"{response.status_code} response body was not valid JSON"
         raise TransportError(msg) from exc
     if not isinstance(result, dict):
