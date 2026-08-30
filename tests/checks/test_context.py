@@ -46,6 +46,7 @@ def test_scan_context_construction_with_required_fields_only() -> None:
     assert context.raw == {}
     assert context.scope is None
     assert context.ambiguous_tools == frozenset()
+    assert context.invocation_flags == ()
 
 
 def test_scan_context_reproduction_formats_command_correctly() -> None:
@@ -168,5 +169,54 @@ def test_scan_context_reproduction_with_special_characters_in_target() -> None:
     target = "https://example.test:8080/path?query=1&other=2"
     context = ScanContext(target=target, transport=transport, fingerprint=fingerprint)
 
+    # `?` and `&` are shell metacharacters — an unquoted target would be
+    # backgrounded and truncated by any shell the command is pasted into.
     reproduction_cmd = context.reproduction("active.ssrf")
-    assert reproduction_cmd == f"agent-perimeter scan --target {target} --only active.ssrf"
+    assert reproduction_cmd == f"agent-perimeter scan --target '{target}' --only active.ssrf"
+
+
+def _bare_context(target: str, **kwargs: object) -> ScanContext:
+    return ScanContext(
+        target=target,
+        transport=FakeTransport(),
+        fingerprint=Fingerprint(
+            revision_claimed=None,
+            features=frozenset(),
+            claim=Claim(
+                value="unknown",
+                method=Method.DETERMINISTIC,
+                derivation=Derivation.PROBE,
+                observed_at=datetime.now(UTC),
+            ),
+        ),
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_reproduction_replays_the_flags_the_finding_actually_needed() -> None:
+    """`--only secrets.config_scan` without `--config` re-runs to zero
+    findings — the command printed beside a finding has to be the one that
+    produces it."""
+    context = _bare_context(
+        "https://mcp.example.test/rpc",
+        invocation_flags=("--config", "/etc/mcp/config.json"),
+    )
+    assert context.reproduction("secrets.config_scan") == (
+        "agent-perimeter scan --target https://mcp.example.test/rpc "
+        "--only secrets.config_scan --config /etc/mcp/config.json"
+    )
+
+
+def test_reproduction_quotes_a_target_containing_a_space() -> None:
+    """A stdio target is a command line: unquoted, `--target python server.py`
+    hands `server.py` to the shell as a separate word."""
+    command = _bare_context("python server.py").reproduction("secrets.env_scan")
+    assert "--target 'python server.py' " in command
+
+
+def test_reproduction_quotes_shell_metacharacters_in_a_url_target() -> None:
+    context = _bare_context("https://example.test:8080/path?query=1&other=2")
+    assert context.reproduction("static.cleartext_target") == (
+        "agent-perimeter scan --target 'https://example.test:8080/path?query=1&other=2' "
+        "--only static.cleartext_target"
+    )

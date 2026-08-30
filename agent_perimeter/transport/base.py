@@ -23,3 +23,21 @@ class Transport(Protocol):
         ...
 
     def close(self) -> None: ...
+
+
+#: `revision.header_body_mismatch` asks a transport to send a request whose
+#: routing header disagrees with its body. Only Streamable HTTP has a header
+#: to diverge from — `StreamableHttpTransport.request()` pops this param and
+#: builds the mismatched request. Any other transport would forward it as an
+#: ordinary JSON-RPC param, which a tolerant server ignores while answering
+#: normally; the check reads "no error" as "the body was honoured" and emits
+#: a HIGH-severity false positive. So the boundary is explicit rather than
+#: silently degrading: a transport that cannot honour it says so.
+HEADER_OVERRIDE_PARAM = "_ap_header_override"
+
+
+def _reject_header_override(transport: object, params: dict[str, object] | None) -> None:
+    """Fail closed on a probe param this transport cannot actually perform."""
+    if params and HEADER_OVERRIDE_PARAM in params:
+        msg = f"{type(transport).__name__} does not support header/body divergence probing"
+        raise TransportError(msg)

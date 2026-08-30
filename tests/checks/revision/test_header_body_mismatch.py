@@ -85,3 +85,31 @@ def test_check_is_skipped_without_a_scope_file_end_to_end() -> None:
     assert runnable == []
     assert skipped[0].check_id == CHECK.id
     assert skipped[0].reason is SkipReason.NOT_AUTHORISED
+
+
+class ForwardingTransport(RecordingTransport):
+    """The pre-fix behaviour of every non-Streamable-HTTP transport: it does
+    not understand `_ap_header_override`, so it forwards it as an ordinary
+    JSON-RPC param and a tolerant server answers `tools/list` normally. If
+    the check ever reads that as "the mismatched body was honoured" it emits
+    a HIGH-severity false positive on every stdio and legacy-SSE target."""
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        self.sent.append((method, params))
+        return {"resultType": "complete", "tools": []}
+
+
+def test_a_transport_that_cannot_diverge_header_from_body_is_not_reported() -> None:
+    """Fails closed: "could not probe" must never render as "probed clean",
+    and certainly never as a finding. Driven through the real StdioTransport
+    guard — constructed without __init__ because the guard runs before the
+    transport touches its pipes, so no container is needed."""
+    from agent_perimeter.transport.stdio import StdioTransport
+
+    assert CHECK.run(_context(object.__new__(StdioTransport))) == []  # type: ignore[arg-type]
+
+
+def test_a_transport_that_silently_forwards_the_probe_would_false_positive() -> None:
+    """Guards the guard: this is what the check does when a transport answers
+    normally, which is exactly why the refusal has to live in the transport."""
+    assert len(CHECK.run(_context(ForwardingTransport(honours_body=False)))) == 1

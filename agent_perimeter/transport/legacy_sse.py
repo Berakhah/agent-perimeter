@@ -12,7 +12,7 @@ import warnings
 
 import httpx
 
-from agent_perimeter.transport.base import TransportError
+from agent_perimeter.transport.base import TransportError, _reject_header_override
 
 DEPRECATED_SINCE = "2025-03-26"
 CLIENT_NAME = "agent-perimeter"
@@ -33,6 +33,7 @@ class LegacySseTransport:
         self._contact_url = contact_url
 
     def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        _reject_header_override(self, params)
         body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
         headers = {
             "Content-Type": "application/json",

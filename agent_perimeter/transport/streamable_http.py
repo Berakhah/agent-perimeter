@@ -18,7 +18,7 @@ import json
 
 import httpx
 
-from agent_perimeter.transport.base import TransportError
+from agent_perimeter.transport.base import HEADER_OVERRIDE_PARAM, TransportError
 
 CLIENT_NAME = "agent-perimeter"
 CLIENT_VERSION = "0.1.0"
@@ -92,7 +92,9 @@ class StreamableHttpTransport:
 
     def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         request_params = dict(params or {})
-        header_override = request_params.pop("_ap_header_override", None)
+        # The one transport that can actually honour this — see
+        # HEADER_OVERRIDE_PARAM's note in transport/base.py.
+        header_override = request_params.pop(HEADER_OVERRIDE_PARAM, None)
         body_method = str(header_override) if header_override is not None else method
         request_params["_meta"] = {
             "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,

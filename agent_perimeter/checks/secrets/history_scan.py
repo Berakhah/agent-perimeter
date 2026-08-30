@@ -17,7 +17,13 @@ from pathlib import Path
 from agent_perimeter._contracts import SecretFingerprint, Severity
 from agent_perimeter.checks.context import ScanContext
 from agent_perimeter.checks.secrets.config_scan import build_finding
-from agent_perimeter.checks.secrets.patterns import ENTROPY_FLOOR, MIN_LENGTH, SECRET_KEY_NAME
+from agent_perimeter.checks.secrets.patterns import (
+    ENTROPY_FLOOR,
+    MIN_LENGTH,
+    SECRET_KEY_NAME,
+    is_placeholder,
+    matches_known_pattern,
+)
 from agent_perimeter.model.feature import Feature
 from agent_perimeter.model.finding import Finding
 
@@ -74,8 +80,20 @@ class HistoryScanCheck:
             for key, value in ASSIGNMENT.findall(line):
                 if not SECRET_KEY_NAME.search(key) or len(value) < MIN_LENGTH:
                     continue
+                # Same precedence as patterns.scan_mapping, which config_scan
+                # and env_scan get for free: a published credential prefix
+                # fires regardless of entropy or placeholder shape, and
+                # everything else must clear both gates. A commit diff is full
+                # of URLs, paths and UUIDs under `*_key`/`*_token` names —
+                # without this they all fired at CRITICAL here while the
+                # identical value was correctly ignored by config_scan.
+                known = matches_known_pattern(value)
+                if known is None and is_placeholder(value):
+                    continue
                 fingerprint = SecretFingerprint.of(value, location=f"{location}:{key}")
-                if fingerprint.entropy < ENTROPY_FLOOR or fingerprint.sha256 in seen:
+                if known is None and fingerprint.entropy < ENTROPY_FLOOR:
+                    continue
+                if fingerprint.sha256 in seen:
                     continue
                 seen.add(fingerprint.sha256)
                 findings.append(

@@ -193,3 +193,89 @@ def _normalise_profile_uri(document: dict[str, object]) -> None:
             # relative uri (see primary_location_line_hash), so it is just as
             # tmp_path-dependent and must be normalised alongside it.
             result["partialFingerprints"]["primaryLocationLineHash"] = "<scan-profile-line-hash>"
+
+
+# --- Config-derived locations come from a real OS path, not an idealised one --
+#
+# `_config_finding()` above hand-builds `FindingLocation(uri=".mcp.json")`,
+# which nothing actually produces: `secrets/config_scan._locate()` sets the
+# uri from the operator's own `--config` argument, i.e. an absolute OS path
+# with backslashes on Windows. SARIF 2.1.0 section 3.4.3 wants a valid URI
+# reference, and GitHub cannot map an absolute host path back to a file in the
+# scanned repo. These two tests drive the real check so the emitter is fed the
+# location it will actually see in production.
+
+_SARIF_TEST_HMAC_KEY = b"test-key-0123456789abcdef01234567"
+_SARIF_FAKE_KEY = "sk-test-" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
+
+
+def _real_config_finding(config_path: Path) -> Finding:
+    from agent_perimeter.checks.context import ScanContext
+    from agent_perimeter.checks.secrets.config_scan import ConfigScanCheck
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        '{\n  "env": {\n    "API_KEY": "' + _SARIF_FAKE_KEY + '"\n  }\n}\n', encoding="utf-8"
+    )
+
+    class _NullTransport:
+        def request(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            return {}
+
+        def close(self) -> None: ...
+
+    context = ScanContext(
+        target=TARGET,
+        transport=_NullTransport(),
+        fingerprint=FINGERPRINT,
+        raw={
+            "_config": {"env": {"API_KEY": _SARIF_FAKE_KEY}},
+            "_config_path": {"path": str(config_path)},
+        },
+    )
+    findings = ConfigScanCheck(hmac_key=_SARIF_TEST_HMAC_KEY).run(context)
+    assert len(findings) == 1
+    assert findings[0].location is not None, "the check must anchor to the real file"
+    return findings[0]
+
+
+def test_config_inside_the_workspace_gets_a_workspace_relative_posix_uri(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "repo"
+    finding = _real_config_finding(workspace / "conf" / ".mcp.json")
+    result = _sarif(finding, workspace=workspace)["runs"][0]["results"][0]  # type: ignore[index]
+    uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+    assert uri == "conf/.mcp.json"
+    assert result["locations"][0]["physicalLocation"]["region"]["startLine"] == 3
+
+
+def test_config_outside_the_workspace_falls_back_to_the_scan_profile_anchor(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    finding = _real_config_finding(tmp_path / "elsewhere" / ".mcp.json")
+    result = _sarif(finding, workspace=workspace)["runs"][0]["results"][0]  # type: ignore[index]
+    uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+    assert uri.startswith(".agent-perimeter/")
+    assert (workspace / uri).exists(), "the anchor must be a file that really exists"
+
+
+def test_no_emitted_uri_is_an_absolute_os_path(tmp_path: Path) -> None:
+    """SARIF 2.1.0 section 3.4.3: a URI reference, never a host path."""
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    document = _sarif(
+        _finding(),
+        _real_config_finding(workspace / ".mcp.json"),
+        _real_config_finding(tmp_path / "outside" / ".mcp.json"),
+        workspace=workspace,
+    )
+    jsonschema.validate(document, SCHEMA)
+    for result in document["runs"][0]["results"]:  # type: ignore[index]
+        uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        assert "\\" not in uri, uri
+        assert not Path(uri).is_absolute(), uri

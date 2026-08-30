@@ -1,4 +1,5 @@
 import json
+import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -166,3 +167,38 @@ def test_only_with_an_unknown_check_id_fails_closed() -> None:
     assert result.exit_code == 2
     assert "not a registered check id" in result.stdout
     assert "static.cleartext_target" in result.stdout  # names a real, correct id
+
+
+def test_reproduction_command_replays_the_config_flag_that_produced_it(
+    tmp_path: Path, stub_fingerprint: None
+) -> None:
+    """`--only secrets.config_scan` with no `--config` finds nothing. The
+    reproduction printed beside a finding has to be the command that
+    actually produces it, and its SARIF uri has to be a URI reference, not
+    an absolute host path."""
+    config = tmp_path / "mcp.json"
+    config.write_text(
+        '{\n  "env": {\n    "API_KEY": "sk-test-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"\n  }\n}\n'
+    )
+    sarif = tmp_path / "out.sarif"
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--target",
+            "https://mcp.example.test/rpc",
+            "--only",
+            "secrets.config_scan",
+            "--config",
+            str(config),
+            "--sarif",
+            str(sarif),
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    document = json.loads(sarif.read_text())
+    (emitted,) = document["runs"][0]["results"]
+    assert f"--config {shlex.quote(str(config))}" in emitted["message"]["text"]
+    assert "--only secrets.config_scan" in emitted["message"]["text"]
+    uri = emitted["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+    assert uri == "mcp.json", uri
