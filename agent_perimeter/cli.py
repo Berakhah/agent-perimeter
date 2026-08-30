@@ -47,19 +47,36 @@ STRONG_SIGNAL_CATEGORIES = frozenset(
 )
 
 
-def compute_ambiguous_tools(tools: list[ToolRecord]) -> frozenset[str]:
-    from agent_perimeter.checks.descriptions.imperative_injection import IMPERATIVE_PATTERNS
+def compute_ambiguous_tools(tools: list[ToolRecord], target: str) -> frozenset[str]:
+    """Mirror the deterministic detectors exactly, or their false positives reopen.
+
+    `target` is needed so an `exfiltration` match can be exempted the same way
+    `ImperativeInjectionCheck` exempts it — sending data back to the server's
+    own origin is not exfiltration. `tool.name` is scanned through
+    `scan_text` too, alongside `tool.description`, because
+    `UnicodeAnomalyCheck` scans both fields for strong signals (bidi/zero-
+    width/tag characters) and a name-only strong signal must disqualify
+    ambiguity exactly like a description one does.
+    """
+    from agent_perimeter.checks.descriptions.imperative_injection import (
+        IMPERATIVE_PATTERNS,
+        _same_origin,
+    )
     from agent_perimeter.checks.descriptions.unicode_anomaly import _confusable_name, scan_text
 
     weak: set[str] = set()
     strong: set[str] = set()
     for tool in tools:
-        categories = {
-            category
-            for category, pattern in IMPERATIVE_PATTERNS
-            if pattern.search(tool.description)
-        }
+        categories: set[str] = set()
+        for category, pattern in IMPERATIVE_PATTERNS:
+            match = pattern.search(tool.description)
+            if match is None:
+                continue
+            if category == "exfiltration" and _same_origin(match.group(3), target):
+                continue
+            categories.add(category)
         categories |= {category for category, _, _ in scan_text(tool.description)}
+        categories |= {category for category, _, _ in scan_text(tool.name)}
         if _confusable_name(tool.name) is not None:
             categories.add("confusable_name")
         if categories & STRONG_SIGNAL_CATEGORIES:
@@ -143,6 +160,22 @@ def scan(
         raise typer.Exit(code=2) from None
     env_dict = _parse_env(env)
 
+    # Validate --only before doing any real work (opening a transport,
+    # launching a container) — a typo'd check id must fail loudly, not
+    # silently select zero checks and print an indistinguishable-from-clean
+    # "No findings" (--only is also what every finding's own `reproduction`
+    # command uses, so a sceptic re-running one needs this to fail closed).
+    from agent_perimeter.checks.all_checks import ALL_CHECKS
+
+    if only is not None:
+        known_ids = {c.id for c in ALL_CHECKS}
+        if only not in known_ids:
+            typer.echo(
+                f"--only {only!r} is not a registered check id. "
+                f"Known ids: {', '.join(sorted(known_ids))}"
+            )
+            raise typer.Exit(code=2)
+
     if mode == ScanMode.ACTIVE:
         if scope is None:
             typer.echo(
@@ -175,7 +208,7 @@ def scan(
         typer.echo(f"Revision claimed:  {claimed}")
         typer.echo(f"Features observed: {observed}")
 
-        from agent_perimeter.checks.all_checks import ALL_CHECKS, run_checks, summarise_errors
+        from agent_perimeter.checks.all_checks import run_checks, summarise_errors
         from agent_perimeter.checks.context import ScanContext
         from agent_perimeter.checks.revision.oauth_metadata import fetch_oauth_metadata
         from agent_perimeter.checks.static.auth_probe import probe_auth_challenge
@@ -227,7 +260,7 @@ def scan(
                 raw["_env"] = dict(launch_spec.env)
 
         tools = enumerate_tools(transport)
-        ambiguous = compute_ambiguous_tools(tools)
+        ambiguous = compute_ambiguous_tools(tools, target)
 
         context = ScanContext(
             target=target,
@@ -240,8 +273,18 @@ def scan(
         )
 
         selected = [c for c in ALL_CHECKS if only is None or c.id == only]
+        # No real model provider is wired anywhere in this plan yet (bok-core's
+        # gateway doesn't exist — descriptions.llm_judge runs against the
+        # UnavailableJudge placeholder, which classifies nothing). False is
+        # the honest current state, not a config knob: without it llm_judge
+        # would run for real and emit a fabricated Method.MODEL finding.
         runnable, skipped = applicable(
-            selected, result.features, scope=scope, target=target, today=date.today()
+            selected,
+            result.features,
+            scope=scope,
+            target=target,
+            today=date.today(),
+            models_available=False,
         )
 
         findings, errored = run_checks(runnable, context)

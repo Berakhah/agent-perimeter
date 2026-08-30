@@ -142,3 +142,27 @@ def test_empty_findings_copy_is_correct(stub_fingerprint: None) -> None:
     )
     assert "No findings for the checks that ran" in result.stdout
     assert "You're secure" not in result.stdout
+
+
+def test_llm_judge_is_skipped_as_model_unavailable(stub_fingerprint: None) -> None:
+    # Review finding 1: no real model provider is wired anywhere in this
+    # plan yet, so descriptions.llm_judge (the only requires_model check)
+    # must be skipped, not silently run against the UnavailableJudge
+    # placeholder and report a fabricated Method.MODEL finding.
+    result = runner.invoke(app, ["scan", "--target", "https://mcp.example.test/rpc"])
+    assert result.exit_code == 0
+    assert "model_unavailable" in result.stdout
+    assert "descriptions.llm_judge" not in result.stdout
+
+
+def test_only_with_an_unknown_check_id_fails_closed() -> None:
+    # Review finding 3: a typo'd --only must not silently select zero
+    # checks and print a "No findings" indistinguishable from a real clean
+    # scan — it must fail loudly, the same way an invalid scope file does.
+    result = runner.invoke(
+        app,
+        ["scan", "--target", "https://mcp.example.test/rpc", "--only", "static.cleartext-target"],
+    )
+    assert result.exit_code == 2
+    assert "not a registered check id" in result.stdout
+    assert "static.cleartext_target" in result.stdout  # names a real, correct id
