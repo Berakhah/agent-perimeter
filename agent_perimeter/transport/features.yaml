@@ -1,0 +1,15 @@
+# Revision -> feature bundle. Adding a future revision means adding a block
+# here, not editing check declarations. See spec section 4.1.
+2025-11-25:
+  - initialize_handshake
+  - session_header
+  - sse_resumability
+  - subscribe_unsubscribe
+2026-07-28:
+  - server_discover
+  - result_type
+  - cacheable_result
+  - mrtr
+  - param_headers
+  - subscriptions_listen
+  - extensions
