@@ -257,19 +257,20 @@ def _load_fixture(revision: str, flaw: str, monkeypatch: pytest.MonkeyPatch) -> 
             ),
         ),
         (
-            # The fixture's param_header flaw adds a *property named*
-            # x-mcp-header rather than annotating an existing one — the
-            # wrong shape per revision §1.8, left for Week 2's fixture-matrix
-            # pass to correct. PARAM_HEADERS must stay absent against it:
-            # this proves the detector has no false positive on that shape.
+            # param_header_valid puts a real, well-formed x-mcp-header
+            # annotation on region's own schema (Task 6's fixture-matrix
+            # pass, replacing the old wrong-shape param_header flaw that
+            # added a *property named* x-mcp-header). PARAM_HEADERS must be
+            # observed here: this proves a genuine annotation is detected.
             "2026-07-28",
-            "param_header",
+            "param_header_valid",
             frozenset(
                 {
                     Feature.SERVER_DISCOVER,
                     Feature.EXTENSIONS,
                     Feature.RESULT_TYPE,
                     Feature.CACHEABLE_RESULT,
+                    Feature.PARAM_HEADERS,
                 }
             ),
         ),
