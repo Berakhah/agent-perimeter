@@ -10,6 +10,13 @@ from agent_perimeter.transport.revision import Fingerprint
 # Synthetic, structurally valid, never issued. gitleaks-safe: not a real prefix.
 FAKE_KEY = "sk-test-" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
 
+# Fixed test key so these tests never touch the real ~/.agent-perimeter/hmac.key
+# (export_fingerprint's default path). Check instances built with it, never the
+# CHECK singletons, which are reserved for production's real installation key.
+_TEST_HMAC_KEY = b"test-key-0123456789abcdef01234567"
+_CONFIG_CHECK = config_scan.ConfigScanCheck(hmac_key=_TEST_HMAC_KEY)
+_ENV_CHECK = env_scan.EnvScanCheck(hmac_key=_TEST_HMAC_KEY)
+
 
 class NullTransport:
     def request(
@@ -62,7 +69,7 @@ def test_fingerprint_object_does_not_retain_the_value() -> None:
 
 def test_config_secret_is_reported_without_the_value() -> None:
     context = _context({"_config": {"env": {"API_KEY": FAKE_KEY}}})
-    findings = config_scan.CHECK.run(context)
+    findings = _CONFIG_CHECK.run(context)
     assert len(findings) == 1
     assert findings[0].cwe == "CWE-798"
     assert findings[0].severity is Severity.CRITICAL
@@ -74,7 +81,7 @@ def test_config_secret_is_reported_without_the_value() -> None:
 
 def test_low_entropy_placeholder_is_not_reported() -> None:
     context = _context({"_config": {"env": {"API_KEY": "changeme"}}})
-    assert config_scan.CHECK.run(context) == []
+    assert _CONFIG_CHECK.run(context) == []
 
 
 def test_placeholder_shaped_values_are_not_reported() -> None:
@@ -88,7 +95,7 @@ def test_placeholder_shaped_values_are_not_reported() -> None:
         "https://example.test/callback",
     ):
         context = _context({"_config": {"env": {"API_KEY": placeholder}}})
-        assert config_scan.CHECK.run(context) == [], placeholder
+        assert _CONFIG_CHECK.run(context) == [], placeholder
 
 
 def test_a_known_prefix_is_reported_even_at_borderline_entropy() -> None:
@@ -97,17 +104,28 @@ def test_a_known_prefix_is_reported_even_at_borderline_entropy() -> None:
     for value in ("sk-live-aaaaaaaaaaaaaaaaaaaaaaaa", "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                   "AKIAAAAAAAAAAAAAAAAA", "xoxb-NOTAREAL-FIXTURETOKEN-000"):
         context = _context({"_config": {"env": {"TOKEN": value}}})
-        assert len(config_scan.CHECK.run(context)) == 1, value
+        assert len(_CONFIG_CHECK.run(context)) == 1, value
+
+
+def test_known_prefix_secret_inside_a_list_is_reported() -> None:
+    # A credential passed as a CLI arg ("args": ["--token", "sk-..."]) is a
+    # real, documented way MCP server configs carry secrets. List items have
+    # no key name to gate SECRET_KEY_NAME on, so only a known-prefix match
+    # qualifies them (never the entropy-only fallback).
+    context = _context({"_config": {"args": ["--token", FAKE_KEY]}})
+    findings = _CONFIG_CHECK.run(context)
+    assert len(findings) == 1
+    assert FAKE_KEY not in findings[0].evidence.excerpt
 
 
 def test_env_secret_is_reported() -> None:
     context = _context({"_env": {"MCP_TOKEN": FAKE_KEY}})
-    assert len(env_scan.CHECK.run(context)) == 1
+    assert len(_ENV_CHECK.run(context)) == 1
 
 
 def test_no_config_present_yields_nothing() -> None:
-    assert config_scan.CHECK.run(_context({})) == []
-    assert env_scan.CHECK.run(_context({})) == []
+    assert _CONFIG_CHECK.run(_context({})) == []
+    assert _ENV_CHECK.run(_context({})) == []
 
 
 def fp_sha256_not_exposed_raw(excerpt: str) -> bool:
