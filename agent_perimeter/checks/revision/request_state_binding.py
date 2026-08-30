@@ -51,9 +51,7 @@ class RequestStateBindingCheck:
     severity: Severity = Severity.MEDIUM
     requires_auth: bool = False
     requires_model: bool = False
-    requires_features: frozenset[Feature] = field(
-        default_factory=lambda: frozenset({Feature.MRTR})
-    )
+    requires_features: frozenset[Feature] = field(default_factory=lambda: frozenset({Feature.MRTR}))
 
     def run(self, context: ScanContext) -> list[Finding]:
         findings: list[Finding] = []

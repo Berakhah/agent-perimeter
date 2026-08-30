@@ -6,9 +6,7 @@ class FakeTransport:
     def __init__(self, responses: dict[str, dict[str, object]]) -> None:
         self._responses = responses
 
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         if method not in self._responses:
             msg = f"Method not found: {method}"
             raise TransportError(msg)

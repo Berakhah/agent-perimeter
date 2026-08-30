@@ -9,9 +9,7 @@ from agent_perimeter.transport.revision import Fingerprint
 
 
 class NullTransport:
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         return {}
 
     def close(self) -> None: ...
@@ -36,9 +34,7 @@ def _context(schema: dict[str, object]) -> ScanContext:
 
 
 def test_external_ref_is_reported() -> None:
-    findings = CHECK.run(
-        _context({"$ref": "https://attacker.example.test/schema.json"})
-    )
+    findings = CHECK.run(_context({"$ref": "https://attacker.example.test/schema.json"}))
     assert len(findings) == 1
     assert findings[0].severity is Severity.HIGH
     assert "attacker.example.test" in findings[0].evidence.excerpt

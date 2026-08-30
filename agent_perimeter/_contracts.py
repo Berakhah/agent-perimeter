@@ -124,9 +124,7 @@ class SecretFingerprint:
         counts = Counter(value)
         length = len(value)
         entropy = (
-            -sum((n / length) * math.log2(n / length) for n in counts.values())
-            if length
-            else 0.0
+            -sum((n / length) * math.log2(n / length) for n in counts.values()) if length else 0.0
         )
 
         return cls(

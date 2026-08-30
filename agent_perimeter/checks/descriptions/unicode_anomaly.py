@@ -28,9 +28,22 @@ TAG_CHARACTERS = frozenset(range(0xE0000, 0xE0080))
 # table (https://www.unicode.org/Public/security/latest/confusables.txt) —
 # widen this if a real-world sample shows a case it misses.
 CONFUSABLE_SKELETON: dict[str, str] = {
-    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "у": "y",
-    "і": "i", "ѕ": "s", "ј": "j", "ԁ": "d",
-    "α": "a", "ο": "o", "ρ": "p", "υ": "u", "ν": "v",
+    "а": "a",
+    "е": "e",
+    "о": "o",
+    "р": "p",
+    "с": "c",
+    "х": "x",
+    "у": "y",
+    "і": "i",
+    "ѕ": "s",
+    "ј": "j",
+    "ԁ": "d",
+    "α": "a",
+    "ο": "o",
+    "ρ": "p",
+    "υ": "u",
+    "ν": "v",
 }
 
 
@@ -87,8 +100,15 @@ class UnicodeAnomalyCheck:
                 for category, offset, codepoint in scan_text(text):
                     findings.append(
                         self._finding(
-                            context, tool.name, field_name, category, offset, codepoint,
-                            derivation=Derivation.NAME if field_name == "name" else Derivation.DESCRIPTION,
+                            context,
+                            tool.name,
+                            field_name,
+                            category,
+                            offset,
+                            codepoint,
+                            derivation=(
+                                Derivation.NAME if field_name == "name" else Derivation.DESCRIPTION
+                            ),
                         )
                     )
             confusable = _confusable_name(tool.name)
@@ -96,7 +116,12 @@ class UnicodeAnomalyCheck:
                 offset, codepoint = confusable
                 findings.append(
                     self._finding(
-                        context, tool.name, "name", "confusable_name", offset, codepoint,
+                        context,
+                        tool.name,
+                        "name",
+                        "confusable_name",
+                        offset,
+                        codepoint,
                         derivation=Derivation.NAME,
                     )
                 )

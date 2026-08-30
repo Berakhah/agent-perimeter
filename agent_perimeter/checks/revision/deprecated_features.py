@@ -32,8 +32,7 @@ DEPRECATED: dict[str, tuple[Severity, str, str]] = {
     ),
     "roots": (
         Severity.LOW,
-        "Roots is deprecated (twelve-month removal window); pass paths as tool "
-        "parameters instead",
+        "Roots is deprecated (twelve-month removal window); pass paths as tool parameters instead",
         "client",
     ),
     "logging": (

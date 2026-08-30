@@ -8,17 +8,13 @@ from agent_perimeter.transport.revision import Fingerprint
 
 
 class NullTransport:
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         return {}
 
     def close(self) -> None: ...
 
 
-def _context(
-    tools_list: dict[str, object], *, authenticated: bool = False
-) -> ScanContext:
+def _context(tools_list: dict[str, object], *, authenticated: bool = False) -> ScanContext:
     raw: dict[str, dict[str, object]] = {"tools/list": tools_list}
     if authenticated:
         raw["oauth/metadata"] = {"issuer": "https://as.example.test"}

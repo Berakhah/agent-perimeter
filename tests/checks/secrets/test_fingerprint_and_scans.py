@@ -19,9 +19,7 @@ _ENV_CHECK = env_scan.EnvScanCheck(hmac_key=_TEST_HMAC_KEY)
 
 
 class NullTransport:
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         return {}
 
     def close(self) -> None: ...
@@ -101,8 +99,12 @@ def test_placeholder_shaped_values_are_not_reported() -> None:
 def test_a_known_prefix_is_reported_even_at_borderline_entropy() -> None:
     # SECRET_PATTERNS (declared in this task's interfaces from the start,
     # never implemented until now) raises precision far more than entropy.
-    for value in ("sk-live-aaaaaaaaaaaaaaaaaaaaaaaa", "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                  "AKIAAAAAAAAAAAAAAAAA", "xoxb-NOTAREAL-FIXTURETOKEN-000"):
+    for value in (
+        "sk-live-aaaaaaaaaaaaaaaaaaaaaaaa",
+        "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "AKIAAAAAAAAAAAAAAAAA",
+        "xoxb-NOTAREAL-FIXTURETOKEN-000",
+    ):
         context = _context({"_config": {"env": {"TOKEN": value}}})
         assert len(_CONFIG_CHECK.run(context)) == 1, value
 

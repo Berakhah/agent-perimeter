@@ -16,12 +16,22 @@ def test_purge_deletes_expired_rows_and_keeps_current_ones() -> None:
         session.commit()
 
         expired = SecretFinding(
-            scan_id=scan.id, fingerprint_sha256="a" * 64, entropy=4.2, prefix="sk-t",
-            last4="0001", location="x", expires_at=datetime.now(UTC) - timedelta(days=1),
+            scan_id=scan.id,
+            fingerprint_sha256="a" * 64,
+            entropy=4.2,
+            prefix="sk-t",
+            last4="0001",
+            location="x",
+            expires_at=datetime.now(UTC) - timedelta(days=1),
         )
         current = SecretFinding(
-            scan_id=scan.id, fingerprint_sha256="b" * 64, entropy=4.2, prefix="sk-t",
-            last4="0002", location="y", expires_at=datetime.now(UTC) + timedelta(days=1),
+            scan_id=scan.id,
+            fingerprint_sha256="b" * 64,
+            entropy=4.2,
+            prefix="sk-t",
+            last4="0002",
+            location="y",
+            expires_at=datetime.now(UTC) + timedelta(days=1),
         )
         session.add_all([expired, current])
         session.commit()
@@ -55,14 +65,25 @@ def test_purge_also_deletes_rows_with_no_recorded_expiry() -> None:
 
         session.execute(
             insert(SecretFinding.__table__).values(
-                id="row-no-expiry", scan_id=scan.id, fingerprint_sha256="c" * 64,
-                entropy=4.2, prefix="sk-t", last4="0003", location="z",
-                validated=False, expires_at=None,
+                id="row-no-expiry",
+                scan_id=scan.id,
+                fingerprint_sha256="c" * 64,
+                entropy=4.2,
+                prefix="sk-t",
+                last4="0003",
+                location="z",
+                validated=False,
+                expires_at=None,
             )
         )
         current = SecretFinding(
-            scan_id=scan.id, fingerprint_sha256="d" * 64, entropy=4.2, prefix="sk-t",
-            last4="0004", location="w", expires_at=datetime.now(UTC) + timedelta(days=1),
+            scan_id=scan.id,
+            fingerprint_sha256="d" * 64,
+            entropy=4.2,
+            prefix="sk-t",
+            last4="0004",
+            location="w",
+            expires_at=datetime.now(UTC) + timedelta(days=1),
         )
         session.add(current)
         session.commit()

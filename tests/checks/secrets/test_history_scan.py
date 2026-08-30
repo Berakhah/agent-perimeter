@@ -22,9 +22,7 @@ _CHECK = HistoryScanCheck(hmac_key=_TEST_HMAC_KEY)
 
 
 class NullTransport:
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         return {}
 
     def close(self) -> None: ...

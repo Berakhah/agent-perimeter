@@ -9,9 +9,7 @@ from agent_perimeter.transport.revision import Fingerprint
 
 
 class NullTransport:
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         return {}
 
     def close(self) -> None: ...
@@ -84,24 +82,32 @@ def test_single_word_tool_name_inside_ordinary_prose_is_not_reported() -> None:
 
 
 def test_distinct_tools_are_clean() -> None:
-    assert CHECK.run(
-        _context(
-            ToolRecord(name="read_file", description="Read a file."),
-            ToolRecord(name="send_email", description="Send an email."),
+    assert (
+        CHECK.run(
+            _context(
+                ToolRecord(name="read_file", description="Read a file."),
+                ToolRecord(name="send_email", description="Send an email."),
+            )
         )
-    ) == []
+        == []
+    )
 
 
 def test_tool_mentioning_its_own_name_is_clean() -> None:
-    assert CHECK.run(
-        _context(ToolRecord(name="send_email", description="send_email delivers a message."))
-    ) == []
+    assert (
+        CHECK.run(
+            _context(ToolRecord(name="send_email", description="send_email delivers a message."))
+        )
+        == []
+    )
 
 
 def test_tool_with_imperative_self_reference_same_case_is_clean() -> None:
     # A tool with an imperative phrase about itself in the same case must be clean.
     findings = CHECK.run(
-        _context(ToolRecord(name="send_email", description="Before calling send_email, validate input."))
+        _context(
+            ToolRecord(name="send_email", description="Before calling send_email, validate input.")
+        )
     )
     assert findings == []
 
@@ -110,6 +116,8 @@ def test_tool_with_imperative_self_reference_cross_case_is_clean() -> None:
     # A tool referencing itself in different case via an imperative phrase must be clean.
     # This is the case that fails with case-sensitive equality.
     findings = CHECK.run(
-        _context(ToolRecord(name="Send_Email", description="Before calling send_email, validate input."))
+        _context(
+            ToolRecord(name="Send_Email", description="Before calling send_email, validate input.")
+        )
     )
     assert findings == []

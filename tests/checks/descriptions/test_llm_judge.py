@@ -19,9 +19,7 @@ CORPUS = Path(__file__).parents[2] / "fixtures" / "adversarial_descriptions.yaml
 
 
 class NullTransport:
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         return {}
 
     def close(self) -> None: ...

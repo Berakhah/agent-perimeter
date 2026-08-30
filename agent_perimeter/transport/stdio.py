@@ -233,6 +233,10 @@ class StdioTransport:
         return self._spec.launch_phase
 
     @property
+    def launch_spec(self) -> LaunchSpec:
+        return self._spec
+
+    @property
     def container_name(self) -> str:
         return self._name
 

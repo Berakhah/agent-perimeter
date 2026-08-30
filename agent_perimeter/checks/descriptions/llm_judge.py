@@ -54,9 +54,7 @@ class JudgeGateway(Protocol):
 
 def build_prompt(description: str) -> str:
     """Delimit the sample as data, neutralising any delimiter it contains."""
-    neutralised = description.replace(OPEN, "&lt;content&gt;").replace(
-        CLOSE, "&lt;/content&gt;"
-    )
+    neutralised = description.replace(OPEN, "&lt;content&gt;").replace(CLOSE, "&lt;/content&gt;")
     return f"{INSTRUCTION}\n{OPEN}\n{neutralised}\n{CLOSE}"
 
 
@@ -108,9 +106,7 @@ class LlmJudgeCheck:
                     title=f"Tool {tool.name!r}: the judge {TITLE_FOR[verdict]}",
                     cwe=self.cwe,
                     taxonomy_refs=self.taxonomy_refs,
-                    evidence=Evidence(
-                        kind=EvidenceKind.EXCERPT, excerpt=tool.description
-                    ),
+                    evidence=Evidence(kind=EvidenceKind.EXCERPT, excerpt=tool.description),
                     reproduction=context.reproduction(self.id),
                     claim=Claim(
                         value=verdict.value,
