@@ -15,9 +15,7 @@ class FakeTransport:
         self._responses = responses
         self.calls: list[str] = []
 
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         self.calls.append(method)
         if method not in self._responses:
             msg = f"Method not found: {method}"
@@ -192,9 +190,7 @@ class _InProcessTransport:
         self._handle = handle
         self._next_id = 1
 
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         request_id = self._next_id
         self._next_id += 1
         reply = self._handle(
@@ -228,31 +224,37 @@ def _load_fixture(revision: str, flaw: str, monkeypatch: pytest.MonkeyPatch) -> 
         (
             "2026-07-28",
             "none",
-            frozenset({
-                Feature.SERVER_DISCOVER,
-                Feature.EXTENSIONS,
-                Feature.RESULT_TYPE,
-                Feature.CACHEABLE_RESULT,
-            }),
+            frozenset(
+                {
+                    Feature.SERVER_DISCOVER,
+                    Feature.EXTENSIONS,
+                    Feature.RESULT_TYPE,
+                    Feature.CACHEABLE_RESULT,
+                }
+            ),
         ),
         (
             "2026-07-28",
             "cache_scope_public",
-            frozenset({
-                Feature.SERVER_DISCOVER,
-                Feature.EXTENSIONS,
-                Feature.RESULT_TYPE,
-                Feature.CACHEABLE_RESULT,
-            }),
+            frozenset(
+                {
+                    Feature.SERVER_DISCOVER,
+                    Feature.EXTENSIONS,
+                    Feature.RESULT_TYPE,
+                    Feature.CACHEABLE_RESULT,
+                }
+            ),
         ),
         (
             "2026-07-28",
             "missing_result_type",
-            frozenset({
-                Feature.SERVER_DISCOVER,
-                Feature.EXTENSIONS,
-                Feature.CACHEABLE_RESULT,
-            }),
+            frozenset(
+                {
+                    Feature.SERVER_DISCOVER,
+                    Feature.EXTENSIONS,
+                    Feature.CACHEABLE_RESULT,
+                }
+            ),
         ),
         (
             # The fixture's param_header flaw adds a *property named*
@@ -262,12 +264,14 @@ def _load_fixture(revision: str, flaw: str, monkeypatch: pytest.MonkeyPatch) -> 
             # this proves the detector has no false positive on that shape.
             "2026-07-28",
             "param_header",
-            frozenset({
-                Feature.SERVER_DISCOVER,
-                Feature.EXTENSIONS,
-                Feature.RESULT_TYPE,
-                Feature.CACHEABLE_RESULT,
-            }),
+            frozenset(
+                {
+                    Feature.SERVER_DISCOVER,
+                    Feature.EXTENSIONS,
+                    Feature.RESULT_TYPE,
+                    Feature.CACHEABLE_RESULT,
+                }
+            ),
         ),
         ("2025-11-25", "none", frozenset({Feature.INITIALIZE_HANDSHAKE})),
     ],

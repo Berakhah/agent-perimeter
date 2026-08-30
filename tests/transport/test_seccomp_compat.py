@@ -14,9 +14,7 @@ pytestmark = pytest.mark.skipif(shutil.which("docker") is None, reason="docker u
 
 @pytest.fixture(scope="module", autouse=True)
 def build_image() -> None:
-    subprocess.run(
-        ["docker", "build", "-t", IMAGE, str(FIXTURE)], check=True, capture_output=True
-    )
+    subprocess.run(["docker", "build", "-t", IMAGE, str(FIXTURE)], check=True, capture_output=True)
 
 
 @pytest.mark.parametrize("hardened_seccomp", [False, True])

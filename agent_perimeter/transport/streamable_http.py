@@ -77,9 +77,7 @@ class StreamableHttpTransport:
         self._client = httpx.Client(timeout=timeout_s)
         self._contact_url = contact_url
 
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         request_params = dict(params or {})
         request_params["_meta"] = {
             "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
