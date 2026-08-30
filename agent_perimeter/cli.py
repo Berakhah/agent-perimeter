@@ -24,11 +24,27 @@ from agent_perimeter.transport.streamable_http import StreamableHttpTransport
 DEFAULT_CONTACT_URL = "https://github.com/USER/agent-perimeter"
 
 
-def _build_transport(target: str, image: str) -> Transport:
+def _parse_env(pairs: list[str]) -> dict[str, str]:
+    """Parse repeated `--env KEY=VALUE` options.
+
+    Fails closed: a value with no `=` is rejected rather than silently
+    dropped or guessed at.
+    """
+    env: dict[str, str] = {}
+    for pair in pairs:
+        if "=" not in pair:
+            typer.echo(f"--env value {pair!r} is not in KEY=VALUE form.")
+            raise typer.Exit(code=2)
+        key, _, value = pair.partition("=")
+        env[key] = value
+    return env
+
+
+def _build_transport(target: str, image: str, env: dict[str, str]) -> Transport:
     if target.startswith(("http://", "https://")):
         contact = os.environ.get("AP_CONTACT_URL", DEFAULT_CONTACT_URL)
         return StreamableHttpTransport(target, contact_url=contact)
-    return StdioTransport(LaunchSpec(image=image, command=shlex.split(target)))
+    return StdioTransport(LaunchSpec(image=image, command=shlex.split(target), env=env))
 
 
 app = typer.Typer(
@@ -52,8 +68,13 @@ def scan(
     image: Annotated[
         str, typer.Option(help="Container image for stdio targets.")
     ] = "python:3.12-slim",
+    env: Annotated[
+        list[str],
+        typer.Option(help="Environment variable KEY=VALUE for a stdio target, may be repeated."),
+    ] = [],  # noqa: B006 -- read-only; typer needs a concrete default, never mutated
 ) -> None:
     scope = ScopeFile.model_validate_json(scope_file.read_text()) if scope_file else None
+    env_dict = _parse_env(env)
 
     if mode == "active":
         if scope is None:
@@ -68,7 +89,7 @@ def scan(
             typer.echo(str(exc))
             raise typer.Exit(code=2) from None
 
-    transport = _build_transport(target, image)
+    transport = _build_transport(target, image, env_dict)
     try:
         result: Fingerprint = fingerprint(transport)
     finally:
