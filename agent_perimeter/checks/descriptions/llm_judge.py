@@ -97,7 +97,7 @@ class LlmJudgeCheck:
         for tool in context.tools:
             if tool.name not in ambiguous:
                 continue
-            verdict = self.gateway.classify(build_prompt(tool.description), Verdict)
+            verdict = Verdict(self.gateway.classify(build_prompt(tool.description), Verdict))
             severity = SEVERITY_FOR[verdict]
             if severity is None:
                 continue
