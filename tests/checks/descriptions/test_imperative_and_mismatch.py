@@ -114,3 +114,14 @@ def test_mutating_verb_on_an_unrelated_object_is_not_reported() -> None:
             "read_file", "Reads a file from the workspace and modifies the internal audit log."
         )
     ) == []
+
+
+def test_marker_substring_inside_an_unrelated_word_is_not_a_false_match() -> None:
+    # "audit" contains "it" as a substring, and "unrelated" is not the tool's
+    # own object ("file") — naive `marker in window` containment would wrongly
+    # treat "audit" as matching the "it" marker. Word-boundary matching must not.
+    assert name_schema_mismatch.CHECK.run(
+        _context(
+            "read_file", "Reads a file from the workspace and deletes unrelated audit records."
+        )
+    ) == []

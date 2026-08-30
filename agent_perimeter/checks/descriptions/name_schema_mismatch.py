@@ -38,10 +38,13 @@ def _own_object(name: str) -> str:
 
 
 def _verb_takes_own_object(description: str, match: re.Match[str], own_object: str) -> bool:
+    # Word-boundary matching, not substring containment: naive `marker in
+    # window` false-positives on words that merely contain a short marker as
+    # a substring ("it" inside "audit", "file" inside "profile").
     window = description[match.end() : match.end() + 60].lower()
-    if own_object and own_object in window:
+    if own_object and re.search(rf"\b{re.escape(own_object)}\b", window):
         return True
-    return any(marker in window for marker in OWN_OBJECT_MARKERS)
+    return any(re.search(rf"\b{re.escape(marker)}\b", window) for marker in OWN_OBJECT_MARKERS)
 
 
 @dataclass(frozen=True)
