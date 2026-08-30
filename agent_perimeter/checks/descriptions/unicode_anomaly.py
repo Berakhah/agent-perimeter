@@ -88,7 +88,7 @@ class UnicodeAnomalyCheck:
                     findings.append(
                         self._finding(
                             context, tool.name, field_name, category, offset, codepoint,
-                            derivation=Derivation.DESCRIPTION,
+                            derivation=Derivation.NAME if field_name == "name" else Derivation.DESCRIPTION,
                         )
                     )
             confusable = _confusable_name(tool.name)
