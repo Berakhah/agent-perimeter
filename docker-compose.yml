@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    environment:
+      AP_CONTACT_URL: ${AP_CONTACT_URL}
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agent_perimeter
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: agent_perimeter
+    ports:
+      - "5432:5432"
