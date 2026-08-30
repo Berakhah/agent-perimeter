@@ -39,6 +39,13 @@ class StubGateway:
         return self.verdict
 
 
+class OffSchemaGateway:
+    """A buggy gateway that returns a string that is not a real Verdict member."""
+
+    def classify(self, content: str, schema: type[Verdict]) -> Verdict:
+        return "not-a-real-verdict"  # type: ignore[return-value]
+
+
 def _context(*tools: ToolRecord, ambiguous: tuple[str, ...] = ()) -> ScanContext:
     return ScanContext(
         target="https://mcp.example.test/rpc",
@@ -91,6 +98,19 @@ def test_only_ambiguous_tools_are_sent_to_the_gateway() -> None:
     assert gateway.calls == [build_prompt("Ambiguous text.")]
     assert len(findings) == 1
     assert "loud" in findings[0].title
+
+
+def test_off_schema_gateway_response_raises_instead_of_silently_coinciding() -> None:
+    """A gateway that doesn't return a real Verdict member must fail loudly.
+
+    Without normalisation, `SEVERITY_FOR[verdict]` would raise an unrelated
+    KeyError for this input, or (for a value that happens to match a member
+    by string equality) silently produce a wrong-looking-right result. This
+    is the product's only model-trust boundary, so the failure mode matters.
+    """
+    tool = ToolRecord(name="read_file", description="Ambiguous text.")
+    with pytest.raises(ValueError, match="not-a-real-verdict"):
+        LlmJudgeCheck(OffSchemaGateway()).run(_context(tool, ambiguous=("read_file",)))
 
 
 def test_benign_verdict_produces_no_finding() -> None:
