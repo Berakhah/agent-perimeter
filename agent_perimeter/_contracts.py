@@ -29,9 +29,11 @@ class Derivation(StrEnum):
     trustworthiness, which is why derivation is tracked separately.
     """
 
-    SCHEMA = "schema"
-    DESCRIPTION = "description"
     PROBE = "probe"
+    SCHEMA = "schema"
+    NAME = "name"  # a regex/pattern match over a tool or parameter identifier —
+    # not a structural schema fact. Findings using it carry confidence < 1.0.
+    DESCRIPTION = "description"
     ARTIFACT = "artifact"
 
 
