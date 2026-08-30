@@ -328,14 +328,29 @@ class StdioTransport:
             return result
 
     def close(self) -> None:
+        """Tear down the container. Cleanup, not reporting: never raises.
+
+        `_kill_container()` is the guaranteed last resort if the process
+        might still be alive — a `BrokenPipeError`/`OSError` closing stdin
+        (the process may already have died) must never skip it, since the
+        deadline timer is disarmed on the line above and nothing else will
+        ever kill a still-running container on the daemon (I5). Any
+        exception here is swallowed rather than raised, so it never masks
+        a real error already propagating from the caller's `try/finally`.
+        """
         self._timer.cancel()
-        if self._process.poll() is None:
-            if self._process.stdin is not None:
-                self._process.stdin.close()
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._kill_container()
-                self._process.kill()
-                self._process.wait(timeout=5)
-        self._stderr_file.close()
+        try:
+            if self._process.poll() is None:
+                if self._process.stdin is not None:
+                    with contextlib.suppress(OSError):
+                        self._process.stdin.close()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    self._process.wait(timeout=5)
+                if self._process.poll() is None:
+                    self._kill_container()
+                    self._process.kill()
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        self._process.wait(timeout=5)
+        finally:
+            with contextlib.suppress(OSError):
+                self._stderr_file.close()
