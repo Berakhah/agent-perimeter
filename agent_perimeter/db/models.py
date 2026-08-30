@@ -53,9 +53,7 @@ class Scan(Base):
     revision_observed: Mapped[str | None] = mapped_column(String(16), nullable=True)
     feature_set_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mode: Mapped[str] = mapped_column(String(16))
     tool_version: Mapped[str] = mapped_column(String(32))
 

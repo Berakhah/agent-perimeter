@@ -58,6 +58,8 @@ def test_valid_finding_constructs() -> None:
 
 def test_derivation_name_sits_between_schema_and_description() -> None:
     members = list(Derivation)
-    assert members.index(Derivation.SCHEMA) < members.index(Derivation.NAME) < members.index(
-        Derivation.DESCRIPTION
+    assert (
+        members.index(Derivation.SCHEMA)
+        < members.index(Derivation.NAME)
+        < members.index(Derivation.DESCRIPTION)
     )

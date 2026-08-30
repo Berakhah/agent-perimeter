@@ -32,9 +32,7 @@ class LegacySseTransport:
         self._client = httpx.Client(timeout=timeout_s)
         self._contact_url = contact_url
 
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
         headers = {
             "Content-Type": "application/json",

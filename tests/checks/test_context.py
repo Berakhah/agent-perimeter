@@ -11,9 +11,7 @@ from agent_perimeter.transport.revision import Fingerprint
 class FakeTransport:
     """Minimal Transport implementation for testing."""
 
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         return {}
 
     def close(self) -> None:
@@ -67,7 +65,9 @@ def test_scan_context_reproduction_formats_command_correctly() -> None:
     context = ScanContext(target=target, transport=transport, fingerprint=fingerprint)
 
     reproduction_cmd = context.reproduction("revision.version_claimed")
-    assert reproduction_cmd == "agent-perimeter scan --target stdio://path/to/server --only revision.version_claimed"
+    assert reproduction_cmd == (
+        "agent-perimeter scan --target stdio://path/to/server --only revision.version_claimed"
+    )
 
 
 def test_scan_context_construction_with_all_fields_populated() -> None:
@@ -147,7 +147,7 @@ def test_scan_context_is_frozen() -> None:
 
     try:
         context.target = "modified"  # type: ignore[misc]
-        assert False, "Should have raised FrozenInstanceError"
+        raise AssertionError("Should have raised FrozenInstanceError")
     except AttributeError:
         pass
 

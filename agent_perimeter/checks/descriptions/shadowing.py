@@ -97,7 +97,8 @@ class ShadowingCheck:
             for match in pattern.finditer(tool.description):
                 other = match.group(1)
                 if normalised(other) == normalised(tool.name):
-                    continue  # a tool referring to itself (any case/separator variant) is not cross-tool
+                    # a tool referring to itself (any case/separator variant) is not cross-tool
+                    continue
                 findings.append(
                     self._finding(
                         context,

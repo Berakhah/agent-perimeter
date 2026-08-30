@@ -23,7 +23,11 @@ ISS_FLAG = "authorization_response_iss_parameter_supported"
 class IssuerValidationCheck:
     id: str = "revision.issuer_validation"
     cwe: str = "CWE-346"
-    taxonomy_refs: tuple[str, ...] = ("owasp-mcp:MCP07", "rfc:9207", "mcp-spec:2026-07-28-authorization")
+    taxonomy_refs: tuple[str, ...] = (
+        "owasp-mcp:MCP07",
+        "rfc:9207",
+        "mcp-spec:2026-07-28-authorization",
+    )
     severity: Severity = Severity.MEDIUM
     requires_auth: bool = False
     requires_model: bool = False

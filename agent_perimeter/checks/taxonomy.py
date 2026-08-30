@@ -76,26 +76,96 @@ class CweEntry:
 CWE_TABLE: dict[str, CweEntry] = {
     entry.id: entry
     for entry in (
-        CweEntry("CWE-113", "HTTP Response Splitting", "https://cwe.mitre.org/data/definitions/113.html"),
-        CweEntry("CWE-200", "Exposure of Sensitive Information", "https://cwe.mitre.org/data/definitions/200.html"),
-        CweEntry("CWE-250", "Execution with Unnecessary Privileges", "https://cwe.mitre.org/data/definitions/250.html"),
-        CweEntry("CWE-284", "Improper Access Control", "https://cwe.mitre.org/data/definitions/284.html"),
-        CweEntry("CWE-306", "Missing Authentication for Critical Function", "https://cwe.mitre.org/data/definitions/306.html"),
-        CweEntry("CWE-319", "Cleartext Transmission of Sensitive Information", "https://cwe.mitre.org/data/definitions/319.html"),
-        CweEntry("CWE-345", "Insufficient Verification of Data Authenticity", "https://cwe.mitre.org/data/definitions/345.html"),
-        CweEntry("CWE-346", "Origin Validation Error", "https://cwe.mitre.org/data/definitions/346.html"),
-        CweEntry("CWE-440", "Expected Behavior Violation", "https://cwe.mitre.org/data/definitions/440.html"),
-        CweEntry("CWE-441", "Unintended Proxy or Intermediary", "https://cwe.mitre.org/data/definitions/441.html"),
-        CweEntry("CWE-477", "Use of Obsolete Function", "https://cwe.mitre.org/data/definitions/477.html"),
-        CweEntry("CWE-522", "Insufficiently Protected Credentials", "https://cwe.mitre.org/data/definitions/522.html"),
-        CweEntry("CWE-524", "Use of Cache Containing Sensitive Information", "https://cwe.mitre.org/data/definitions/524.html"),
-        CweEntry("CWE-613", "Insufficient Session Expiration", "https://cwe.mitre.org/data/definitions/613.html"),
-        CweEntry("CWE-664", "Improper Control of a Resource Through its Lifetime", "https://cwe.mitre.org/data/definitions/664.html"),
-        CweEntry("CWE-674", "Uncontrolled Recursion", "https://cwe.mitre.org/data/definitions/674.html"),
-        CweEntry("CWE-798", "Use of Hard-coded Credentials", "https://cwe.mitre.org/data/definitions/798.html"),
-        CweEntry("CWE-918", "Server-Side Request Forgery (SSRF)", "https://cwe.mitre.org/data/definitions/918.html"),
-        CweEntry("CWE-1007", "Insufficient Visual Distinction of Homoglyphs", "https://cwe.mitre.org/data/definitions/1007.html"),
-        CweEntry("CWE-1427", "Improper Neutralization of Input Used for LLM Prompting", "https://cwe.mitre.org/data/definitions/1427.html"),
+        CweEntry(
+            "CWE-113", "HTTP Response Splitting", "https://cwe.mitre.org/data/definitions/113.html"
+        ),
+        CweEntry(
+            "CWE-200",
+            "Exposure of Sensitive Information",
+            "https://cwe.mitre.org/data/definitions/200.html",
+        ),
+        CweEntry(
+            "CWE-250",
+            "Execution with Unnecessary Privileges",
+            "https://cwe.mitre.org/data/definitions/250.html",
+        ),
+        CweEntry(
+            "CWE-284", "Improper Access Control", "https://cwe.mitre.org/data/definitions/284.html"
+        ),
+        CweEntry(
+            "CWE-306",
+            "Missing Authentication for Critical Function",
+            "https://cwe.mitre.org/data/definitions/306.html",
+        ),
+        CweEntry(
+            "CWE-319",
+            "Cleartext Transmission of Sensitive Information",
+            "https://cwe.mitre.org/data/definitions/319.html",
+        ),
+        CweEntry(
+            "CWE-345",
+            "Insufficient Verification of Data Authenticity",
+            "https://cwe.mitre.org/data/definitions/345.html",
+        ),
+        CweEntry(
+            "CWE-346", "Origin Validation Error", "https://cwe.mitre.org/data/definitions/346.html"
+        ),
+        CweEntry(
+            "CWE-440",
+            "Expected Behavior Violation",
+            "https://cwe.mitre.org/data/definitions/440.html",
+        ),
+        CweEntry(
+            "CWE-441",
+            "Unintended Proxy or Intermediary",
+            "https://cwe.mitre.org/data/definitions/441.html",
+        ),
+        CweEntry(
+            "CWE-477", "Use of Obsolete Function", "https://cwe.mitre.org/data/definitions/477.html"
+        ),
+        CweEntry(
+            "CWE-522",
+            "Insufficiently Protected Credentials",
+            "https://cwe.mitre.org/data/definitions/522.html",
+        ),
+        CweEntry(
+            "CWE-524",
+            "Use of Cache Containing Sensitive Information",
+            "https://cwe.mitre.org/data/definitions/524.html",
+        ),
+        CweEntry(
+            "CWE-613",
+            "Insufficient Session Expiration",
+            "https://cwe.mitre.org/data/definitions/613.html",
+        ),
+        CweEntry(
+            "CWE-664",
+            "Improper Control of a Resource Through its Lifetime",
+            "https://cwe.mitre.org/data/definitions/664.html",
+        ),
+        CweEntry(
+            "CWE-674", "Uncontrolled Recursion", "https://cwe.mitre.org/data/definitions/674.html"
+        ),
+        CweEntry(
+            "CWE-798",
+            "Use of Hard-coded Credentials",
+            "https://cwe.mitre.org/data/definitions/798.html",
+        ),
+        CweEntry(
+            "CWE-918",
+            "Server-Side Request Forgery (SSRF)",
+            "https://cwe.mitre.org/data/definitions/918.html",
+        ),
+        CweEntry(
+            "CWE-1007",
+            "Insufficient Visual Distinction of Homoglyphs",
+            "https://cwe.mitre.org/data/definitions/1007.html",
+        ),
+        CweEntry(
+            "CWE-1427",
+            "Improper Neutralization of Input Used for LLM Prompting",
+            "https://cwe.mitre.org/data/definitions/1427.html",
+        ),
     )
 }
 
