@@ -2,8 +2,10 @@ from dataclasses import dataclass
 from datetime import date
 
 from agent_perimeter._contracts import Severity
+from agent_perimeter.checks.context import ScanContext
 from agent_perimeter.checks.registry import SkipReason, applicable, summarise_skips
 from agent_perimeter.model.feature import Feature
+from agent_perimeter.model.finding import Finding
 from agent_perimeter.model.scope import ScopeFile
 
 TODAY = date(2026, 9, 1)
@@ -27,7 +29,7 @@ class FakeCheck:
     severity: Severity = Severity.INFO
     taxonomy_refs: tuple[str, ...] = ()
 
-    def run(self, context: object) -> list[object]:
+    def run(self, context: ScanContext) -> list[Finding]:
         return []
 
 
