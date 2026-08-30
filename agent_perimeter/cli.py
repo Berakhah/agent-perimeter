@@ -15,7 +15,7 @@ from typing import Annotated
 import typer
 
 from agent_perimeter.checks.registry import applicable, summarise_skips
-from agent_perimeter.model.scope import ScopeFile
+from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile, require_scope
 from agent_perimeter.transport.base import Transport
 from agent_perimeter.transport.revision import Fingerprint, fingerprint
 from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
@@ -55,12 +55,18 @@ def scan(
 ) -> None:
     scope = ScopeFile.model_validate_json(scope_file.read_text()) if scope_file else None
 
-    if mode == "active" and scope is None:
-        typer.echo(
-            "Active mode requires a scope file naming target, authorising_party, "
-            "authorised_on and attestation. Pass --scope-file."
-        )
-        raise typer.Exit(code=2)
+    if mode == "active":
+        if scope is None:
+            typer.echo(
+                "Active mode requires a scope file naming target, authorising_party, "
+                "authorised_on and attestation. Pass --scope-file."
+            )
+            raise typer.Exit(code=2)
+        try:
+            require_scope(scope, check_id="scan", target=target, today=date.today())
+        except AuthorizationRequired as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=2) from None
 
     transport = _build_transport(target, image)
     try:
