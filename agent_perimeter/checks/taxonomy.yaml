@@ -1,0 +1,50 @@
+# Published taxonomy entries this scanner is allowed to cite. Every row carries
+# the URL it came from, because a citation nobody can follow is not a citation.
+- scheme: owasp-llm
+  id: LLM01
+  title: Prompt Injection
+  url: https://genai.owasp.org/llmrisk/llm01-prompt-injection/
+- scheme: owasp-llm
+  id: LLM02
+  title: Sensitive Information Disclosure
+  url: https://genai.owasp.org/llmrisk/llm02-sensitive-information-disclosure/
+- scheme: owasp-llm
+  id: LLM06
+  title: Excessive Agency
+  url: https://genai.owasp.org/llmrisk/llm06-excessive-agency/
+- scheme: owasp-mcp
+  id: MCP09
+  title: Shadow MCP Servers
+  url: https://owasp.org/www-project-mcp-top-10/2025/MCP09-2025%E2%80%93Shadow-MCP-Servers
+- scheme: mcp-spec
+  id: 2026-07-28-security
+  title: MCP 2026-07-28 Security and Trust and Safety
+  url: https://modelcontextprotocol.io/specification/2026-07-28
+- scheme: mcp-spec
+  id: 2026-07-28-changelog
+  title: MCP 2026-07-28 Key Changes
+  url: https://modelcontextprotocol.io/specification/2026-07-28/changelog
+- scheme: mcp-spec
+  id: 2026-07-28-authorization
+  title: MCP 2026-07-28 Authorization
+  url: https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration
+- scheme: mcp-spec
+  id: 2026-07-28-mrtr
+  title: MCP 2026-07-28 Multi Round-Trip Requests
+  url: https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr
+- scheme: rfc
+  id: "9207"
+  title: OAuth 2.0 Authorization Server Issuer Identification
+  url: https://datatracker.ietf.org/doc/html/rfc9207
+- scheme: owasp-mcp
+  id: MCP01
+  title: Secrets and Credential Leakage
+  url: https://owasp.org/www-project-mcp-top-10/2025/MCP01-2025%E2%80%93Secrets-and-Credential-Leakage
+- scheme: owasp-mcp
+  id: MCP07
+  title: Insufficient Authentication and Authorization
+  url: https://owasp.org/www-project-mcp-top-10/2025/MCP07-2025%E2%80%93Insufficient-Authentication-and-Authorization
+- scheme: owasp-mcp
+  id: MCP10
+  title: Insufficient Context and Session Management
+  url: https://owasp.org/www-project-mcp-top-10/2025/MCP10-2025%E2%80%93Insufficient-Context-and-Session-Management
