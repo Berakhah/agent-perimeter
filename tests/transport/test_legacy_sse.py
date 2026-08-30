@@ -86,3 +86,19 @@ def test_non_dict_result_raises_transport_error() -> None:
 
     with pytest.raises(TransportError, match="non-object result"):
         _transport(handler).request("tools/list")
+
+
+def test_header_body_divergence_probe_is_refused_not_forwarded() -> None:
+    """`_ap_header_override` is a Streamable-HTTP-only capability. Forwarding
+    it as an ordinary JSON-RPC param would make a tolerant server's normal
+    result read as "the mismatched body was honoured" — a HIGH-severity false
+    positive. The transport boundary fails closed instead."""
+    sent: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request.content)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}})
+
+    with pytest.raises(TransportError, match="header/body divergence"):
+        _transport(handler).request("tools/list", {"_ap_header_override": "tools/call"})
+    assert sent == [], "the probe must never reach the server"

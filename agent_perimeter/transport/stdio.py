@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Literal
 
-from agent_perimeter.transport.base import TransportError
+from agent_perimeter.transport.base import TransportError, _reject_header_override
 
 SECCOMP_PROFILE = Path(__file__).parent / "seccomp.json"
 
@@ -261,6 +261,7 @@ class StdioTransport:
         self._process.kill()
 
     def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        _reject_header_override(self, params)
         if self._process.stdin is None or self._process.stdout is None:
             msg = "Container process has no stdio pipes."
             raise TransportError(msg)

@@ -19,7 +19,7 @@ from agent_perimeter._contracts import Claim, Derivation, Method, Severity
 from agent_perimeter.checks.context import ScanContext
 from agent_perimeter.model.feature import Feature
 from agent_perimeter.model.finding import Evidence, EvidenceKind, Finding
-from agent_perimeter.transport.base import TransportError
+from agent_perimeter.transport.base import HEADER_OVERRIDE_PARAM, TransportError
 
 
 @dataclass(frozen=True)
@@ -36,9 +36,13 @@ class HeaderBodyMismatchCheck:
         try:
             context.transport.request(
                 "tools/list",
-                {"_ap_header_override": "tools/call"},
+                {HEADER_OVERRIDE_PARAM: "tools/call"},
             )
         except TransportError:
+            # Either the server rejected the mismatch (the clean case), or the
+            # transport cannot diverge a header from a body at all and refused
+            # to pretend otherwise (stdio, legacy SSE). Both are "no finding":
+            # "could not probe" must never be reported as "probed and honoured".
             return []
 
         return [

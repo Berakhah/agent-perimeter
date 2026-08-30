@@ -5,11 +5,14 @@ Revision 2026-08-29 section 1.1: GitHub code scanning requires physicalLocation
 (artifactLocation.uri + a four-field region) and does not document
 logicalLocations as a supported property at all. Every result here carries
 both. Config-derived findings (Finding.location, set by secrets/* checks that
-trace to a real file) anchor to that real file and line. Runtime findings
-anchor to a scan-profile artifact this emitter writes into the workspace —
-one JSON line per finding, so the SARIF's location is a real file containing
-the exact bytes the finding is about, the way container and DAST scanners do
-it. logicalLocations are still emitted alongside for consumers that use them.
+trace to a real file) anchor to that real file and line, normalised to a
+workspace-relative POSIX path by `_workspace_relative`. Runtime findings, and
+config findings whose file lies outside the workspace (which `--config`
+routinely does), anchor to a scan-profile artifact this emitter writes into
+the workspace: one JSON line per finding, so the SARIF's location is a real
+file containing the exact bytes the finding is about, the way container and
+DAST scanners do it. logicalLocations are still emitted alongside for
+consumers that use them.
 """
 
 from __future__ import annotations
@@ -72,9 +75,9 @@ def scan_profile_path(target: str, workspace: Path) -> Path:
 
 
 def _write_scan_profile(findings: list[Finding], *, target: str, workspace: Path) -> Path:
-    """One JSON line per finding with no genuine location — the exact bytes
-    each one cites, so the physicalLocation this emitter anchors it to is a
-    real file this tool produced, not an invented one."""
+    """One JSON line per finding that has no anchorable location of its own —
+    the exact bytes each one cites, so the physicalLocation this emitter
+    anchors it to is a real file this tool produced, not an invented one."""
     path = scan_profile_path(target, workspace)
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -83,10 +86,30 @@ def _write_scan_profile(findings: list[Finding], *, target: str, workspace: Path
             sort_keys=True,
         )
         for f in findings
-        if f.location is None
     ]
     path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return path
+
+
+def _workspace_relative(uri: str, workspace: Path) -> str | None:
+    """A valid, workspace-relative URI reference, or None if `uri` is not one.
+
+    SARIF 2.1.0 section 3.4.3 requires artifactLocation.uri to be a URI
+    reference — an absolute OS path (Windows backslashes included) is not
+    one, and GitHub cannot map it back to a file in the scanned repo. A
+    FindingLocation carries whatever path the operator supplied: `--config`
+    is routinely an absolute path, and just as routinely points outside the
+    repo being scanned. None means "not anchorable here" and the caller
+    falls back to the scan-profile artifact, exactly like a finding with no
+    location at all.
+    """
+    path = Path(uri)
+    if not path.is_absolute():
+        return path.as_posix()
+    try:
+        return path.resolve().relative_to(workspace.resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
 
 
 def _help_uri(finding: Finding) -> str:
@@ -169,20 +192,33 @@ def _result(finding: Finding, target: str, *, uri: str, line: int) -> dict[str, 
 
 
 def _results(findings: list[Finding], target: str, *, workspace: Path) -> list[dict[str, object]]:
-    profile_path = _write_scan_profile(findings, target=target, workspace=workspace)
+    """Every artifactLocation.uri is normalised here, not in the checks that
+    produce a FindingLocation — one layer, so every future producer inherits
+    it. A location that cannot be expressed relative to the workspace is
+    anchored to the scan-profile artifact instead, exactly like a finding
+    that never had a location."""
+    anchors = [
+        (
+            finding,
+            _workspace_relative(finding.location.uri, workspace) if finding.location else None,
+        )
+        for finding in findings
+    ]
+    profile_path = _write_scan_profile(
+        [finding for finding, uri in anchors if uri is None], target=target, workspace=workspace
+    )
+    # scan_profile_path() always nests under workspace, so this is always a
+    # valid relative subpath.
+    profile_uri = profile_path.relative_to(workspace).as_posix()
+
     results: list[dict[str, object]] = []
     profile_line = 0
-    for finding in findings:
-        if finding.location is not None:
-            uri, line = finding.location.uri, finding.location.line
+    for finding, relative_uri in anchors:
+        if relative_uri is not None and finding.location is not None:
+            uri, line = relative_uri, finding.location.line
         else:
             profile_line += 1
-            # A raw absolute filesystem path is not a valid URI reference per
-            # SARIF 2.1.0 section 3.4.3 (Windows backslashes included), and
-            # GitHub can't map an absolute path back to a file in the scanned
-            # repo. scan_profile_path() always nests under workspace, so this
-            # is always a valid relative subpath.
-            uri, line = profile_path.relative_to(workspace).as_posix(), profile_line
+            uri, line = profile_uri, profile_line
         results.append(_result(finding, target, uri=uri, line=line))
     return results
 

@@ -413,3 +413,18 @@ def test_unbounded_response_line_is_capped_not_buffered_forever() -> None:
     finally:
         transport.close()
     assert not isinstance(exc_info.value, ContainmentError)
+
+
+def test_header_body_divergence_probe_is_refused_before_any_io() -> None:
+    """`_ap_header_override` only means anything to StreamableHttpTransport,
+    which pops it and builds a genuinely mismatched header/body request. A
+    stdio server would receive it as an ordinary param, ignore it, and answer
+    normally — which `revision.header_body_mismatch` would read as "the body
+    was honoured". Refusing at the boundary keeps that a "couldn't probe".
+
+    Constructed without __init__ deliberately: the guard must run before the
+    transport touches its pipes, so no container is needed to prove it.
+    """
+    transport = object.__new__(StdioTransport)
+    with pytest.raises(TransportError, match="header/body divergence"):
+        transport.request("tools/list", {"_ap_header_override": "tools/call"})

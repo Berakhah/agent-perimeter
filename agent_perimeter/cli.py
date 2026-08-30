@@ -111,6 +111,36 @@ def _parse_env(pairs: list[str]) -> dict[str, str]:
     return env
 
 
+def _invocation_flags(
+    *,
+    mode: ScanMode,
+    scope_file: Path | None,
+    config: Path | None,
+    env_file: Path | None,
+    repo: Path | None,
+) -> tuple[str, ...]:
+    """The flags a finding's `reproduction` command has to replay.
+
+    Only what the operator actually supplied — nothing is invented. Without
+    these, every `secrets/*` finding's reproduction re-runs with no source
+    file to scan and reports nothing, and `revision.header_body_mismatch`'s
+    re-runs passively and reports NOT_AUTHORISED. Values are shell-quoted
+    here because `reproduction()` joins them into one command string.
+    """
+    flags: list[str] = []
+    if mode is not ScanMode.PASSIVE:
+        flags += ["--mode", mode.value]
+    for name, value in (
+        ("--scope-file", scope_file),
+        ("--config", config),
+        ("--env-file", env_file),
+        ("--repo", repo),
+    ):
+        if value is not None:
+            flags += [name, shlex.quote(str(value))]
+    return tuple(flags)
+
+
 def _build_transport(target: str, image: str, env: dict[str, str]) -> Transport:
     if target.startswith(("http://", "https://")):
         contact = os.environ.get("AP_CONTACT_URL", DEFAULT_CONTACT_URL)
@@ -270,6 +300,9 @@ def scan(
             raw=raw,
             scope=scope,
             ambiguous_tools=ambiguous,
+            invocation_flags=_invocation_flags(
+                mode=mode, scope_file=scope_file, config=config, env_file=env_file, repo=repo
+            ),
         )
 
         selected = [c for c in ALL_CHECKS if only is None or c.id == only]
