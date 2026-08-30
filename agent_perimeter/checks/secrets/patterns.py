@@ -96,7 +96,14 @@ def scan_mapping(data: object, source: str, prefix: str = "") -> list[SecretFing
                 found.append(SecretFingerprint.of(value, location=f"{source}:{path}"))
     elif isinstance(data, list):
         for index, item in enumerate(data):
-            found.extend(scan_mapping(item, source, f"{prefix}[{index}]"))
+            if isinstance(item, dict | list):
+                found.extend(scan_mapping(item, source, f"{prefix}[{index}]"))
+            elif isinstance(item, str) and matches_known_pattern(item) is not None:
+                # A list item has no key name to gate on, so only a known
+                # prefix match qualifies it — the entropy-only fallback stays
+                # dict-only, or ordinary list content (URLs, paths in argv
+                # arrays) would flood this with false positives.
+                found.append(SecretFingerprint.of(item, location=f"{source}:{prefix}[{index}]"))
     return found
 
 

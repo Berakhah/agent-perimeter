@@ -25,6 +25,7 @@ def build_finding(
     fingerprint: SecretFingerprint,
     *,
     location: FindingLocation | None = None,
+    hmac_key: bytes | None = None,
 ) -> Finding:
     """Evidence quotes the fingerprint. The value is never rendered anywhere.
 
@@ -35,8 +36,13 @@ def build_finding(
     only if a caller needs local, in-database correlation; it is Finding's
     responsibility, not this function's, to keep that value out of any
     exported artifact — Task 24's SARIF emitter reads only the excerpt.
+
+    `hmac_key` defaults to None, which falls through to `export_fingerprint`'s
+    own per-installation key at `~/.agent-perimeter/hmac.key`. Callers that
+    need a fixed key (tests, hermetic CI) pass one explicitly instead of
+    touching the real filesystem.
     """
-    exported = export_fingerprint(fingerprint)
+    exported = export_fingerprint(fingerprint, hmac_key=hmac_key)
     return Finding(
         check_id=check_id,
         severity=Severity.CRITICAL,
@@ -75,6 +81,9 @@ class ConfigScanCheck:
     requires_auth: bool = False
     requires_model: bool = False
     requires_features: frozenset[Feature] = field(default_factory=frozenset)
+    hmac_key: bytes | None = None
+    """Injectable for test hermeticity; None (the `CHECK` singleton's default)
+    falls through to the real per-installation key. See `build_finding`."""
 
     def run(self, context: ScanContext) -> list[Finding]:
         config = context.raw.get("_config")
@@ -82,7 +91,9 @@ class ConfigScanCheck:
             return []
         source_path = context.raw.get("_config_path", {}).get("path")
         return [
-            build_finding(self.id, context, fp, location=_locate(source_path, fp))
+            build_finding(
+                self.id, context, fp, location=_locate(source_path, fp), hmac_key=self.hmac_key
+            )
             for fp in scan_mapping(config, ".mcp.json")
         ]
 

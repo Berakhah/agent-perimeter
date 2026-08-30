@@ -22,12 +22,18 @@ class EnvScanCheck:
     requires_auth: bool = False
     requires_model: bool = False
     requires_features: frozenset[Feature] = field(default_factory=frozenset)
+    hmac_key: bytes | None = None
+    """Injectable for test hermeticity; None (the `CHECK` singleton's default)
+    falls through to the real per-installation key. See `build_finding`."""
 
     def run(self, context: ScanContext) -> list[Finding]:
         env = context.raw.get("_env")
         if not env:
             return []
-        return [build_finding(self.id, context, fp) for fp in scan_mapping(env, "env")]
+        return [
+            build_finding(self.id, context, fp, hmac_key=self.hmac_key)
+            for fp in scan_mapping(env, "env")
+        ]
 
 
 CHECK = EnvScanCheck()

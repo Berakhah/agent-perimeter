@@ -140,8 +140,8 @@ class SecretFinding(Base):
     last4: Mapped[str] = mapped_column(String(4))
     location: Mapped[str] = mapped_column(Text)
     validated: Mapped[bool] = mapped_column(Boolean, default=False)
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: _now() + DEFAULT_RETENTION
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=lambda: _now() + DEFAULT_RETENTION
     )
 
     __table_args__ = (
