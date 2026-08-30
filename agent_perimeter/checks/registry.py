@@ -46,16 +46,12 @@ def applicable(
         missing = check.requires_features - features
         if missing:
             names = ", ".join(sorted(feature.value for feature in missing))
-            skipped.append(
-                Skipped(check.id, SkipReason.FEATURE_ABSENT, f"target lacks: {names}")
-            )
+            skipped.append(Skipped(check.id, SkipReason.FEATURE_ABSENT, f"target lacks: {names}"))
             continue
 
         if check.requires_model and not models_available:
             skipped.append(
-                Skipped(
-                    check.id, SkipReason.MODEL_UNAVAILABLE, "no model provider is reachable"
-                )
+                Skipped(check.id, SkipReason.MODEL_UNAVAILABLE, "no model provider is reachable")
             )
             continue
 

@@ -20,7 +20,7 @@ dev = [
     "pytest-cov>=5.0",
     "hypothesis>=6.100",
     "mypy>=1.10",
-    "ruff>=0.5",
+    "ruff==0.16.5",
     "types-PyYAML>=6.0",
 ]
 
@@ -31,6 +31,7 @@ build-backend = "hatchling.build"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["docs", "Starting_Documents"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "S"]

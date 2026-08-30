@@ -112,19 +112,33 @@ def docker_args(spec: LaunchSpec, name: str | None = None) -> list[str]:
     """
     container_name = name or f"ap-{uuid.uuid4()}"
     args = [
-        "docker", "run", "--rm", "-i",
-        "--name", container_name,
-        "--user", "65534:65534",
+        "docker",
+        "run",
+        "--rm",
+        "-i",
+        "--name",
+        container_name,
+        "--user",
+        "65534:65534",
         "--read-only",
-        "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
-        "--env", "HOME=/tmp",
-        "--cap-drop", "ALL",
-        "--security-opt", "no-new-privileges",
-        "--memory", spec.memory,
-        "--memory-swap", spec.memory,  # pin swap == memory; Docker's 2x default is not "no swap"
-        "--cpus", spec.cpus,
-        "--pids-limit", "128",
-        "--ulimit", "nofile=1024:1024",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=64m",  # noqa: S108 -- Docker CLI flag value, not a temp-file path
+        "--env",
+        "HOME=/tmp",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--memory",
+        spec.memory,
+        "--memory-swap",
+        spec.memory,  # pin swap == memory; Docker's 2x default is not "no swap"
+        "--cpus",
+        spec.cpus,
+        "--pids-limit",
+        "128",
+        "--ulimit",
+        "nofile=1024:1024",
     ]
     if spec.hardened_seccomp:
         args += ["--security-opt", f"seccomp={SECCOMP_PROFILE}"]
@@ -196,7 +210,9 @@ class StdioTransport:
         self._next_id = 1
         self._deadline_exceeded = False
         self._name = f"ap-{uuid.uuid4()}"
-        self._stderr_file: IO[str] = tempfile.TemporaryFile(mode="w+", encoding="utf-8")
+        self._stderr_file: IO[str] = tempfile.TemporaryFile(  # noqa: SIM115 -- held open for the transport's lifetime, not a short-lived read
+            mode="w+", encoding="utf-8"
+        )
         self._process: subprocess.Popen[str] = subprocess.Popen(
             docker_args(spec, name=self._name),
             stdin=subprocess.PIPE,
@@ -237,9 +253,7 @@ class StdioTransport:
         self._kill_container()
         self._process.kill()
 
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         if self._process.stdin is None or self._process.stdout is None:
             msg = "Container process has no stdio pipes."
             raise TransportError(msg)
@@ -263,9 +277,7 @@ class StdioTransport:
             line = self._process.stdout.readline(_MAX_RESPONSE_LINE_BYTES)
             if not line:
                 if self._deadline_exceeded:
-                    msg = (
-                        f"Container exceeded its {self._spec.timeout_s}s limit and was killed."
-                    )
+                    msg = f"Container exceeded its {self._spec.timeout_s}s limit and was killed."
                     raise ContainmentError(msg)
                 msg = (
                     f"No JSON-RPC response for {method}. Container exited "

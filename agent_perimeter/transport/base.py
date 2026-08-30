@@ -18,9 +18,7 @@ class TransportError(Exception):
 
 
 class Transport(Protocol):
-    def request(
-        self, method: str, params: dict[str, object] | None = None
-    ) -> dict[str, object]:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         """Send one JSON-RPC request and return its result object."""
         ...
 
