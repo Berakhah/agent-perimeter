@@ -92,6 +92,8 @@ class StreamableHttpTransport:
 
     def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         request_params = dict(params or {})
+        header_override = request_params.pop("_ap_header_override", None)
+        body_method = str(header_override) if header_override is not None else method
         request_params["_meta"] = {
             "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
             "io.modelcontextprotocol/clientInfo": {
@@ -103,7 +105,7 @@ class StreamableHttpTransport:
         body = {
             "jsonrpc": "2.0",
             "id": 1,
-            "method": method,
+            "method": body_method,
             "params": request_params,
         }
         headers = {

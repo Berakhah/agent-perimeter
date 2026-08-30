@@ -194,6 +194,30 @@ def test_deeply_nested_sse_payload_raises_transport_error_not_recursion_error() 
         _transport(handler).request("tools/list")
 
 
+def test_header_override_changes_body_method_but_not_the_header() -> None:
+    """`_ap_header_override` lets a check send a deliberately inconsistent
+    request: `Mcp-Method` stays the outer `method` argument (unchanged), while
+    the JSON body's `method` field becomes the override value — the attack
+    shape is a benign-looking header routing a dangerous body. The literal
+    key `_ap_header_override` must never reach the wire."""
+    seen_headers: dict[str, str] = {}
+    seen_body: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_headers.update(request.headers)
+        seen_body.update(json.loads(request.content))
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}})
+
+    _transport(handler).request("tools/list", {"_ap_header_override": "tools/call"})
+
+    assert seen_headers["mcp-method"] == "tools/list"
+    assert seen_body["method"] == "tools/call"
+    assert "_ap_header_override" not in seen_body
+    params = seen_body["params"]
+    assert isinstance(params, dict)
+    assert "_ap_header_override" not in params
+
+
 def test_non_dict_result_raises_transport_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": ["not", "a", "dict"]})
