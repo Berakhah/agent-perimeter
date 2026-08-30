@@ -15,7 +15,6 @@ JSON body; the final `data:` event is the JSON-RPC response.
 from __future__ import annotations
 
 import json
-from typing import cast
 
 import httpx
 
@@ -59,7 +58,14 @@ def _parse_sse(text: str) -> dict[str, object]:
     if not data_lines:
         msg = "SSE response contained no data: event"
         raise TransportError(msg)
-    result: dict[str, object] = json.loads(data_lines[-1])
+    try:
+        result = json.loads(data_lines[-1])
+    except (ValueError, TypeError) as exc:
+        msg = "SSE response contained malformed JSON in its final data: event"
+        raise TransportError(msg) from exc
+    if not isinstance(result, dict):
+        msg = "SSE response's final data: event was not a JSON object"
+        raise TransportError(msg)
     return result
 
 
@@ -67,7 +73,14 @@ def _parse_body(response: httpx.Response) -> dict[str, object]:
     content_type = response.headers.get("content-type", "")
     if content_type.startswith("text/event-stream"):
         return _parse_sse(response.text)
-    result: dict[str, object] = response.json()
+    try:
+        result = response.json()
+    except ValueError as exc:
+        msg = f"{response.status_code} response body was not valid JSON"
+        raise TransportError(msg) from exc
+    if not isinstance(result, dict):
+        msg = "Response body was not a JSON object"
+        raise TransportError(msg)
     return result
 
 
@@ -115,7 +128,10 @@ class StreamableHttpTransport:
             code = error.get("code") if isinstance(error, dict) else None
             msg = f"Server returned an error for {method}: {error}"
             raise TransportError(msg, code=code if isinstance(code, int) else None)
-        result: dict[str, object] = cast(dict[str, object], message.get("result", {}))
+        result = message.get("result", {})
+        if not isinstance(result, dict):
+            msg = f"Server returned a non-object result for {method}"
+            raise TransportError(msg)
         return result
 
     def close(self) -> None:

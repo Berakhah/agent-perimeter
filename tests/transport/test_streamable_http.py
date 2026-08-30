@@ -132,3 +132,47 @@ def test_modern_header_mismatch_error_code_is_captured() -> None:
     with pytest.raises(TransportError) as excinfo:
         _transport(handler).request("tools/list")
     assert excinfo.value.code == -32020
+
+
+def test_malformed_json_body_raises_transport_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"{not valid json", headers={"content-type": "application/json"}
+        )
+
+    with pytest.raises(TransportError, match="not valid JSON"):
+        _transport(handler).request("tools/list")
+
+
+def test_non_dict_json_body_raises_transport_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["not", "an", "object"])
+
+    with pytest.raises(TransportError, match="not a JSON object"):
+        _transport(handler).request("tools/list")
+
+
+def test_non_dict_sse_data_payload_raises_transport_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = 'event: message\ndata: "just a string"\n\n'
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    with pytest.raises(TransportError, match="not a JSON object"):
+        _transport(handler).request("tools/list")
+
+
+def test_malformed_sse_data_payload_raises_transport_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = "event: message\ndata: {not valid json\n\n"
+        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+
+    with pytest.raises(TransportError, match="malformed JSON"):
+        _transport(handler).request("tools/list")
+
+
+def test_non_dict_result_raises_transport_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": ["not", "a", "dict"]})
+
+    with pytest.raises(TransportError, match="non-object result"):
+        _transport(handler).request("tools/list")
