@@ -61,7 +61,15 @@ def test_finding_is_critical_and_quotes_the_codepoint() -> None:
 
 
 def test_tool_name_is_scanned_as_well_as_description() -> None:
-    assert CHECK.run(_context("clean text", name="read​file"))
+    findings = CHECK.run(_context("clean text", name="read​file"))
+    assert len(findings) == 1
+    assert findings[0].claim.derivation is Derivation.NAME
+
+
+def test_anomaly_in_description_derives_from_description() -> None:
+    findings = CHECK.run(_context("safe‮txet neddih"))
+    assert len(findings) == 1
+    assert findings[0].claim.derivation is Derivation.DESCRIPTION
 
 
 def test_non_latin_description_paired_with_a_latin_name_is_not_reported() -> None:
