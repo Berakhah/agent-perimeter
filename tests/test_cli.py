@@ -71,6 +71,36 @@ def test_active_mode_with_scope_file_is_accepted(tmp_path: Path, stub_fingerprin
     assert result.exit_code == 0
 
 
+def test_active_mode_with_scope_file_for_a_different_target_is_rejected(
+    tmp_path: Path, stub_fingerprint: None
+) -> None:
+    scope = tmp_path / "scope.json"
+    scope.write_text(
+        json.dumps(
+            {
+                "target": "https://someone-elses-server.test/rpc",
+                "authorising_party": "Example Ltd",
+                "authorised_on": "2026-08-30",
+                "attestation": "I authorise active probing.",
+            }
+        )
+    )
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--target",
+            "https://mcp.example.test/rpc",
+            "--mode",
+            "active",
+            "--scope-file",
+            str(scope),
+        ],
+    )
+    assert result.exit_code == 2
+    assert "scope file target" in result.stdout
+
+
 def test_empty_findings_copy_is_correct(stub_fingerprint: None) -> None:
     result = runner.invoke(app, ["scan", "--target", "https://mcp.example.test/rpc"])
     assert "No findings for the checks that ran" in result.stdout
