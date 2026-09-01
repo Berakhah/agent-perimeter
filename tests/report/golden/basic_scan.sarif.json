@@ -47,7 +47,7 @@
             "derivation": "schema",
             "method": "deterministic",
             "redacted": false,
-            "security-severity": 5.0,
+            "security-severity": "5.0",
             "taxonomy_refs": [
               "owasp-llm:LLM02"
             ]

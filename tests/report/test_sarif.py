@@ -134,9 +134,13 @@ def test_security_severity_property_is_numeric_and_ranks_critical_above_high(
     medium = _sarif(_finding(), workspace=tmp_path)["runs"][0]["results"][0]  # type: ignore[index]
     critical_finding = _finding().model_copy(update={"severity": Severity.CRITICAL})
     critical = _sarif(critical_finding, workspace=tmp_path)["runs"][0]["results"][0]  # type: ignore[index]
-    assert isinstance(medium["properties"]["security-severity"], float)
-    assert 0.0 <= medium["properties"]["security-severity"] <= 10.0
-    assert critical["properties"]["security-severity"] > medium["properties"]["security-severity"]
+    # A string, not a float: GitHub's code-scanning ingestion rejects a
+    # numeric security-severity value in a result's properties bag.
+    assert isinstance(medium["properties"]["security-severity"], str)
+    medium_value = float(medium["properties"]["security-severity"])
+    critical_value = float(critical["properties"]["security-severity"])
+    assert 0.0 <= medium_value <= 10.0
+    assert critical_value > medium_value
 
 
 def test_primary_location_line_hash_present_alongside_agent_perimeter_fingerprint(
