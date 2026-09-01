@@ -129,6 +129,7 @@ class PathTraversalCheck:
             ),
             cwe=self.cwe,
             taxonomy_refs=self.taxonomy_refs,
+            confidence=0.6,
             evidence=Evidence(
                 kind=EvidenceKind.TRANSCRIPT,
                 excerpt=(
