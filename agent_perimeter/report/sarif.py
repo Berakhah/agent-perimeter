@@ -186,7 +186,10 @@ def _result(finding: Finding, target: str, *, uri: str, line: int) -> dict[str, 
             "method": finding.claim.method.value,
             "confidence": finding.confidence,
             "redacted": finding.evidence.redacted,
-            "security-severity": SEVERITY_TO_SECURITY_SEVERITY[finding.severity],
+            # Must be a string, matching the rule-level property above —
+            # GitHub's code-scanning ingestion rejects a numeric value here
+            # ("parsing restricted subset of SARIF data has failed").
+            "security-severity": str(SEVERITY_TO_SECURITY_SEVERITY[finding.severity]),
         },
     }
 
