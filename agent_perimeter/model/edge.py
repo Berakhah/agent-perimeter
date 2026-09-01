@@ -18,7 +18,7 @@ class Capability(StrEnum):
     FS_WRITE = "fs_write"
     NET_OUT = "net_out"
     EXEC = "exec"
-    SECRET_READ = "secret_read"
+    SECRET_READ = "secret_read"  # noqa: S105 (enum member name, not credential)
     DB_READ = "db_read"
     DB_WRITE = "db_write"
 

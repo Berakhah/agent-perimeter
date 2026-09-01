@@ -42,7 +42,13 @@ DESCRIPTION_SIGNALS: tuple[tuple[re.Pattern[str], Capability], ...] = (
         re.compile(r"\b(fetch|request|send|post|upload)s?\b.{0,30}\b(url|api|endpoint|http)", re.I),
         Capability.NET_OUT,
     ),
-    (re.compile(r"\b(run|execute|spawn)s?\b.{0,20}\b(command|shell|process)\b", re.I), Capability.EXEC),
+    (
+        re.compile(
+            r"\b(run|execute|spawn)s?\b.{0,20}\b(command|shell|process)\b",
+            re.I,
+        ),
+        Capability.EXEC,
+    ),
     (re.compile(r"\b(quer|select)\w*\b.{0,20}\bdatabase\b", re.I), Capability.DB_READ),
 )
 
