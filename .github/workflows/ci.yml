@@ -4,6 +4,10 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+  security-events: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -17,3 +21,8 @@ jobs:
       - run: uv run pytest
       - name: Validate SARIF golden against 2.1.0 schema
         run: uv run pytest tests/report/test_sarif.py -v --no-cov
+      - name: Upload SARIF sample to code scanning
+        if: github.event_name == 'push'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: tests/report/golden/basic_scan.sarif.json
