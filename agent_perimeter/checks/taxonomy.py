@@ -82,6 +82,12 @@ CWE_TABLE: dict[str, CweEntry] = {
             "https://cwe.mitre.org/data/definitions/22.html",
         ),
         CweEntry(
+            "CWE-78",
+            "Improper Neutralization of Special Elements used in an OS Command "
+            "('OS Command Injection')",
+            "https://cwe.mitre.org/data/definitions/78.html",
+        ),
+        CweEntry(
             "CWE-113", "HTTP Response Splitting", "https://cwe.mitre.org/data/definitions/113.html"
         ),
         CweEntry(
