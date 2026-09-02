@@ -19,6 +19,31 @@ not hidden.
 ## 4. What are the known limitations?
 Including the project's own measured false-positive rate, per check class.
 
+## Measured precision and recall
+
+Regenerated on every commit by `agent_perimeter.eval.run`. If this table is
+stale, CI is broken.
+
+<!-- EVAL:START -->
+
+Local corpus: `tests/fixtures/corpus.yaml` version 1.0.0, 17 cases.
+
+MCPTox: not run (dataset not present; set AP_MCPTOX_PATH to include it).
+
+| Check | n | TP | FP | FN | Precision | Recall |
+|---|---:|---:|---:|---:|---:|---:|
+| `descriptions.imperative_injection` | 17 | 0 | 0 | 1 | n/a | 0.00 |
+| `descriptions.shadowing` | 17 | 0 | 0 | 1 | n/a | 0.00 |
+| `descriptions.unicode_anomaly` | 17 | 0 | 0 | 1 | n/a | 0.00 |
+| `injection.path_proof` | 17 | 0 | 0 | 1 | n/a | 0.00 |
+| `policy.confused_deputy` | 17 | 0 | 0 | 1 | n/a | 0.00 |
+| `revision.cache_scope` | 17 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `revision.conformance_mismatch` | 17 | 1 | 16 | 0 | 0.06 | 1.00 |
+| `revision.param_header_injection` | 17 | 0 | 0 | 1 | n/a | 0.00 |
+| `secrets.config_scan` | 17 | 0 | 0 | 1 | n/a | 0.00 |
+
+<!-- EVAL:END -->
+
 ---
 
 ## Competitive claim verification
