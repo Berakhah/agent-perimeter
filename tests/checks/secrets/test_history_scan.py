@@ -1,4 +1,6 @@
 import subprocess
+import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -6,6 +8,7 @@ import pytest
 
 from agent_perimeter._contracts import Claim, Derivation, Method, Severity
 from agent_perimeter.checks.context import ScanContext
+from agent_perimeter.checks.secrets import history_scan
 from agent_perimeter.checks.secrets.history_scan import HistoryScanCheck
 from agent_perimeter.model.feature import Revision
 from agent_perimeter.transport.revision import Fingerprint
@@ -133,9 +136,9 @@ def test_placeholder_shaped_values_in_history_are_not_reported(
     assert findings == [], [f.title for f in findings]
 
 
-def test_a_known_prefix_still_fires_even_where_a_placeholder_would_not(tmp_path: Path) -> None:
+def test_a_known_prefix_still_fires_at_borderline_entropy(tmp_path: Path) -> None:
     """Mirrors scan_mapping's precedence: a real credential prefix beats the
-    placeholder heuristic, it does not get filtered by it."""
+    entropy floor, it does not get filtered by it."""
 
     def git(*args: str) -> None:
         subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
@@ -143,11 +146,71 @@ def test_a_known_prefix_still_fires_even_where_a_placeholder_would_not(tmp_path:
     git("init", "-q")
     git("config", "user.email", "test@example.test")
     git("config", "user.name", "Test")
-    # Deliberately also placeholder-shaped (contains "example") — the known
-    # prefix has to win.
     (tmp_path / ".mcp.json").write_text(
-        '{"env": {"API_KEY": "ghp_exampleaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
+        '{"env": {"API_KEY": "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}'
     )
     git("add", ".mcp.json")
     git("commit", "-qm", "add config")
     assert len(_CHECK.run(_context(tmp_path))) == 1
+
+
+def test_a_placeholder_shaped_like_a_known_prefix_is_not_reported_in_history(
+    tmp_path: Path,
+) -> None:
+    # Same regression as test_fingerprint_and_scans.py's equivalent: a known
+    # prefix must not skip placeholder rejection, or GitHub/OpenAI/GitLab's
+    # own documented placeholder conventions ship as CRITICAL findings.
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+
+    git("init", "-q")
+    git("config", "user.email", "test@example.test")
+    git("config", "user.name", "Test")
+    (tmp_path / ".mcp.json").write_text(
+        '{"env": {"API_KEY": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}'
+    )
+    git("add", ".mcp.json")
+    git("commit", "-qm", "add config")
+    assert _CHECK.run(_context(tmp_path)) == []
+
+
+def test_history_scan_streams_via_popen_not_buffered_run(
+    monkeypatch: pytest.MonkeyPatch, repo_with_removed_secret: Path
+) -> None:
+    """subprocess.run(capture_output=True) loads the entire git log into
+    memory before scanning a single line. Streaming via Popen must not call
+    it at all."""
+
+    def _forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("history scan must stream via Popen, not subprocess.run")
+
+    monkeypatch.setattr(history_scan.subprocess, "run", _forbidden)
+    findings = _CHECK.run(_context(repo_with_removed_secret))
+    assert len(findings) >= 1
+
+
+def test_iter_history_blobs_kills_a_hung_process_even_with_no_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A deadline checked only after a line arrives never fires against a
+    process that writes nothing and just sits there — the kill must be
+    enforced independently of output."""
+    monkeypatch.setattr(history_scan, "HISTORY_SCAN_TIMEOUT", 0.3)
+    real_popen = subprocess.Popen
+
+    def _hang(*_args: object, **_kwargs: object) -> subprocess.Popen[str]:
+        return real_popen(
+            [sys.executable, "-c", "import time; time.sleep(5)"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+
+    monkeypatch.setattr(history_scan.subprocess, "Popen", _hang)
+
+    started = time.monotonic()
+    result = list(history_scan.iter_history_blobs(tmp_path))
+    elapsed = time.monotonic() - started
+
+    assert result == []
+    assert elapsed < 2.0
