@@ -50,3 +50,50 @@ def test_cache_scope_flaw_is_injectable(monkeypatch: pytest.MonkeyPatch) -> None
 def test_missing_result_type_flaw_is_injectable(monkeypatch: pytest.MonkeyPatch) -> None:
     mod = _load("2026-07-28", "missing_result_type", monkeypatch)
     assert "resultType" not in mod.handle({"method": "tools/list", "id": 1})["result"]
+
+
+def test_unicode_bidi_flaw_puts_a_bidi_override_in_the_description(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load("2026-07-28", "unicode_bidi", monkeypatch)
+    tool = mod.handle({"method": "tools/list", "id": 1})["result"]["tools"][0]
+    assert any(0x202A <= ord(c) < 0x202F for c in tool["description"])
+
+
+def test_imperative_injection_flaw_addresses_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load("2026-07-28", "imperative_injection", monkeypatch)
+    tool = mod.handle({"method": "tools/list", "id": 1})["result"]["tools"][0]
+    assert "ignore" in tool["description"].lower()
+    assert "previous" in tool["description"].lower()
+
+
+def test_verbose_description_flaw_has_no_imperative_pattern(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load("2026-07-28", "verbose_description", monkeypatch)
+    tool = mod.handle({"method": "tools/list", "id": 1})["result"]["tools"][0]
+    assert "ignore" not in tool["description"].lower()
+    assert len(tool["description"]) > 80
+
+
+def test_shadowing_flaw_adds_a_colliding_tool_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _load("2026-07-28", "shadowing", monkeypatch)
+    tools = mod.handle({"method": "tools/list", "id": 1})["result"]["tools"]
+    names = [t["name"] for t in tools]
+    assert len(names) == 2
+    assert names[0].lower().replace("-", "").replace("_", "") == names[1].lower().replace(
+        "-", ""
+    ).replace("_", "")
+    assert names[0] != names[1]
+
+
+def test_deputy_tools_flaw_adds_a_tool_with_both_path_and_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load("2026-07-28", "deputy_tools", monkeypatch)
+    tools = mod.handle({"method": "tools/list", "id": 1})["result"]["tools"]
+    assert len(tools) == 2
+    combined = next(t for t in tools if t["name"] == "sync_to_webhook")
+    properties = combined["inputSchema"]["properties"]
+    assert "path" in properties
+    assert "url" in properties

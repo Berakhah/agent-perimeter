@@ -31,12 +31,16 @@ def _observe(cases: list[CorpusCase]) -> dict[str, set[str]]:
     A poisoned MCPTox case is labelled with the synthetic POISON_DETECTED id
     rather than requiring every individual poisoning check to fire (§4.4):
     if any check in POISON_CHECKS fired, POISON_DETECTED is added to that
-    case's observed set.
+    case's observed set. Scoped to MCPTox cases only (id prefix "mcptox:") --
+    descriptions.imperative_injection and .unicode_anomaly are each also the
+    real, dedicated positive for their own local corpus case, so applying
+    this label unconditionally would score those two local cases a false
+    positive against a label that has nothing to do with them.
     """
     observed: dict[str, set[str]] = {}
     for case in cases:
         fired = run_case(case)
-        if fired & set(POISON_CHECKS):
+        if case.id.startswith("mcptox:") and fired & set(POISON_CHECKS):
             fired = fired | {POISON_DETECTED}
         observed[case.id] = fired
     return observed

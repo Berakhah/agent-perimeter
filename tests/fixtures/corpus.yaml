@@ -21,15 +21,26 @@ cases:
     flaw: none
     expect_clean: [revision.conformance_mismatch]
 
-  - id: unconstrained_header_param
+  - id: header_annotation_bad_token
     revision: "2026-07-28"
-    flaw: param_header
-    expect_findings: [revision.param_header_injection]
-  - id: constrained_header_param_control
+    flaw: param_header_bad_token
+    expect_findings: [revision.header_annotation_invalid]
+  - id: header_annotation_unreachable_case
     revision: "2026-07-28"
-    flaw: param_header_enum
-    expect_clean: [revision.param_header_injection]
-    note: same parameter constrained by enum
+    flaw: param_header_behind_oneof
+    expect_findings: [revision.header_annotation_unreachable]
+  - id: header_annotation_bad_type
+    revision: "2026-07-28"
+    flaw: param_header_number
+    expect_findings: [revision.header_annotation_type]
+  - id: header_annotation_valid_control
+    revision: "2026-07-28"
+    flaw: param_header_valid
+    expect_clean:
+      - revision.header_annotation_invalid
+      - revision.header_annotation_unreachable
+      - revision.header_annotation_type
+    note: same annotation, but syntactically valid and reachable
 
   - id: bidi_in_description
     revision: "2026-07-28"
@@ -74,7 +85,9 @@ cases:
     flaw: none
     expect_clean:
       - revision.cache_scope
-      - revision.param_header_injection
+      - revision.header_annotation_invalid
+      - revision.header_annotation_unreachable
+      - revision.header_annotation_type
       - revision.conformance_mismatch
     note: every 2026-07-28 check must be skipped, not failed
 

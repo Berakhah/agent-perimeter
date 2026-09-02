@@ -72,3 +72,13 @@ def test_finding_names_the_missing_feature_in_evidence() -> None:
     finding = CHECK.run(_context(Revision.R2026_07_28, observed))[0]
     assert "result_type" in finding.evidence.excerpt
     assert finding.cwe == "CWE-440"
+
+
+def test_a_real_fingerprint_never_reports_mrtr_or_subscriptions_listen() -> None:
+    """transport.revision.fingerprint() never sets MRTR or SUBSCRIPTIONS_LISTEN
+    -- neither can be observed passively (see its own docstring). Diffing the
+    full bundle against a real fingerprint's features would otherwise flag
+    every single conformant 2026-07-28 server, forever, for two features this
+    scanner structurally cannot check."""
+    realistic = FULL_MODERN - {Feature.MRTR, Feature.SUBSCRIPTIONS_LISTEN}
+    assert CHECK.run(_context(Revision.R2026_07_28, realistic)) == []

@@ -26,21 +26,23 @@ stale, CI is broken.
 
 <!-- EVAL:START -->
 
-Local corpus: `tests/fixtures/corpus.yaml` version 1.0.0, 17 cases.
+Local corpus: `tests/fixtures/corpus.yaml` version 1.0.0, 19 cases.
 
 MCPTox: not run (dataset not present; set AP_MCPTOX_PATH to include it).
 
 | Check | n | TP | FP | FN | Precision | Recall |
 |---|---:|---:|---:|---:|---:|---:|
-| `descriptions.imperative_injection` | 17 | 0 | 0 | 1 | n/a | 0.00 |
-| `descriptions.shadowing` | 17 | 0 | 0 | 1 | n/a | 0.00 |
-| `descriptions.unicode_anomaly` | 17 | 0 | 0 | 1 | n/a | 0.00 |
-| `injection.path_proof` | 17 | 0 | 0 | 1 | n/a | 0.00 |
-| `policy.confused_deputy` | 17 | 0 | 0 | 1 | n/a | 0.00 |
-| `revision.cache_scope` | 17 | 1 | 0 | 0 | 1.00 | 1.00 |
-| `revision.conformance_mismatch` | 17 | 1 | 16 | 0 | 0.06 | 1.00 |
-| `revision.param_header_injection` | 17 | 0 | 0 | 1 | n/a | 0.00 |
-| `secrets.config_scan` | 17 | 0 | 0 | 1 | n/a | 0.00 |
+| `descriptions.imperative_injection` | 19 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `descriptions.shadowing` | 19 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `descriptions.unicode_anomaly` | 19 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `injection.path_proof` | 19 | 0 | 0 | 1 | n/a | 0.00 |
+| `policy.confused_deputy` | 19 | 0 | 0 | 1 | n/a | 0.00 |
+| `revision.cache_scope` | 19 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `revision.conformance_mismatch` | 19 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `revision.header_annotation_invalid` | 19 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `revision.header_annotation_type` | 19 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `revision.header_annotation_unreachable` | 19 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `secrets.config_scan` | 19 | 1 | 0 | 0 | 1.00 | 1.00 |
 
 <!-- EVAL:END -->
 

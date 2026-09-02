@@ -30,6 +30,25 @@ from agent_perimeter.transport.base import Transport, TransportError
 # the generic "no response at all" one (revision §2.2).
 KNOWN_OLDER_REVISIONS = ("2025-06-18", "2025-03-26")
 
+# The only features fingerprint() can ever add to a Fingerprint's features set
+# -- everything _claimed_revision and _observed_features actually grant below.
+# MRTR and SUBSCRIPTIONS_LISTEN need an active multi-step probe or an open
+# stream; SESSION_HEADER, SSE_RESUMABILITY and SUBSCRIBE_UNSUBSCRIBE have no
+# passive channel through the generic Transport protocol used here. A check
+# that diffs a revision's full bundle against real fingerprint() output must
+# restrict itself to this set, or it reports every server as permanently
+# non-conformant in five features nothing can ever observe.
+PASSIVELY_OBSERVABLE_FEATURES: frozenset[Feature] = frozenset(
+    {
+        Feature.SERVER_DISCOVER,
+        Feature.EXTENSIONS,
+        Feature.INITIALIZE_HANDSHAKE,
+        Feature.RESULT_TYPE,
+        Feature.CACHEABLE_RESULT,
+        Feature.PARAM_HEADERS,
+    }
+)
+
 
 @dataclass(frozen=True)
 class Fingerprint:
@@ -107,10 +126,34 @@ def _claimed_revision(
     return _highest_known(versions), observed, versions, discover_error_code
 
 
+def _contains_header_annotation(node: object) -> bool:
+    """Whether an x-mcp-header annotation exists anywhere under this node,
+    reachable by a plain properties chain or not. PARAM_HEADERS means the
+    server uses the annotation mechanism at all; whether a given occurrence
+    is reachable is a separate finding (revision.header_annotation_unreachable
+    -- checks/revision/_header_annotations.py's own recursive walk), not
+    something this presence check should presuppose. A shallow, top-level-only
+    check would mean the one shape that check exists to catch could never
+    satisfy its own requires_features={PARAM_HEADERS} gate."""
+    if not isinstance(node, dict):
+        return False
+    if "x-mcp-header" in node:
+        return True
+    for value in node.values():
+        if isinstance(value, dict) and _contains_header_annotation(value):
+            return True
+        if isinstance(value, list):
+            for item in value:
+                if _contains_header_annotation(item):
+                    return True
+    return False
+
+
 def _has_header_annotation(tool: object) -> bool:
     """PARAM_HEADERS is observed, not inferred: does any parameter's own
-    schema carry an `x-mcp-header` annotation (its value the header-name
-    suffix)? A property merely *named* `x-mcp-header` does not count."""
+    schema carry an `x-mcp-header` annotation anywhere in its structure
+    (its value the header-name suffix)? A property merely *named*
+    `x-mcp-header` does not count."""
     if not isinstance(tool, dict):
         return False
     schema = tool.get("inputSchema")
@@ -119,10 +162,7 @@ def _has_header_annotation(tool: object) -> bool:
     properties = schema.get("properties")
     if not isinstance(properties, dict):
         return False
-    return any(
-        isinstance(prop_schema, dict) and "x-mcp-header" in prop_schema
-        for prop_schema in properties.values()
-    )
+    return any(_contains_header_annotation(prop_schema) for prop_schema in properties.values())
 
 
 def _observed_features(transport: Transport) -> set[Feature]:
