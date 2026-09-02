@@ -146,6 +146,21 @@ def handle(message: dict) -> dict:
     if method == "tools/list":
         return {"jsonrpc": "2.0", "id": request_id, "result": _tools_list_result()}
 
+    if method == "tools/call":
+        # Active probes (checks/active/*) call tools/call directly. This
+        # fixture has no real backend behind any tool -- a constant, benign
+        # refusal for every call keeps every active check correctly silent
+        # (nothing to confirm) instead of a false positive from a fixture
+        # that appears to execute whatever it is asked, or a crash from an
+        # unhandled method.
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {
+                "content": [{"type": "text", "text": "Request forbidden: parameter not permitted."}]
+            },
+        }
+
     return _not_found(request_id)
 
 
