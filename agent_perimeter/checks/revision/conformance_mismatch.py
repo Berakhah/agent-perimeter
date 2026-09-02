@@ -15,6 +15,7 @@ from agent_perimeter._contracts import Claim, Derivation, Method, Severity
 from agent_perimeter.checks.context import ScanContext
 from agent_perimeter.model.feature import BUNDLES, Feature
 from agent_perimeter.model.finding import Evidence, EvidenceKind, Finding
+from agent_perimeter.transport.revision import PASSIVELY_OBSERVABLE_FEATURES
 
 SECURITY_CONSEQUENCE: dict[Feature, tuple[Severity, str]] = {
     Feature.RESULT_TYPE: (
@@ -47,7 +48,11 @@ class ConformanceMismatchCheck:
         if claimed is None or claimed not in BUNDLES:
             return []
 
-        missing = BUNDLES[claimed] - context.fingerprint.features
+        # Only diff against features fingerprint() can actually observe --
+        # comparing the full bundle would flag every conformant server for
+        # the features this scanner structurally cannot check passively
+        # (MRTR, SUBSCRIPTIONS_LISTEN, ...), forever.
+        missing = (BUNDLES[claimed] & PASSIVELY_OBSERVABLE_FEATURES) - context.fingerprint.features
         findings: list[Finding] = []
         for feature in sorted(missing, key=lambda f: f.value):
             severity, consequence = SECURITY_CONSEQUENCE.get(

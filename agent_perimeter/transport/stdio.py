@@ -14,9 +14,10 @@ launches with MCPTox) a container per request is not runnable in CI either.
 Requests are newline-delimited JSON-RPC framed over a persistent
 stdin/stdout pipe; the container is torn down once, at the end of the scan.
 
-Docker's *default* seccomp profile is applied unless `hardened_seccomp=True`
-is set — see `seccomp.json`'s own note on why the hand-written allowlist is
-opt-in rather than the default.
+The hand-written allowlist in `seccomp.json` is applied by default (hard
+constraint 4: every stdio launch is locked down before any other feature
+ships). Set `hardened_seccomp=False` to fall back to Docker's generic
+default profile instead.
 
 Every container is launched with a unique `--name` so it can be torn down by
 the daemon (`docker kill <name>`) independently of the local `docker run` CLI
@@ -93,7 +94,7 @@ class LaunchSpec:
     memory: str = "256m"
     cpus: str = "0.5"
     env: dict[str, str] = field(default_factory=dict)
-    hardened_seccomp: bool = False  # opt in to the hand-written allowlist; default is Docker's own
+    hardened_seccomp: bool = True  # opt out to fall back to Docker's generic default profile
     launch_phase: Literal["direct", "two_phase_build"] = "direct"
     """Which launch path produced `image` — recorded so a scan can report
     which targets needed the npx/uvx two-phase build (see

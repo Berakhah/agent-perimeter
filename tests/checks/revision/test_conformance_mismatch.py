@@ -72,3 +72,20 @@ def test_finding_names_the_missing_feature_in_evidence() -> None:
     finding = CHECK.run(_context(Revision.R2026_07_28, observed))[0]
     assert "result_type" in finding.evidence.excerpt
     assert finding.cwe == "CWE-440"
+
+
+# What transport.revision.fingerprint() can ACTUALLY grant for a real
+# 2026-07-28 server: MRTR needs a multi-step active probe and
+# SUBSCRIPTIONS_LISTEN needs an open stream, so a real fingerprint's
+# `features` set never contains them (observe-or-abstain). FULL_MODERN above
+# hand-builds a Fingerprint that includes both, which hides this — no real
+# scan can ever produce it.
+REALLY_OBSERVABLE_MODERN = FULL_MODERN - {Feature.MRTR, Feature.SUBSCRIPTIONS_LISTEN}
+
+
+def test_a_genuinely_conformant_server_is_not_flagged_for_unobservable_features() -> None:
+    """A server that implements MRTR and subscriptions_listen for real still
+    cannot have them show up in `features`, since this scanner never probes
+    for either passively — it must not be false-flagged for a gap the
+    scanner itself can never see close."""
+    assert CHECK.run(_context(Revision.R2026_07_28, REALLY_OBSERVABLE_MODERN)) == []

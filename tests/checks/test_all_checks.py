@@ -10,6 +10,7 @@ from agent_perimeter.cli import compute_ambiguous_tools
 from agent_perimeter.discover.enumerate import ToolRecord
 from agent_perimeter.model.feature import Feature, Revision
 from agent_perimeter.model.finding import Finding
+from agent_perimeter.transport.base import HEADER_OVERRIDE_PARAM
 from agent_perimeter.transport.revision import Fingerprint
 
 
@@ -103,6 +104,80 @@ def test_a_raising_check_does_not_abort_the_others() -> None:
     assert len(errored) == 1
     assert errored[0].check_id == "test.raises"
     assert isinstance(errored[0], CheckOutcome)
+
+
+class _SneakyActiveProbeCheck:
+    """Declares requires_auth=False but attempts the active-probe primitive
+    anyway — registry.applicable() only checks scope for a check that
+    self-reports requires_auth=True, so this proves the boundary also holds
+    for one that lies about it (hard constraint 1: no active probe without
+    scope, enforced structurally, not by convention)."""
+
+    id: str = "test.sneaky_active_probe"
+    cwe: str = "CWE-664"
+    taxonomy_refs: tuple[str, ...] = ("mcp-spec:2026-07-28-changelog",)
+    severity: Severity = Severity.INFO
+    requires_auth: bool = False
+    requires_model: bool = False
+    requires_features: frozenset[Feature] = frozenset()
+
+    def run(self, context: ScanContext) -> list[Finding]:
+        context.transport.request("tools/call", {HEADER_OVERRIDE_PARAM: "tools/call"})
+        return []
+
+
+def test_a_check_that_declares_no_auth_cannot_reach_the_active_probe_primitive() -> None:
+    findings, errored = run_checks([_SneakyActiveProbeCheck()], _minimal_context())
+    assert findings == []
+    assert len(errored) == 1
+    assert errored[0].check_id == "test.sneaky_active_probe"
+    assert "AuthorizationRequired" in errored[0].reason
+
+
+class _RecordingTransport:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object] | None] = []
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        self.calls.append(params)
+        return {}
+
+    def close(self) -> None: ...
+
+
+class _AuthedActiveProbeCheck:
+    id: str = "test.authed_active_probe"
+    cwe: str = "CWE-664"
+    taxonomy_refs: tuple[str, ...] = ("mcp-spec:2026-07-28-changelog",)
+    severity: Severity = Severity.INFO
+    requires_auth: bool = True
+    requires_model: bool = False
+    requires_features: frozenset[Feature] = frozenset()
+
+    def run(self, context: ScanContext) -> list[Finding]:
+        context.transport.request("tools/call", {HEADER_OVERRIDE_PARAM: "tools/call"})
+        return []
+
+
+def test_a_check_that_declares_auth_reaches_the_real_transport() -> None:
+    transport = _RecordingTransport()
+    context = ScanContext(
+        target="https://mcp.example.test",
+        transport=transport,
+        fingerprint=Fingerprint(
+            revision_claimed=Revision.R2026_07_28,
+            features=frozenset({Feature.CACHEABLE_RESULT}),
+            claim=Claim(
+                value="2026-07-28",
+                method=Method.DETERMINISTIC,
+                derivation=Derivation.PROBE,
+                observed_at=datetime.now(UTC),
+            ),
+        ),
+    )
+    findings, errored = run_checks([_AuthedActiveProbeCheck()], context)
+    assert errored == []
+    assert transport.calls == [{HEADER_OVERRIDE_PARAM: "tools/call"}]
 
 
 # compute_ambiguous_tools must mirror the deterministic detectors it

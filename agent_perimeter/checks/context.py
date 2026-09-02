@@ -11,8 +11,8 @@ import shlex
 from dataclasses import dataclass, field
 
 from agent_perimeter.discover.enumerate import ToolRecord
-from agent_perimeter.model.scope import ScopeFile
-from agent_perimeter.transport.base import Transport
+from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile
+from agent_perimeter.transport.base import HEADER_OVERRIDE_PARAM, Transport
 from agent_perimeter.transport.revision import Fingerprint
 
 
@@ -46,3 +46,30 @@ class ScanContext:
             *self.invocation_flags,
         ]
         return " ".join(parts)
+
+
+@dataclass(frozen=True)
+class _UnauthorisedTransport:
+    """Blocks the one active-probe primitive this codebase has, for a check
+    that has not been cleared for it.
+
+    `registry.applicable()` only verifies scope for a check that self-reports
+    `requires_auth=True` — trusting that flag. This closes the gap at the
+    actual call boundary: a check that declares `requires_auth=False` cannot
+    reach header/body divergence probing no matter what its own code calls,
+    matching hard constraint 1 (no active probe without scope).
+    """
+
+    _inner: Transport
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        if params and HEADER_OVERRIDE_PARAM in params:
+            msg = (
+                "This check does not declare requires_auth=True and is not "
+                "authorised for active probing."
+            )
+            raise AuthorizationRequired(msg)
+        return self._inner.request(method, params)
+
+    def close(self) -> None:
+        self._inner.close()

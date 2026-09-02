@@ -56,10 +56,15 @@ def _walk(node: object, *, pointer: str, reachable: bool, found: list[HeaderAnno
         elif isinstance(value, dict):
             _walk(value, pointer=f"{pointer}/{keyword}", reachable=False, found=found)
 
-    if "$ref" in node:
-        # A $ref makes the annotation's reachability depend on external
-        # resolution the client may or may not do eagerly — never reachable
-        # by a pure properties chain. schema_composition (Task 7) separately
-        # flags external and recursive $refs; this walker does not resolve
-        # local $defs, since an unresolved pointer is itself the evasion.
-        pass
+    # A $ref makes the annotation's reachability depend on external
+    # resolution the client may or may not do eagerly — never reachable by a
+    # pure properties chain. schema_composition (Task 7) separately flags
+    # external and recursive $refs; this walker does not resolve a $ref
+    # pointer itself. It does still visit $defs directly (a $ref elsewhere in
+    # the document is exactly what would eventually resolve to one), or an
+    # annotation hidden there is invisible to this walker entirely — worse
+    # than merely unreachable, unreported.
+    defs = node.get("$defs")
+    if isinstance(defs, dict):
+        for name, child in defs.items():
+            _walk(child, pointer=f"{pointer}/$defs/{name}", reachable=False, found=found)

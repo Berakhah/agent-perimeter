@@ -51,7 +51,13 @@ class RequestStateBindingCheck:
     severity: Severity = Severity.MEDIUM
     requires_auth: bool = False
     requires_model: bool = False
-    requires_features: frozenset[Feature] = field(default_factory=lambda: frozenset({Feature.MRTR}))
+    # Not gated on Feature.MRTR: this check is opportunistic (see module
+    # docstring) — it inspects context.raw for an input_required result
+    # already captured, never probes for MRTR itself. MRTR needs an active
+    # multi-step probe to observe (observe-or-abstain), so a real
+    # fingerprint() call never grants it; gating on it here made the check
+    # permanently unrunnable in a real scan.
+    requires_features: frozenset[Feature] = field(default_factory=frozenset)
 
     def run(self, context: ScanContext) -> list[Finding]:
         findings: list[Finding] = []

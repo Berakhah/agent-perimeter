@@ -8,10 +8,10 @@ check cannot be registered.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from agent_perimeter.checks.base import Check
-from agent_perimeter.checks.context import ScanContext
+from agent_perimeter.checks.context import ScanContext, _UnauthorisedTransport
 from agent_perimeter.checks.descriptions import (
     imperative_injection,
     name_schema_mismatch,
@@ -110,8 +110,18 @@ def run_checks(
     findings: list[Finding] = []
     errored: list[CheckOutcome] = []
     for check in runnable:
+        # A check's own `requires_auth` flag is self-reported; applicable()
+        # trusts it to filter the runnable list, but nothing stops a check's
+        # `run()` body from calling the transport directly. Wrapping the
+        # transport here enforces the boundary structurally instead of by
+        # convention, for every check regardless of what its own code does.
+        check_context = (
+            context
+            if check.requires_auth
+            else replace(context, transport=_UnauthorisedTransport(context.transport))
+        )
         try:
-            findings.extend(check.run(context))
+            findings.extend(check.run(check_context))
         except Exception as exc:  # noqa: BLE001 - deliberately broad: any check may raise
             errored.append(
                 CheckOutcome(

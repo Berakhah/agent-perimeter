@@ -27,9 +27,13 @@ MUTATING_VERB = re.compile(
 # Revision row 5: the verb must take the tool's *own* object ("reads the file
 # and uploads it") not an unrelated one ("... and logs analytics events").
 # Cheap stand-in for real parsing: the tool's own object, derived from its
-# name, or a generic pronoun/reference to what a reader would take to mean
-# "the thing this tool already reads", must appear near the matched verb.
-OWN_OBJECT_MARKERS = ("it", "its", "them", "the result", "the contents", "the file", "the data")
+# name, or a pronoun referring back to it, must appear near the matched verb.
+# Deliberately NOT a generic result-noun ("the result", "the data", "the
+# contents") -- those describe *that* the tool produces output, not that the
+# verb acts on the tool's own object, and false-positive on ordinary debug
+# phrasing like "writes the result to stdout for debugging" (2026-08-29
+# plan-revision audit).
+OWN_OBJECT_MARKERS = ("it", "its", "them")
 
 
 def _own_object(name: str) -> str:

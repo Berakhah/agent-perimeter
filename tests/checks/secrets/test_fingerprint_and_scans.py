@@ -109,6 +109,20 @@ def test_a_known_prefix_is_reported_even_at_borderline_entropy() -> None:
         assert len(_CONFIG_CHECK.run(context)) == 1, value
 
 
+def test_a_placeholder_shaped_like_a_known_prefix_is_not_reported() -> None:
+    # Real documentation-placeholder conventions from GitHub/OpenAI/GitLab's
+    # own docs happen to match a real credential prefix's shape. A known
+    # prefix must not skip placeholder rejection, or every one of these ships
+    # as a CRITICAL finding on every repo that follows the vendor's own docs.
+    for value in (
+        "sk-YOUR_OPENAI_API_KEY_GOES_HERE_1234",
+        "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "glpat-xxxxxxxxxxxxxxxxxxxx",
+    ):
+        context = _context({"_config": {"env": {"TOKEN": value}}})
+        assert _CONFIG_CHECK.run(context) == [], value
+
+
 def test_known_prefix_secret_inside_a_list_is_reported() -> None:
     # A credential passed as a CLI arg ("args": ["--token", "sk-..."]) is a
     # real, documented way MCP server configs carry secrets. List items have

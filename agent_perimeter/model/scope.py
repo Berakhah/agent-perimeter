@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
 
 
 class AuthorizationRequired(Exception):
@@ -32,6 +32,16 @@ class ScopeFile(BaseModel):
             msg = f"{info.field_name} must not be blank"
             raise ValueError(msg)
         return value
+
+    @model_validator(mode="after")
+    def _expiry_not_before_authorisation(self) -> ScopeFile:
+        if self.expires_on is not None and self.expires_on < self.authorised_on:
+            msg = (
+                f"expires_on ({self.expires_on}) must not be before "
+                f"authorised_on ({self.authorised_on})"
+            )
+            raise ValueError(msg)
+        return self
 
 
 def require_scope(
@@ -58,6 +68,13 @@ def require_scope(
         msg = (
             f"Check {check_id} refused: scope file target is {scope.target!r} "
             f"but the scan target is {target!r}. Field: target."
+        )
+        raise AuthorizationRequired(msg)
+
+    if scope.authorised_on > today:
+        msg = (
+            f"Check {check_id} refused: authorisation does not begin until "
+            f"{scope.authorised_on}. Field: authorised_on."
         )
         raise AuthorizationRequired(msg)
 

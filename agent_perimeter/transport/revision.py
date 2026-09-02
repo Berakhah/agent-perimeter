@@ -30,6 +30,25 @@ from agent_perimeter.transport.base import Transport, TransportError
 # the generic "no response at all" one (revision §2.2).
 KNOWN_OLDER_REVISIONS = ("2025-06-18", "2025-03-26")
 
+# The only features fingerprint() can ever add to a Fingerprint's features set
+# -- everything _claimed_revision and _observed_features actually grant below.
+# MRTR and SUBSCRIPTIONS_LISTEN need an active multi-step probe or an open
+# stream; SESSION_HEADER, SSE_RESUMABILITY and SUBSCRIBE_UNSUBSCRIBE have no
+# passive channel through the generic Transport protocol used here. A check
+# that diffs a revision's full bundle against real fingerprint() output must
+# restrict itself to this set, or it reports every server as permanently
+# non-conformant in features nothing can ever observe.
+PASSIVELY_OBSERVABLE_FEATURES: frozenset[Feature] = frozenset(
+    {
+        Feature.SERVER_DISCOVER,
+        Feature.EXTENSIONS,
+        Feature.INITIALIZE_HANDSHAKE,
+        Feature.RESULT_TYPE,
+        Feature.CACHEABLE_RESULT,
+        Feature.PARAM_HEADERS,
+    }
+)
+
 
 @dataclass(frozen=True)
 class Fingerprint:

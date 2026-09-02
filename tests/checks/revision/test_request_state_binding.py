@@ -1,9 +1,10 @@
 import base64
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from agent_perimeter._contracts import Claim, Derivation, Method, Severity
 from agent_perimeter.checks.context import ScanContext
+from agent_perimeter.checks.registry import applicable
 from agent_perimeter.checks.revision.request_state_binding import CHECK
 from agent_perimeter.model.feature import Feature, Revision
 from agent_perimeter.transport.revision import Fingerprint
@@ -83,3 +84,20 @@ def test_no_input_required_result_means_nothing_to_check() -> None:
         raw={"tools/list": {"resultType": "complete", "tools": []}},
     )
     assert CHECK.run(context) == []
+
+
+def test_check_is_runnable_without_mrtr_observed() -> None:
+    """MRTR cannot be passively observed (observe-or-abstain: it needs an
+    active multi-step probe), so a real fingerprint() call never grants it.
+    This check is opportunistic — it inspects context.raw, never MRTR
+    itself — so gating it on requires_features={MRTR} made it permanently
+    dead: registry.applicable() would skip it on every real scan."""
+    runnable, skipped = applicable(
+        [CHECK],
+        features=frozenset(),
+        scope=None,
+        target="https://mcp.example.test",
+        today=date(2026, 9, 2),
+    )
+    assert runnable == [CHECK]
+    assert skipped == []
