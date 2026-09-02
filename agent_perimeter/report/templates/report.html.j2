@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent Perimeter — {{ target }}</title>
+<style>{{ css }}</style>
+</head>
+<body>
+<h1>Agent Perimeter scan</h1>
+<p class="mono">{{ target }}</p>
+
+<div class="strip">
+  <strong>claims {{ revision_claimed }}</strong> ·
+  observes {{ features|length }} of {{ bundle_size }} features ·
+  {{ conformance_gaps }} conformance gap(s)
+</div>
+
+<h2>Findings</h2>
+{% if findings %}
+<table>
+<tr><th>Severity</th><th>Check</th><th>Title</th><th>CWE</th><th>Evidence</th></tr>
+{% for f in findings %}
+<tr>
+  <td><span class="sev" data-glyph="{{ glyphs[f.severity.value] }}">{{ f.severity.value|upper }}</span></td>
+  <td class="mono">{{ f.check_id }}</td>
+  <td>{{ f.title }}</td>
+  <td class="mono">{{ f.cwe }}</td>
+  <td><code>{{ f.evidence.excerpt }}</code><br>
+      <span class="deriv">derived from: {{ f.claim.derivation.value if f.claim.derivation else f.claim.method.value }}</span><br>
+      <code>{{ f.reproduction }}</code></td>
+</tr>
+{% endfor %}
+</table>
+{% else %}
+<p>No findings for the checks that ran.</p>
+{% endif %}
+
+<h2>Checks skipped</h2>
+{% if skipped %}
+<table>
+<tr><th>Check</th><th>Reason</th><th>Detail</th></tr>
+{% for s in skipped %}
+<tr><td class="mono">{{ s.check_id }}</td><td class="mono">{{ s.reason.value }}</td><td>{{ s.detail }}</td></tr>
+{% endfor %}
+</table>
+{% else %}
+<p>No checks were skipped.</p>
+{% endif %}
+
+<h2>Capability graph</h2>
+<table>
+<tr><th>Tool</th><th>Capability</th><th>Derived from</th><th>Why</th></tr>
+{% for e in edges %}
+<tr><td class="mono">{{ e.tool }}</td><td class="mono">{{ e.capability.value }}</td>
+    <td class="mono">{{ e.derivation.value }}</td><td>{{ e.rationale }}</td></tr>
+{% endfor %}
+</table>
+
+<footer>
+<h2>Methodology</h2>
+<p><strong>What "vulnerable" means here:</strong> a finding states an observed
+property of the target with the derivation that produced it. Schema-derived and
+description-derived findings are inferences; probe-derived findings are
+confirmations. They are not interchangeable and are labelled per row.</p>
+<p><strong>This scanner's own measured precision and recall</strong>, per check
+class, regenerated on every commit:</p>
+<table>
+<tr><th>Check</th><th class="num">n</th><th class="num">Precision</th><th class="num">Recall</th></tr>
+{% for s in scores %}
+<tr><td class="mono">{{ s.check_id }}</td><td class="num">{{ s.n }}</td>
+    <td class="num">{{ "n/a" if s.precision is none else "%.2f"|format(s.precision) }}</td>
+    <td class="num">{{ "n/a" if s.recall is none else "%.2f"|format(s.recall) }}</td></tr>
+{% endfor %}
+</table>
+</footer>
+</body>
+</html>
