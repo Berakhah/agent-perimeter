@@ -35,20 +35,21 @@ def test_docker_args_enforce_every_containment_control() -> None:
     assert " -v " not in joined, "no host mounts, ever"
 
 
-def test_docker_default_seccomp_applies_unless_hardened_is_requested() -> None:
-    """Docker's own default profile blocks the dangerous set (mount, ptrace,
-    bpf, kexec, reboot, keyring calls) and is exercised across every
-    architecture. The hand-written allowlist in seccomp.json is missing
-    syscalls CPython needs (unlinkat, rt_sigsuspend, restart_syscall,
-    membarrier, clock_nanosleep, socketpair, mremap, eventfd2, renameat2,
-    ftruncate, getgroups, sched_getparam) and covers only x86_64 — so it is
-    opt-in, never the default.
+def test_hardened_seccomp_is_the_default() -> None:
+    """Hard rule 4: every stdio launch is locked down before any other
+    feature ships. seccomp.json's allowlist covers the syscalls CPython
+    needs (validated against a live container in test_seccomp_compat.py)
+    across x86_64 and aarch64, so there is no compatibility reason left to
+    ship a stdio scan without it — Docker's generic default is opt-out, not
+    the default.
     """
     default = " ".join(docker_args(LaunchSpec(image="i", command=["c"])))
-    assert "seccomp=" not in default
+    assert f"seccomp={SECCOMP_PROFILE}" in default
 
-    hardened = " ".join(docker_args(LaunchSpec(image="i", command=["c"], hardened_seccomp=True)))
-    assert f"seccomp={SECCOMP_PROFILE}" in hardened
+    permissive = " ".join(
+        docker_args(LaunchSpec(image="i", command=["c"], hardened_seccomp=False))
+    )
+    assert "seccomp=" not in permissive
 
 
 def test_allow_network_is_explicit_and_off_by_default() -> None:

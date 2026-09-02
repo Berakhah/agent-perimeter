@@ -133,6 +133,21 @@ def test_mutating_verb_on_an_unrelated_object_is_not_reported() -> None:
     )
 
 
+def test_debug_output_to_a_generic_sink_is_not_reported() -> None:
+    # Named in the 2026-08-29 plan-revision audit as this check's own
+    # documented false-positive example ("writes the result to stdout"):
+    # "the result" is a vague result-noun, not evidence the verb takes the
+    # tool's own object -- writing debug output to stdout is not exfiltration.
+    assert (
+        name_schema_mismatch.CHECK.run(
+            _context(
+                "read_file", "Reads the file and writes the result to stdout for debugging."
+            )
+        )
+        == []
+    )
+
+
 def test_marker_substring_inside_an_unrelated_word_is_not_a_false_match() -> None:
     # "audit" contains "it" as a substring, and "unrelated" is not the tool's
     # own object ("file") — naive `marker in window` containment would wrongly

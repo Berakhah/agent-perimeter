@@ -57,3 +57,23 @@ def test_valid_scope_permits() -> None:
 def test_blank_attestation_is_rejected_at_construction() -> None:
     with pytest.raises(ValueError, match="attestation"):
         _scope(attestation="   ")
+
+
+def test_not_yet_authorised_scope_refuses_and_names_the_field() -> None:
+    with pytest.raises(AuthorizationRequired) as exc:
+        require_scope(
+            _scope(authorised_on=date(2026, 9, 2)),
+            check_id="active.ssrf",
+            target=TARGET,
+            today=TODAY,
+        )
+    assert "authorised_on" in str(exc.value)
+
+
+def test_scope_authorised_today_permits() -> None:
+    require_scope(_scope(authorised_on=TODAY), check_id="active.ssrf", target=TARGET, today=TODAY)
+
+
+def test_inverted_date_range_is_rejected_at_construction() -> None:
+    with pytest.raises(ValueError, match="expires_on"):
+        _scope(authorised_on=date(2026, 9, 10), expires_on=date(2026, 9, 1))

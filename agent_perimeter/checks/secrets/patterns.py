@@ -29,9 +29,10 @@ ENTROPY_FLOOR = 3.0
 MIN_LENGTH = 16
 
 # Real, published credential prefix shapes. A prefix match raises precision
-# far more than entropy alone — it fires regardless of borderline entropy,
-# and skips the placeholder check, since a real key with this shape is
-# vanishingly unlikely to also be a placeholder string.
+# far more than entropy alone — it fires regardless of borderline entropy.
+# It does NOT skip the placeholder check: vendors' own docs (GitHub's
+# "ghp_xxxx...", OpenAI's "sk-YOUR_KEY_HERE") use this exact shape for their
+# documented placeholder convention.
 SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("openai", re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b")),
     ("github_pat", re.compile(r"\bghp_[A-Za-z0-9]{20,}\b")),
@@ -84,10 +85,10 @@ def scan_mapping(data: object, source: str, prefix: str = "") -> list[SecretFing
                 continue
             if len(value) < MIN_LENGTH:
                 continue
+            if is_placeholder(value):
+                continue
             known = matches_known_pattern(value)
             if known is None:
-                if is_placeholder(value):
-                    continue
                 candidate = SecretFingerprint.of(value, location=f"{source}:{path}")
                 if candidate.entropy < ENTROPY_FLOOR:
                     continue
@@ -98,7 +99,11 @@ def scan_mapping(data: object, source: str, prefix: str = "") -> list[SecretFing
         for index, item in enumerate(data):
             if isinstance(item, dict | list):
                 found.extend(scan_mapping(item, source, f"{prefix}[{index}]"))
-            elif isinstance(item, str) and matches_known_pattern(item) is not None:
+            elif (
+                isinstance(item, str)
+                and not is_placeholder(item)
+                and matches_known_pattern(item) is not None
+            ):
                 # A list item has no key name to gate on, so only a known
                 # prefix match qualifies it — the entropy-only fallback stays
                 # dict-only, or ordinary list content (URLs, paths in argv

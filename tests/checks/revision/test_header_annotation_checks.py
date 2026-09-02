@@ -65,6 +65,20 @@ def test_annotation_behind_oneof_is_found_but_marked_unreachable() -> None:
     assert found[0].reachable is False
 
 
+def test_annotation_behind_a_ref_into_defs_is_found_but_marked_unreachable() -> None:
+    # $defs is a top-level container this walker never visited: a property
+    # merely $ref-ing into it left the annotation invisible entirely, not
+    # even recorded as unreachable, defeating the evasion check's own point.
+    schema = {
+        "type": "object",
+        "$defs": {"Region": {"type": "string", "x-mcp-header": "Region"}},
+        "properties": {"region": {"$ref": "#/$defs/Region"}},
+    }
+    found = find_header_annotations(schema)
+    assert len(found) == 1
+    assert found[0].reachable is False
+
+
 # --- header_annotation_invalid ------------------------------------------------
 
 
@@ -112,6 +126,17 @@ def test_annotation_behind_oneof_is_reported() -> None:
     schema = {
         "type": "object",
         "properties": {"region": {"oneOf": [{"type": "string", "x-mcp-header": "Region"}]}},
+    }
+    findings = header_annotation_unreachable.CHECK.run(_context(schema))
+    assert len(findings) == 1
+    assert findings[0].severity is Severity.MEDIUM
+
+
+def test_annotation_behind_a_ref_into_defs_is_reported() -> None:
+    schema = {
+        "type": "object",
+        "$defs": {"Region": {"type": "string", "x-mcp-header": "Region"}},
+        "properties": {"region": {"$ref": "#/$defs/Region"}},
     }
     findings = header_annotation_unreachable.CHECK.run(_context(schema))
     assert len(findings) == 1
