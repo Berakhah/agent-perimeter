@@ -182,6 +182,10 @@ def scan(
     env_file: Annotated[
         Path | None, typer.Option("--env-file", help="Env file to scan for secrets.")
     ] = None,
+    html: Annotated[Path | None, typer.Option(help="Write the HTML report here.")] = None,
+    agent_transcript: Annotated[
+        Path | None, typer.Option(help="Agent transcript for injection claim B.")
+    ] = None,
 ) -> None:
     try:
         scope = ScopeFile.model_validate_json(scope_file.read_text()) if scope_file else None
@@ -289,6 +293,9 @@ def scan(
             if launch_spec is not None and launch_spec.env:
                 raw["_env"] = dict(launch_spec.env)
 
+        if agent_transcript is not None:
+            raw["_agent_transcript"] = json.loads(agent_transcript.read_text())
+
         tools = enumerate_tools(transport)
         ambiguous = compute_ambiguous_tools(tools, target)
 
@@ -350,3 +357,30 @@ def scan(
             )
         )
         typer.echo(f"SARIF written to {sarif}")
+
+    from agent_perimeter.graph.build import build_graph
+
+    # Policy findings now come from POLICY_CHECKS inside the normal check
+    # loop above, exactly like every other check -- skip accounting, the
+    # auth gate and the citation gate all apply. This block only rebuilds
+    # the graph for the report; it must not re-run policy evaluation and
+    # duplicate findings the registry already produced (revision §4.4).
+    edges = build_graph(context.tools)
+
+    if html is not None:
+        from agent_perimeter.eval.score import CheckScore
+        from agent_perimeter.report.html import render_report
+
+        published: list[CheckScore] = []
+        html.write_text(
+            render_report(
+                findings=findings,
+                edges=edges,
+                fingerprint=result,
+                target=target,
+                skipped=skipped,
+                scores=published,
+            ),
+            encoding="utf-8",
+        )
+        typer.echo(f"Report written to {html}")

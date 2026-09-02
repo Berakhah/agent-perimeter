@@ -67,6 +67,17 @@ def test_scan_reports_revision_and_features(stub_fingerprint: None) -> None:
     assert "server_discover" in result.stdout
 
 
+def test_html_option_writes_a_report(tmp_path: Path, stub_fingerprint: None) -> None:
+    report = tmp_path / "report.html"
+    result = runner.invoke(
+        app,
+        ["scan", "--target", "https://mcp.example.test/rpc", "--html", str(report)],
+    )
+    assert result.exit_code == 0
+    assert report.exists()
+    assert "Agent Perimeter scan" in report.read_text(encoding="utf-8")
+
+
 def test_active_mode_without_scope_file_refuses() -> None:
     result = runner.invoke(
         app, ["scan", "--target", "https://mcp.example.test/rpc", "--mode", "active"]

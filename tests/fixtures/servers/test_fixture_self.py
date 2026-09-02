@@ -87,6 +87,27 @@ def test_shadowing_flaw_adds_a_colliding_tool_name(monkeypatch: pytest.MonkeyPat
     assert names[0] != names[1]
 
 
+def test_tools_call_answers_without_erroring_and_reveals_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Active probes (Task 3-6) call tools/call directly. This fixture has no
+    real backend behind any tool, so every call must get a benign, constant
+    refusal rather than an error -- an unhandled method previously made every
+    active check raise TransportError against every corpus case once they
+    were registered (Task 13)."""
+    mod = _load("2026-07-28", "none", monkeypatch)
+    reply = mod.handle(
+        {
+            "method": "tools/call",
+            "id": 1,
+            "params": {"name": "read_file", "arguments": {"path": "../../etc/passwd"}},
+        }
+    )
+    assert "error" not in reply
+    text = reply["result"]["content"][0]["text"]
+    assert "AGENT-PERIMETER-CANARY" not in text
+
+
 def test_deputy_tools_flaw_adds_a_tool_with_both_path_and_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

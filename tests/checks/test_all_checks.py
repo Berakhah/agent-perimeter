@@ -18,8 +18,8 @@ def test_every_check_has_a_unique_id() -> None:
     assert len(ids) == len(set(ids))
 
 
-def test_twenty_five_checks_are_registered() -> None:
-    assert len(ALL_CHECKS) == 25
+def test_thirty_three_checks_are_registered() -> None:
+    assert len(ALL_CHECKS) == 33
 
 
 def test_every_check_cites_a_resolvable_taxonomy_entry() -> None:
@@ -54,7 +54,13 @@ def test_exactly_one_check_requires_a_model() -> None:
 
 def test_only_expected_checks_require_authorisation() -> None:
     auth_checks = sorted(c.id for c in ALL_CHECKS if c.requires_auth)
-    assert auth_checks == ["revision.header_body_mismatch"]
+    assert auth_checks == [
+        "active.command_injection",
+        "active.confused_deputy",
+        "active.path_traversal",
+        "active.ssrf",
+        "revision.header_body_mismatch",
+    ]
 
 
 class _RaisingCheck:
