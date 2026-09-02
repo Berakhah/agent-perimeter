@@ -26,3 +26,7 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: tests/report/golden/basic_scan.sarif.json
+      - name: Regenerate the precision/recall table
+        run: uv run python -m agent_perimeter.eval.run --write docs/methodology.md
+      - name: Fail if the published table is stale
+        run: git diff --exit-code docs/methodology.md
