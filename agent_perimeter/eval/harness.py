@@ -47,6 +47,15 @@ FIXTURE_SERVER = Path(__file__).parents[2] / "tests" / "fixtures" / "servers" / 
 
 _LOAD_COUNTER = itertools.count()
 
+# secrets.config_scan reads context.raw["_config"] -- local client configuration,
+# never something an RPC method returns -- so nothing in the transport loop
+# below can ever populate it. These two flaws inject it directly, the same
+# way cli.py populates it from an operator-supplied --config file.
+_CONFIG_FLAWS: dict[str, dict[str, object]] = {
+    "config_secret": {"env": {"API_KEY": "sk-test-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"}},
+    "config_placeholder": {"env": {"API_KEY": "changeme"}},
+}
+
 # An MCPTox sample has no live server to fingerprint, so there is nothing to
 # *observe* Feature-by-feature the way the real fingerprinter does. There is
 # also no `Feature.STATELESS_META` any more (see model/feature.py's
@@ -201,6 +210,8 @@ def run_case(case: CorpusCase, *, models_available: bool = False) -> set[str]:
             raw[method] = transport.request(method)
         except TransportError:  # a fixture revision that will not answer is data
             continue
+    if case.flaw in _CONFIG_FLAWS:
+        raw["_config"] = _CONFIG_FLAWS[case.flaw]
 
     context = ScanContext(
         target=target,

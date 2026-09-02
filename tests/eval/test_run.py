@@ -14,6 +14,16 @@ def test_provenance_records_that_mcptox_did_not_run() -> None:
     assert "MCPTox: not run" in provenance
 
 
+def test_poisoning_detected_label_never_leaks_onto_local_corpus_cases() -> None:
+    """POISON_CHECKS (descriptions.imperative_injection, .unicode_anomaly)
+    are also each the real, dedicated positive for their own local corpus
+    case -- _observe() must only synthesise mcptox.poisoning_detected for
+    cases that actually came from MCPTox, or those two local cases score a
+    false positive against a label that has nothing to do with them."""
+    scores, _ = run_evaluation(include_mcptox=False)
+    assert not any(s.check_id == "mcptox.poisoning_detected" for s in scores)
+
+
 def test_methodology_table_is_written_between_markers(tmp_path: Path) -> None:
     path = tmp_path / "methodology.md"
     path.write_text("# Methodology\n\n<!-- EVAL:START -->\nold\n<!-- EVAL:END -->\n\ntail\n")

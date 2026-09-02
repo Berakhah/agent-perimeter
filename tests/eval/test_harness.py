@@ -33,6 +33,29 @@ def test_fixture_scope_authorises_the_target_it_names() -> None:
     require_scope(scope, check_id="active.ssrf", target=target, today=date.today())
 
 
+def test_config_secret_flaw_is_checked_against_an_injected_config() -> None:
+    """secrets.config_scan reads context.raw['_config'], which nothing over
+    the wire ever produces -- the harness must inject it directly for cases
+    naming this flaw, or the check can never be exercised."""
+    case = CorpusCase(
+        id="config_secret",
+        revision="2026-07-28",
+        flaw="config_secret",
+        expect_findings=("secrets.config_scan",),
+    )
+    assert "secrets.config_scan" in run_case(case)
+
+
+def test_config_placeholder_flaw_stays_clean() -> None:
+    case = CorpusCase(
+        id="config_placeholder",
+        revision="2026-07-28",
+        flaw="config_placeholder",
+        expect_clean=("secrets.config_scan",),
+    )
+    assert "secrets.config_scan" not in run_case(case)
+
+
 def test_mcptox_case_is_checked_against_its_own_sample_not_the_fixture() -> None:
     """An MCPTox case has no fixture server behind it -- run_case must reach
     the sample's own description, not the fixture's generic read_file tool."""

@@ -175,6 +175,33 @@ def test_param_headers_is_observed_from_a_real_annotation_not_a_property_named_f
     assert Feature.PARAM_HEADERS in result.features
 
 
+def test_param_headers_is_observed_even_when_the_annotation_is_behind_oneof() -> None:
+    """revision.header_annotation_unreachable requires_features={PARAM_HEADERS}
+    -- if the feature observer only looked at each property's own top-level
+    dict, the one occurrence that check exists to catch (unreachable by a
+    plain properties chain) could never satisfy its own feature gate."""
+    tools_with_nested_annotation = {
+        "resultType": "complete",
+        "tools": [
+            {
+                "name": "get_weather",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "region": {"oneOf": [{"type": "string", "x-mcp-header": "Region"}]}
+                    },
+                },
+            }
+        ],
+    }
+    result = fingerprint(
+        FakeTransport(
+            {"server/discover": MODERN_DISCOVER, "tools/list": tools_with_nested_annotation}
+        )
+    )
+    assert Feature.PARAM_HEADERS in result.features
+
+
 def test_param_headers_is_absent_when_no_property_carries_the_annotation() -> None:
     result = fingerprint(
         FakeTransport({"server/discover": MODERN_DISCOVER, "tools/list": MODERN_TOOLS})
@@ -222,6 +249,14 @@ def _load_fixture(revision: str, flaw: str, monkeypatch: pytest.MonkeyPatch) -> 
     ("revision", "flaw", "expected"),
     [
         (
+            # A real x-mcp-header annotation is now part of the baseline
+            # tool, present on every flaw that doesn't specifically target
+            # the annotation itself -- otherwise a shared-fixture eval
+            # corpus testing unrelated checks (shadowing, imperative
+            # injection, ...) would make revision.conformance_mismatch
+            # report "missing param_headers" on nearly every one of them,
+            # a mechanical false positive with nothing to do with what
+            # that case actually tests (Task 9.5 fixture-matrix pass).
             "2026-07-28",
             "none",
             frozenset(
@@ -230,6 +265,7 @@ def _load_fixture(revision: str, flaw: str, monkeypatch: pytest.MonkeyPatch) -> 
                     Feature.EXTENSIONS,
                     Feature.RESULT_TYPE,
                     Feature.CACHEABLE_RESULT,
+                    Feature.PARAM_HEADERS,
                 }
             ),
         ),
@@ -242,6 +278,7 @@ def _load_fixture(revision: str, flaw: str, monkeypatch: pytest.MonkeyPatch) -> 
                     Feature.EXTENSIONS,
                     Feature.RESULT_TYPE,
                     Feature.CACHEABLE_RESULT,
+                    Feature.PARAM_HEADERS,
                 }
             ),
         ),
@@ -253,15 +290,14 @@ def _load_fixture(revision: str, flaw: str, monkeypatch: pytest.MonkeyPatch) -> 
                     Feature.SERVER_DISCOVER,
                     Feature.EXTENSIONS,
                     Feature.CACHEABLE_RESULT,
+                    Feature.PARAM_HEADERS,
                 }
             ),
         ),
         (
-            # param_header_valid puts a real, well-formed x-mcp-header
-            # annotation on region's own schema (Task 6's fixture-matrix
-            # pass, replacing the old wrong-shape param_header flaw that
-            # added a *property named* x-mcp-header). PARAM_HEADERS must be
-            # observed here: this proves a genuine annotation is detected.
+            # param_header_valid is now a synonym for the baseline's own
+            # annotation, kept as an explicit, self-documenting name for the
+            # corpus case that specifically exists to exercise it.
             "2026-07-28",
             "param_header_valid",
             frozenset(
