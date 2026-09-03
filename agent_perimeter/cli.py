@@ -2,6 +2,13 @@
 
 Week 1 scope: connect, fingerprint, report the revision claimed and the
 features observed, and refuse active mode without authorisation.
+
+Task 9: the pipeline itself (build transport -> fingerprint -> enumerate
+tools -> decide which checks apply -> run them) now lives in
+`agent_perimeter.scan_runner.run_scan`, shared with the API. This module
+keeps only what is genuinely CLI-only: flag parsing, --only/--sarif/--html,
+and the operator-supplied extras (--repo/--config/--env-file/
+--agent-transcript) that have no HTTP-request equivalent yet.
 """
 
 from __future__ import annotations
@@ -9,8 +16,6 @@ from __future__ import annotations
 import json
 import os
 import shlex
-from datetime import date
-from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -18,24 +23,18 @@ import typer
 from pydantic import ValidationError
 
 from agent_perimeter._contracts import Severity
-from agent_perimeter.checks.registry import applicable, summarise_skips
-from agent_perimeter.discover.enumerate import ToolRecord
-from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile, require_scope
-from agent_perimeter.transport.base import Transport, TransportError
-from agent_perimeter.transport.revision import Fingerprint, fingerprint
-from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
-from agent_perimeter.transport.streamable_http import StreamableHttpTransport
+from agent_perimeter.checks.registry import summarise_skips
+from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile
+from agent_perimeter.scan_runner import DEFAULT_DATABASE_URL, ScanMode, run_scan
 
-DEFAULT_CONTACT_URL = "https://github.com/USER/agent-perimeter"
 DEFAULT_REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
-# Same DSN alembic.ini's `sqlalchemy.url` uses (migrations/env.py expands
-# ${POSTGRES_PASSWORD} the same way, at read time, since configparser/typer
-# don't do it on their own) - one Postgres instance for migrations, the CLI
-# and, later, the API to share. Keep these two in sync by hand; there's no
-# app-wide config module yet for either to read from.
-DEFAULT_DATABASE_URL = (
-    "postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@localhost:5432/agent_perimeter"
-)
+
+# Transport construction and tool-ambiguity computation now belong entirely
+# to scan_runner; nothing here calls either directly any more.
+# tests/test_cli.py's stub_fingerprint fixture patches
+# `agent_perimeter.scan_runner.build_transport`/`fingerprint`, and
+# tests/checks/test_all_checks.py imports `compute_ambiguous_tools` from
+# `agent_perimeter.scan_runner` (both updated alongside this refactor).
 
 # The plain `Severity` StrEnum sorts alphabetically (critical, high, info, low,
 # medium) — wrong order. This is the actual severity ranking (revision §2.7).
@@ -46,62 +45,6 @@ SEVERITY_RANK: dict[Severity, int] = {
     Severity.LOW: 3,
     Severity.INFO: 4,
 }
-
-# Ambiguity, concretely (revision §2.5): a tool whose description matched only
-# a *weak* deterministic signal and no *strong* one is handed to the model
-# judge for escalation; a strong signal alone is confident enough on its own.
-WEAK_SIGNAL_CATEGORIES = frozenset({"model_directive", "exfiltration", "confusable_name"})
-STRONG_SIGNAL_CATEGORIES = frozenset(
-    {"override", "concealment", "role_claim", "bidi_override", "zero_width", "tag_character"}
-)
-
-
-def compute_ambiguous_tools(tools: list[ToolRecord], target: str) -> frozenset[str]:
-    """Mirror the deterministic detectors exactly, or their false positives reopen.
-
-    `target` is needed so an `exfiltration` match can be exempted the same way
-    `ImperativeInjectionCheck` exempts it — sending data back to the server's
-    own origin is not exfiltration. `tool.name` is scanned through
-    `scan_text` too, alongside `tool.description`, because
-    `UnicodeAnomalyCheck` scans both fields for strong signals (bidi/zero-
-    width/tag characters) and a name-only strong signal must disqualify
-    ambiguity exactly like a description one does.
-    """
-    from agent_perimeter.checks.descriptions.imperative_injection import (
-        IMPERATIVE_PATTERNS,
-        _same_origin,
-    )
-    from agent_perimeter.checks.descriptions.unicode_anomaly import _confusable_name, scan_text
-
-    weak: set[str] = set()
-    strong: set[str] = set()
-    for tool in tools:
-        categories: set[str] = set()
-        for category, pattern in IMPERATIVE_PATTERNS:
-            match = pattern.search(tool.description)
-            if match is None:
-                continue
-            if category == "exfiltration" and _same_origin(match.group(3), target):
-                continue
-            categories.add(category)
-        categories |= {category for category, _, _ in scan_text(tool.description)}
-        categories |= {category for category, _, _ in scan_text(tool.name)}
-        if _confusable_name(tool.name) is not None:
-            categories.add("confusable_name")
-        if categories & STRONG_SIGNAL_CATEGORIES:
-            strong.add(tool.name)
-        elif categories & WEAK_SIGNAL_CATEGORIES:
-            weak.add(tool.name)
-    return frozenset(weak - strong)
-
-
-class ScanMode(StrEnum):
-    """A free-form `str` let `--mode actve` (typo) silently run a passive
-    scan with no warning. An enum makes Typer reject an invalid value
-    outright instead of misinterpreting it as "not active"."""
-
-    PASSIVE = "passive"
-    ACTIVE = "active"
 
 
 def _parse_env(pairs: list[str]) -> dict[str, str]:
@@ -148,13 +91,6 @@ def _invocation_flags(
         if value is not None:
             flags += [name, shlex.quote(str(value))]
     return tuple(flags)
-
-
-def _build_transport(target: str, image: str, env: dict[str, str]) -> Transport:
-    if target.startswith(("http://", "https://")):
-        contact = os.environ.get("AP_CONTACT_URL", DEFAULT_CONTACT_URL)
-        return StreamableHttpTransport(target, contact_url=contact)
-    return StdioTransport(LaunchSpec(image=image, command=shlex.split(target), env=env))
 
 
 app = typer.Typer(
@@ -208,7 +144,7 @@ def scan(
     # silently select zero checks and print an indistinguishable-from-clean
     # "No findings" (--only is also what every finding's own `reproduction`
     # command uses, so a sceptic re-running one needs this to fail closed).
-    from agent_perimeter.checks.all_checks import ALL_CHECKS
+    from agent_perimeter.checks.all_checks import ALL_CHECKS, summarise_errors
 
     if only is not None:
         known_ids = {c.id for c in ALL_CHECKS}
@@ -218,145 +154,80 @@ def scan(
                 f"Known ids: {', '.join(sorted(known_ids))}"
             )
             raise typer.Exit(code=2)
+    selected = [c for c in ALL_CHECKS if only is None or c.id == only]
 
-    if mode == ScanMode.ACTIVE:
-        if scope is None:
-            typer.echo(
-                "Active mode requires a scope file naming target, authorising_party, "
-                "authorised_on and attestation. Pass --scope-file."
-            )
-            raise typer.Exit(code=2)
-        try:
-            require_scope(scope, check_id="scan", target=target, today=date.today())
-        except AuthorizationRequired as exc:
-            typer.echo(str(exc))
-            raise typer.Exit(code=2) from None
+    # Revision 2.5: _config / _env are read by secrets/* but scan_runner has
+    # no notion of a Path CLI flag -- these are built here, from the
+    # operator-supplied paths, and layered onto the shared pipeline's own
+    # `raw` dict via `extra_raw` (a stdio target's own launch environment
+    # fallback stays inside scan_runner.run_scan, and extra_raw's `_env`
+    # here overrides it, same precedence as before this was extracted).
+    extra_raw: dict[str, dict[str, object]] = {}
+    if repo is not None:
+        extra_raw["_repo_path"] = {"path": str(repo)}
+    if config is not None:
+        extra_raw["_config"] = json.loads(config.read_text(encoding="utf-8"))
+        extra_raw["_config_path"] = {"path": str(config)}
+    if env_file is not None:
+        parsed_env: dict[str, object] = {}
+        for line in env_file.read_text().splitlines():
+            if "=" in line:
+                key, _, value = line.partition("=")
+                parsed_env[key] = value
+        extra_raw["_env"] = parsed_env
+        extra_raw["_env_path"] = {"path": str(env_file)}
+    if agent_transcript is not None:
+        extra_raw["_agent_transcript"] = json.loads(agent_transcript.read_text())
+
+    inv_flags = _invocation_flags(
+        mode=mode, scope_file=scope_file, config=config, env_file=env_file, repo=repo
+    )
 
     try:
-        transport = _build_transport(target, image, env_dict)
+        outcome = run_scan(
+            target,
+            mode,
+            scope,
+            image=image,
+            env=env_dict,
+            checks=selected,
+            extra_raw=extra_raw,
+            invocation_flags=inv_flags,
+        )
+    except AuthorizationRequired as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2) from None
     except ValueError as exc:
         typer.echo(f"Invalid configuration: {exc}")
         raise typer.Exit(code=2) from None
 
-    # The transport stays open for the whole scan, not just the fingerprint
-    # call: checks run against `context.transport` too (revision.
-    # header_body_mismatch probes it directly), and enumerate_tools() below
-    # needs a live connection. One container/connection per scan, closed once
-    # at the end — see transport/stdio.py's module docstring.
-    try:
-        result: Fingerprint = fingerprint(transport)
+    result = outcome.fingerprint
+    claimed = result.revision_claimed.value if result.revision_claimed else "unknown"
+    observed = ", ".join(sorted(feature.value for feature in result.features)) or "none"
+    typer.echo(f"Revision claimed:  {claimed}")
+    typer.echo(f"Features observed: {observed}")
 
-        claimed = result.revision_claimed.value if result.revision_claimed else "unknown"
-        observed = ", ".join(sorted(feature.value for feature in result.features)) or "none"
-        typer.echo(f"Revision claimed:  {claimed}")
-        typer.echo(f"Features observed: {observed}")
-
-        from agent_perimeter.checks.all_checks import run_checks, summarise_errors
-        from agent_perimeter.checks.context import ScanContext
-        from agent_perimeter.checks.revision.oauth_metadata import fetch_oauth_metadata
-        from agent_perimeter.checks.static.auth_probe import probe_auth_challenge
-        from agent_perimeter.discover.enumerate import enumerate_tools
-        from agent_perimeter.report.sarif import to_sarif
-
-        raw: dict[str, dict[str, object]] = {}
-        for method in ("server/discover", "tools/list"):
-            try:
-                raw[method] = transport.request(method)
-            except TransportError:
-                continue
-        metadata = fetch_oauth_metadata(target)
-        if metadata is not None:
-            raw["oauth/metadata"] = metadata
-        # Same category as the OAuth metadata fetch: a plain unauthenticated
-        # request any client would make, not a crafted payload — no scope
-        # file needed. static.auth_mode and revision.cache_scope both read
-        # this to distinguish "no auth evidence" from "the probe didn't run".
-        auth_probe = probe_auth_challenge(target)
-        if auth_probe:
-            raw["_auth_probe"] = auth_probe
-        if repo is not None:
-            raw["_repo_path"] = {"path": str(repo)}
-
-        # Revision 2.5: _config / _env are read by secrets/* but nothing wrote
-        # them until now. --config and --env-file are the operator-supplied
-        # paths; a stdio target additionally contributes its own launch
-        # environment.
-        if config is not None:
-            raw["_config"] = json.loads(config.read_text(encoding="utf-8"))
-            raw["_config_path"] = {"path": str(config)}
-        if env_file is not None:
-            parsed_env: dict[str, object] = {}
-            for line in env_file.read_text().splitlines():
-                if "=" in line:
-                    key, _, value = line.partition("=")
-                    parsed_env[key] = value
-            raw["_env"] = parsed_env
-            raw["_env_path"] = {"path": str(env_file)}
-        else:
-            # `Transport` is a plain request()/close() protocol; only a
-            # stdio target's launch environment carries `launch_spec`. This
-            # probes for it with getattr rather than isinstance so any
-            # transport that exposes the attribute is picked up, not just
-            # StdioTransport by name.
-            launch_spec = getattr(transport, "launch_spec", None)
-            if launch_spec is not None and launch_spec.env:
-                raw["_env"] = dict(launch_spec.env)
-
-        if agent_transcript is not None:
-            raw["_agent_transcript"] = json.loads(agent_transcript.read_text())
-
-        tools = enumerate_tools(transport)
-        ambiguous = compute_ambiguous_tools(tools, target)
-
-        context = ScanContext(
-            target=target,
-            transport=transport,
-            fingerprint=result,
-            tools=tools,
-            raw=raw,
-            scope=scope,
-            ambiguous_tools=ambiguous,
-            invocation_flags=_invocation_flags(
-                mode=mode, scope_file=scope_file, config=config, env_file=env_file, repo=repo
-            ),
-        )
-
-        selected = [c for c in ALL_CHECKS if only is None or c.id == only]
-        # No real model provider is wired anywhere in this plan yet (bok-core's
-        # gateway doesn't exist — descriptions.llm_judge runs against the
-        # UnavailableJudge placeholder, which classifies nothing). False is
-        # the honest current state, not a config knob: without it llm_judge
-        # would run for real and emit a fabricated Method.MODEL finding.
-        runnable, skipped = applicable(
-            selected,
-            result.features,
-            scope=scope,
-            target=target,
-            today=date.today(),
-            models_available=False,
-        )
-
-        findings, errored = run_checks(runnable, context)
-    finally:
-        transport.close()
-
-    for finding in sorted(findings, key=lambda f: SEVERITY_RANK[f.severity]):
+    for finding in sorted(outcome.findings, key=lambda f: SEVERITY_RANK[f.severity]):
         typer.echo(f"[{finding.severity.value}] {finding.check_id}: {finding.title}")
 
     summary = " ".join(
-        part for part in (summarise_skips(skipped), summarise_errors(errored)) if part
+        part
+        for part in (summarise_skips(outcome.skipped), summarise_errors(outcome.errored))
+        if part
     )
-    if not findings:
+    if not outcome.findings:
         typer.echo("No findings for the checks that ran. " + summary)
     else:
-        typer.echo(f"{len(findings)} findings. " + summary)
+        typer.echo(f"{len(outcome.findings)} findings. " + summary)
 
     if sarif is not None:
+        from agent_perimeter.report.sarif import to_sarif
+
         workspace = sarif.parent if sarif.parent != Path("") else Path(".")
         sarif.write_text(
             json.dumps(
                 to_sarif(
-                    findings,
+                    outcome.findings,
                     target=target,
                     tool_version="0.1.0",
                     fingerprint=result,
@@ -367,15 +238,6 @@ def scan(
         )
         typer.echo(f"SARIF written to {sarif}")
 
-    from agent_perimeter.graph.build import build_graph
-
-    # Policy findings now come from POLICY_CHECKS inside the normal check
-    # loop above, exactly like every other check -- skip accounting, the
-    # auth gate and the citation gate all apply. This block only rebuilds
-    # the graph for the report; it must not re-run policy evaluation and
-    # duplicate findings the registry already produced (revision §4.4).
-    edges = build_graph(context.tools)
-
     if html is not None:
         from agent_perimeter.eval.score import CheckScore
         from agent_perimeter.report.html import render_report
@@ -383,11 +245,11 @@ def scan(
         published: list[CheckScore] = []
         html.write_text(
             render_report(
-                findings=findings,
-                edges=edges,
+                findings=outcome.findings,
+                edges=outcome.edges,
                 fingerprint=result,
                 target=target,
-                skipped=skipped,
+                skipped=outcome.skipped,
                 scores=published,
             ),
             encoding="utf-8",
@@ -404,9 +266,7 @@ def census(
     ),
     database_url: Annotated[
         str,
-        typer.Option(
-            help="SQLAlchemy DSN. Defaults to this project's Postgres (see alembic.ini)."
-        ),
+        typer.Option(help="SQLAlchemy DSN. Defaults to this project's Postgres (see alembic.ini)."),
     ] = DEFAULT_DATABASE_URL,
 ) -> None:
     """Collect a passive census of the public MCP registry.

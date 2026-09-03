@@ -6,10 +6,10 @@ from agent_perimeter._contracts import Claim, Derivation, Method, Severity
 from agent_perimeter.checks.all_checks import ALL_CHECKS, CheckOutcome, run_checks
 from agent_perimeter.checks.context import ScanContext
 from agent_perimeter.checks.taxonomy import has_approved_citation, resolve, resolve_cwe
-from agent_perimeter.cli import compute_ambiguous_tools
 from agent_perimeter.discover.enumerate import ToolRecord
 from agent_perimeter.model.feature import Feature, Revision
 from agent_perimeter.model.finding import Finding
+from agent_perimeter.scan_runner import compute_ambiguous_tools
 from agent_perimeter.transport.base import HEADER_OVERRIDE_PARAM
 from agent_perimeter.transport.revision import Fingerprint
 

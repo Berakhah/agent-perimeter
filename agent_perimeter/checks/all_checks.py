@@ -8,6 +8,8 @@ check cannot be registered.
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from agent_perimeter.checks.active import (
@@ -118,12 +120,21 @@ class CheckOutcome:
 
 
 def run_checks(
-    runnable: list[Check], context: ScanContext
+    runnable: list[Check],
+    context: ScanContext,
+    *,
+    on_check: Callable[[Check, str, float], None] | None = None,
 ) -> tuple[list[Finding], list[CheckOutcome]]:
     """Run every check, isolating a raising one from the rest of the scan.
 
     A check that raises is exactly as informative as one that finds nothing —
     less, if its failure is silent — so it is recorded, not swallowed.
+
+    `on_check`, if given, is called once per check after it completes, with
+    its id's status ("passed" or "errored") and real elapsed time in
+    milliseconds — Task 9's SSE progress stream is built on this, without
+    this module (or the security-relevant transport-wrapping boundary below)
+    knowing anything about HTTP or FastAPI.
     """
     findings: list[Finding] = []
     errored: list[CheckOutcome] = []
@@ -138,14 +149,19 @@ def run_checks(
             if check.requires_auth
             else replace(context, transport=_UnauthorisedTransport(context.transport))
         )
+        start = time.monotonic()
         try:
             findings.extend(check.run(check_context))
+            status = "passed"
         except Exception as exc:  # noqa: BLE001 - deliberately broad: any check may raise
             errored.append(
                 CheckOutcome(
                     check_id=check.id, status="errored", reason=f"{type(exc).__name__}: {exc}"
                 )
             )
+            status = "errored"
+        if on_check is not None:
+            on_check(check, status, (time.monotonic() - start) * 1000)
     return findings, errored
 
 
