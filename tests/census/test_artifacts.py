@@ -1,12 +1,13 @@
 import io
 import json
+import struct
 import tarfile
 import zipfile
 from pathlib import Path
 
 import httpx
 import pytest
-from hypothesis import given
+from hypothesis import example, given
 from hypothesis import strategies as st
 
 from agent_perimeter.census.artifacts import (
@@ -61,6 +62,51 @@ def _zip_of(
             info.external_attr = (0o120777 << 16)  # S_IFLNK
             zf.writestr(info, target)
     return path
+
+
+def _truncated_tar_gz(tmp_path: Path) -> Path:
+    """A well-formed tar.gz cut off mid-stream - the gzip envelope is
+    incomplete, which raises a bare EOFError from tarfile's own gzip layer."""
+    good = _tar_of(tmp_path, {"pkg/mod.py": b"print(1)\n" * 1000}, name="good.tar.gz")
+    raw = good.read_bytes()
+    truncated = tmp_path / "truncated.tar.gz"
+    truncated.write_bytes(raw[: len(raw) // 2])
+    return truncated
+
+
+def _corrupted_zip(tmp_path: Path) -> Path:
+    """A well-formed zip with bytes flipped in the middle of its compressed
+    DEFLATE stream - decompressing it raises zlib.error, not BadZipFile."""
+    good = tmp_path / "good.zip"
+    with zipfile.ZipFile(good, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("pkg/mod.py", b"print(1)\n" * 5000)
+    raw = bytearray(good.read_bytes())
+    start = 30 + len("pkg/mod.py")  # local file header + filename, data follows
+    for i in range(start, start + 10):
+        raw[i] = 0xFF
+    corrupted = tmp_path / "corrupted.zip"
+    corrupted.write_bytes(bytes(raw))
+    return corrupted
+
+
+def _zip_with_understated_size(tmp_path: Path) -> Path:
+    """A zip entry whose central-directory/local-header uncompressed-size
+    field is patched to lie small while the real DEFLATE stream still
+    decompresses to much more - the declared size is attacker-controlled
+    metadata, not a bound on what the compressed stream actually contains."""
+    good = tmp_path / "good.zip"
+    payload = b"A" * 300_000  # highly compressible, spans multiple read chunks
+    with zipfile.ZipFile(good, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("big.bin", payload)
+    raw = bytearray(good.read_bytes())
+    local_sig = raw.find(b"PK\x03\x04")
+    central_sig = raw.find(b"PK\x01\x02")
+    lie = struct.pack("<I", 10)  # claim 10 bytes instead of 300000
+    raw[local_sig + 22 : local_sig + 26] = lie
+    raw[central_sig + 24 : central_sig + 28] = lie
+    lying = tmp_path / "lying.zip"
+    lying.write_bytes(bytes(raw))
+    return lying
 
 
 @pytest.mark.parametrize("name", ["../escape.py", "/etc/passwd", "a/../../escape.py"])
@@ -124,7 +170,55 @@ def test_a_well_behaved_zip_extracts_cleanly(tmp_path: Path) -> None:
     assert (tmp_path / "out" / "pkg" / "mod.py").read_text() == "print(1)\n"
 
 
+def test_a_truncated_tar_gz_is_rejected_not_raised(tmp_path: Path) -> None:
+    """A cut-off gzip stream raises a bare EOFError from tarfile's gzip layer,
+    not a tarfile.TarError - it still must come back as ArchiveRejected."""
+    archive = _truncated_tar_gz(tmp_path)
+    with pytest.raises(ArchiveRejected, match="corrupt"):
+        safe_extract(archive, tmp_path / "out")
+
+
+def test_a_corrupted_zip_is_rejected_not_raised(tmp_path: Path) -> None:
+    """A bit-flipped DEFLATE stream raises zlib.error, not zipfile.BadZipFile -
+    it still must come back as ArchiveRejected."""
+    archive = _corrupted_zip(tmp_path)
+    with pytest.raises(ArchiveRejected, match="corrupt"):
+        safe_extract(archive, tmp_path / "out")
+
+
+def test_a_zip_entry_with_understated_declared_size_is_rejected_not_written(
+    tmp_path: Path,
+) -> None:
+    """A member's declared uncompressed size is attacker-controlled metadata,
+    not a bound on the real DEFLATE stream - extraction must not write more
+    than the declared size to disk before the mismatch is caught."""
+    archive = _zip_with_understated_size(tmp_path)
+    out = tmp_path / "out"
+    with pytest.raises(ArchiveRejected):
+        safe_extract(archive, out)
+    for written_file in out.rglob("*"):
+        if written_file.is_file():
+            assert written_file.stat().st_size <= 10
+
+
+def test_member_count_at_exactly_the_cap_is_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only strictly more than MAX_MEMBERS is rejected - the boundary itself
+    is a legitimate small archive, not an attack."""
+    import agent_perimeter.census.artifacts as artifacts_module
+
+    monkeypatch.setattr(artifacts_module, "MAX_MEMBERS", 3)
+    archive = _tar_of(tmp_path, {"a": b"1", "b": b"2", "c": b"3"})
+    written = safe_extract(archive, tmp_path / "out")
+    assert len(written) == 3
+
+
 @given(st.text(min_size=1, max_size=40))
+@example("0:")  # Windows drive-letter-like name - (dest / "0:").resolve() used to
+# discard `dest` entirely and land on a different drive
+@example(".")  # resolves to `dest` itself, not a descendant of it
+@example("..")  # resolves to `dest`'s parent - outside `dest`
 def test_no_member_name_ever_escapes_the_destination(name: str) -> None:
     """Property: whatever the member is called, nothing lands outside dest."""
     from agent_perimeter.census.artifacts import _resolve_member
@@ -277,6 +371,44 @@ def test_fetch_artifact_rejects_a_hostile_archive_without_raising(tmp_path: Path
     routes = {
         meta_url: httpx.Response(200, json=_pypi_json("1.0.0", sdist_url)),
         sdist_url: httpx.Response(200, content=hostile.read_bytes()),
+    }
+    client = httpx.Client(transport=_transport(routes))
+    coords = PackageCoords(ecosystem=Ecosystem.PYPI, name="widget")
+
+    result = fetch_artifact(client, coords)
+
+    assert result.status.is_failure
+    assert result.root is None
+
+
+def test_fetch_artifact_reports_failure_for_a_truncated_tar_gz(tmp_path: Path) -> None:
+    """A registry serving a truncated tar.gz must come back through
+    ArtifactResult, not crash the census with an uncaught EOFError."""
+    truncated_bytes = _truncated_tar_gz(tmp_path).read_bytes()
+    meta_url = "https://pypi.org/pypi/widget/json"
+    sdist_url = "https://files.pythonhosted.org/packages/widget-1.0.0.tar.gz"
+    routes = {
+        meta_url: httpx.Response(200, json=_pypi_json("1.0.0", sdist_url)),
+        sdist_url: httpx.Response(200, content=truncated_bytes),
+    }
+    client = httpx.Client(transport=_transport(routes))
+    coords = PackageCoords(ecosystem=Ecosystem.PYPI, name="widget")
+
+    result = fetch_artifact(client, coords)
+
+    assert result.status.is_failure
+    assert result.root is None
+
+
+def test_fetch_artifact_reports_failure_for_a_corrupted_zip(tmp_path: Path) -> None:
+    """A registry serving a corrupted zip must come back through
+    ArtifactResult, not crash the census with an uncaught zlib.error."""
+    corrupted_bytes = _corrupted_zip(tmp_path).read_bytes()
+    meta_url = "https://pypi.org/pypi/widget/json"
+    sdist_url = "https://files.pythonhosted.org/packages/widget-1.0.0.zip"
+    routes = {
+        meta_url: httpx.Response(200, json=_pypi_json("1.0.0", sdist_url)),
+        sdist_url: httpx.Response(200, content=corrupted_bytes),
     }
     client = httpx.Client(transport=_transport(routes))
     coords = PackageCoords(ecosystem=Ecosystem.PYPI, name="widget")
