@@ -2,20 +2,13 @@
 
 ## Reporting a vulnerability in Agent Perimeter
 
-If you discover a security vulnerability in Agent Perimeter, please report it directly to <77killuazoldic@gmail.com>. We acknowledge receipt within 24 hours and will provide a clear timeline for remediation or a detailed explanation of why we assess it as not a vulnerability. Please do not disclose the issue publicly until we have released a fix or made a public statement.
+If you discover a security vulnerability in Agent Perimeter, please report it directly to <security@USER-PLACEHOLDER.example>. We acknowledge receipt within 24 hours and will provide a clear timeline for remediation or a detailed explanation of why we assess it as not a vulnerability. You may use GitHub private advisories or PGP encryption if desired. Please do not disclose the issue publicly until we have released a fix or made a public statement.
 
 ## What we do when we find something in your server
 
 Agent Perimeter sends passive scanning traffic to public MCP servers listed in the official registry. When we identify a finding—a capability edge, configuration exposure, or known vulnerable pattern—we contact the maintainer at the address published in that registry entry or repository. We provide the finding, a reproduction command, and the date by which we intend to publish aggregate statistics on the scanning results.
 
-Our Tier 3 scanning activity (the only live-probe tier) sends exactly one unauthenticated `server/discover` JSON-RPC request to a random sample of public MCP servers found in the remote-only stratum of the registry (servers with remotes URLs but no downloadable package artifacts). Before any request:
-
-- We check a maintainer-editable opt-out list; any hostname on it is never contacted.
-- We fetch and honour `robots.txt` from the target host; if `robots.txt` disallows our scanner, we skip that host.
-- We rate-limit ourselves to one request every 1.0 second.
-- We identify ourselves in the User-Agent header with the tool version and a contact URL pointing to this policy.
-
-We send no other methods, no initialize requests, no tools/list, no tool invocations, no retries. A host that does not answer is recorded unreachable and never probed again.
+Our census tier-3 activity sends exactly one unauthenticated `server/discover` JSON-RPC request per sampled host to a random subset of public MCP servers in the registry's remote-only stratum, honours `robots.txt`, respects a maintainer-editable opt-out list, rate-limits itself to one request per second, and identifies itself via a contact URL in the User-Agent header. A host that does not answer is recorded unreachable and never contacted again.
 
 ## Embargo
 
