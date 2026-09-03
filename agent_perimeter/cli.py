@@ -27,6 +27,7 @@ from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
 from agent_perimeter.transport.streamable_http import StreamableHttpTransport
 
 DEFAULT_CONTACT_URL = "https://github.com/USER/agent-perimeter"
+DEFAULT_REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
 
 # The plain `Severity` StrEnum sorts alphabetically (critical, high, info, low,
 # medium) — wrong order. This is the actual severity ranking (revision §2.7).
@@ -384,3 +385,47 @@ def scan(
             encoding="utf-8",
         )
         typer.echo(f"Report written to {html}")
+
+
+@app.command()
+def census(
+    endpoint: Annotated[str, typer.Option(help="Registry API base URL.")] = DEFAULT_REGISTRY,
+    tier2_n: Annotated[int, typer.Option(help="Tier-2 packages per ecosystem.")] = 200,
+    out: Annotated[Path, typer.Option(help="Directory for the report and raw data.")] = Path(
+        "docs/census"
+    ),
+) -> None:
+    """Collect a passive census of the public MCP registry.
+
+    Reads the registry API and published package artifacts. Never connects to a
+    third-party MCP server.
+    """
+    import httpx
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from agent_perimeter.census.run import run_census
+    from agent_perimeter.db.models import Base
+
+    out.mkdir(parents=True, exist_ok=True)
+
+    # ponytail: a run-local SQLite file under `out`, not the project's shared
+    # Postgres (alembic.ini's connection is host-only, and nothing in the
+    # codebase yet bootstraps an app-level Postgres session to reuse). Every
+    # CensusRun/CensusRecord row this command writes is real and queryable -
+    # swap for the shared Postgres engine once an app-wide session helper
+    # exists for the CLI to share with the API.
+    engine = create_engine(f"sqlite:///{out / 'census.db'}")
+    Base.metadata.create_all(engine)
+
+    with httpx.Client() as client, Session(engine) as session:
+        run = run_census(session, client, endpoint=endpoint, tier2_n=tier2_n)
+        # Read while the session is still open - CensusRun's attributes are
+        # expired by the commit inside run_census, and refreshing them after
+        # the session closes below would raise DetachedInstanceError.
+        typer.echo(f"Population size: {run.population_size}")
+        typer.echo(f"Tier-2 n:        {run.tier2_n}")
+        # Printed unconditionally, zero included - B10: a number that only
+        # shows up when it's bad is a number nobody trusts.
+        typer.echo(f"Fetch failures:  {run.fetch_failures}")
+        typer.echo(f"Method hash:     {run.method_hash}")
