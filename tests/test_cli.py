@@ -2,12 +2,14 @@ import json
 import shlex
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import sqlalchemy
 from typer.testing import CliRunner
 
 from agent_perimeter._contracts import Claim, Derivation, Method
-from agent_perimeter.cli import app
+from agent_perimeter.cli import DEFAULT_DATABASE_URL, app
 from agent_perimeter.model.feature import Feature, Revision
 from agent_perimeter.transport.revision import Fingerprint
 
@@ -213,3 +215,86 @@ def test_reproduction_command_replays_the_config_flag_that_produced_it(
     assert "--only secrets.config_scan" in emitted["message"]["text"]
     uri = emitted["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
     assert uri == "mcp.json", uri
+
+
+def _stub_census_run(**overrides: object) -> SimpleNamespace:
+    """Stand-in for census.run.CensusRun - only the attributes the `census`
+    CLI command reads to print its summary."""
+    fields: dict[str, object] = {
+        "population_size": 0,
+        "tier2_n": 200,
+        "fetch_failures": 0,
+        "method_hash": "deadbeef00000000",
+    }
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
+def test_census_defaults_to_the_project_postgres_not_sqlite(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Finding 2 regression: `agent-perimeter census` must default to this
+    project's real Postgres (the same DSN alembic.ini/migrations/env.py
+    already use), not a throwaway SQLite file invisible to alembic, psql or
+    a future API - and this has to prove the *wiring*, not just the constant,
+    or a future edit could leave DEFAULT_DATABASE_URL correct while the
+    command body still hardcodes something else.
+    """
+    assert DEFAULT_DATABASE_URL.startswith("postgresql+psycopg://")
+    assert "sqlite" not in DEFAULT_DATABASE_URL
+
+    captured_urls: list[str] = []
+    real_create_engine = sqlalchemy.create_engine
+
+    def fake_create_engine(url: str, *args: object, **kwargs: object) -> object:
+        captured_urls.append(url)
+        # cli.py's `from sqlalchemy import create_engine` is a lazy import
+        # evaluated at call time, so patching the attribute it reads from is
+        # enough. The engine actually returned is a real in-memory SQLite one
+        # so the rest of the command (Base.metadata.create_all, Session)
+        # still runs - this test is about which DSN reaches create_engine,
+        # not about running the pipeline against a live Postgres.
+        return real_create_engine("sqlite://")
+
+    monkeypatch.setattr("sqlalchemy.create_engine", fake_create_engine)
+    monkeypatch.setattr(
+        "agent_perimeter.census.run.run_census",
+        lambda session, client, *, endpoint, tier2_n: _stub_census_run(),
+    )
+
+    result = runner.invoke(app, ["census", "--out", str(tmp_path / "out")])
+
+    assert result.exit_code == 0, result.stdout
+    assert captured_urls == [DEFAULT_DATABASE_URL]
+
+
+def test_census_database_url_can_be_overridden_without_a_live_postgres(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--database-url` exists for exactly this: a deployment (or a test)
+    that isn't the project's default Postgres. Verified end to end through
+    the real `create_engine`/`Base.metadata.create_all` (no mocking of
+    SQLAlchemy itself, unlike the default-DSN test above), so this also
+    proves the override actually reaches the engine, not just the option
+    parser.
+    """
+    monkeypatch.setattr(
+        "agent_perimeter.census.run.run_census",
+        lambda session, client, *, endpoint, tier2_n: _stub_census_run(population_size=3),
+    )
+    db_path = tmp_path / "override.db"
+
+    result = runner.invoke(
+        app,
+        [
+            "census",
+            "--out",
+            str(tmp_path / "out"),
+            "--database-url",
+            f"sqlite:///{db_path}",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert db_path.exists()
+    assert "Population size: 3" in result.stdout

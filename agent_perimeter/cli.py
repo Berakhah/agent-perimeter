@@ -28,6 +28,14 @@ from agent_perimeter.transport.streamable_http import StreamableHttpTransport
 
 DEFAULT_CONTACT_URL = "https://github.com/USER/agent-perimeter"
 DEFAULT_REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
+# Same DSN alembic.ini's `sqlalchemy.url` uses (migrations/env.py expands
+# ${POSTGRES_PASSWORD} the same way, at read time, since configparser/typer
+# don't do it on their own) - one Postgres instance for migrations, the CLI
+# and, later, the API to share. Keep these two in sync by hand; there's no
+# app-wide config module yet for either to read from.
+DEFAULT_DATABASE_URL = (
+    "postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@localhost:5432/agent_perimeter"
+)
 
 # The plain `Severity` StrEnum sorts alphabetically (critical, high, info, low,
 # medium) — wrong order. This is the actual severity ranking (revision §2.7).
@@ -394,6 +402,12 @@ def census(
     out: Annotated[Path, typer.Option(help="Directory for the report and raw data.")] = Path(
         "docs/census"
     ),
+    database_url: Annotated[
+        str,
+        typer.Option(
+            help="SQLAlchemy DSN. Defaults to this project's Postgres (see alembic.ini)."
+        ),
+    ] = DEFAULT_DATABASE_URL,
 ) -> None:
     """Collect a passive census of the public MCP registry.
 
@@ -409,13 +423,11 @@ def census(
 
     out.mkdir(parents=True, exist_ok=True)
 
-    # ponytail: a run-local SQLite file under `out`, not the project's shared
-    # Postgres (alembic.ini's connection is host-only, and nothing in the
-    # codebase yet bootstraps an app-level Postgres session to reuse). Every
-    # CensusRun/CensusRecord row this command writes is real and queryable -
-    # swap for the shared Postgres engine once an app-wide session helper
-    # exists for the CLI to share with the API.
-    engine = create_engine(f"sqlite:///{out / 'census.db'}")
+    # Every CensusRun/CensusRecord row this command writes lands in the same
+    # Postgres alembic/docker-compose.yml already stand up - not a throwaway
+    # file invisible to alembic, psql or a future API. --database-url exists
+    # so a different deployment (or a test) can point elsewhere.
+    engine = create_engine(os.path.expandvars(database_url))
     Base.metadata.create_all(engine)
 
     with httpx.Client() as client, Session(engine) as session:
