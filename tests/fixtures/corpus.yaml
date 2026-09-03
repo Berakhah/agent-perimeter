@@ -1,0 +1,101 @@
+# Labelled cases for precision/recall. Every positive is paired with a
+# near-miss negative differing only in the detail that should matter.
+version: "1.0.0"
+cases:
+  - id: cache_scope_public
+    revision: "2026-07-28"
+    flaw: cache_scope_public
+    expect_findings: [revision.cache_scope]
+  - id: cache_scope_private_control
+    revision: "2026-07-28"
+    flaw: none
+    expect_clean: [revision.cache_scope]
+    note: identical server with cacheScope private
+
+  - id: missing_result_type
+    revision: "2026-07-28"
+    flaw: missing_result_type
+    expect_findings: [revision.conformance_mismatch]
+  - id: conformant_control
+    revision: "2026-07-28"
+    flaw: none
+    expect_clean: [revision.conformance_mismatch]
+
+  - id: header_annotation_bad_token
+    revision: "2026-07-28"
+    flaw: param_header_bad_token
+    expect_findings: [revision.header_annotation_invalid]
+  - id: header_annotation_unreachable_case
+    revision: "2026-07-28"
+    flaw: param_header_behind_oneof
+    expect_findings: [revision.header_annotation_unreachable]
+  - id: header_annotation_bad_type
+    revision: "2026-07-28"
+    flaw: param_header_number
+    expect_findings: [revision.header_annotation_type]
+  - id: header_annotation_valid_control
+    revision: "2026-07-28"
+    flaw: param_header_valid
+    expect_clean:
+      - revision.header_annotation_invalid
+      - revision.header_annotation_unreachable
+      - revision.header_annotation_type
+    note: same annotation, but syntactically valid and reachable
+
+  - id: bidi_in_description
+    revision: "2026-07-28"
+    flaw: unicode_bidi
+    expect_findings: [descriptions.unicode_anomaly]
+  - id: plain_ascii_control
+    revision: "2026-07-28"
+    flaw: none
+    expect_clean: [descriptions.unicode_anomaly]
+
+  - id: imperative_description
+    revision: "2026-07-28"
+    flaw: imperative_injection
+    expect_findings: [descriptions.imperative_injection]
+  - id: descriptive_prose_control
+    revision: "2026-07-28"
+    flaw: verbose_description
+    expect_clean: [descriptions.imperative_injection]
+    note: long ordinary prose, no model-addressed instruction
+
+  - id: colliding_tool_names
+    revision: "2026-07-28"
+    flaw: shadowing
+    expect_findings: [descriptions.shadowing]
+  - id: distinct_tool_names_control
+    revision: "2026-07-28"
+    flaw: none
+    expect_clean: [descriptions.shadowing]
+
+  - id: config_secret
+    revision: "2026-07-28"
+    flaw: config_secret
+    expect_findings: [secrets.config_scan]
+  - id: config_placeholder_control
+    revision: "2026-07-28"
+    flaw: config_placeholder
+    expect_clean: [secrets.config_scan]
+    note: low-entropy placeholder such as changeme
+
+  - id: legacy_server_control
+    revision: "2025-11-25"
+    flaw: none
+    expect_clean:
+      - revision.cache_scope
+      - revision.header_annotation_invalid
+      - revision.header_annotation_unreachable
+      - revision.header_annotation_type
+      - revision.conformance_mismatch
+    note: every 2026-07-28 check must be skipped, not failed
+
+  - id: deputy_pair
+    revision: "2026-07-28"
+    flaw: deputy_tools
+    expect_findings: [policy.confused_deputy, injection.path_proof]
+  - id: single_capability_control
+    revision: "2026-07-28"
+    flaw: none
+    expect_clean: [policy.confused_deputy]
