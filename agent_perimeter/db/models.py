@@ -157,3 +157,36 @@ class DriftEvent(Base):
     new_hash: Mapped[str] = mapped_column(String(64))
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     severity: Mapped[str] = mapped_column(String(16))
+
+
+class CensusRun(Base):
+    __tablename__ = "census_run"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    population_size: Mapped[int]
+    fetch_failures: Mapped[int] = mapped_column(default=0)
+    tool_version: Mapped[str]
+    method_hash: Mapped[str]
+    tier2_n: Mapped[int | None] = mapped_column(nullable=True)
+    registry_endpoint: Mapped[str]
+
+
+class CensusRecord(Base):
+    __tablename__ = "census_record"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    census_run_id: Mapped[int] = mapped_column(ForeignKey("census_run.id"))
+    registry_id: Mapped[str]
+    coords_digest: Mapped[str] = mapped_column(nullable=False, index=True)
+    ecosystem: Mapped[str | None] = mapped_column(nullable=True)
+    package_name: Mapped[str | None] = mapped_column(nullable=True)
+    distribution: Mapped[str] = mapped_column(default="none")
+    sdk_version: Mapped[str | None] = mapped_column(nullable=True)
+    feature_set_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    fetch_status: Mapped[str]
+    fetch_detail: Mapped[str | None] = mapped_column(nullable=True)
+    rank_metric: Mapped[int | None] = mapped_column(nullable=True)
+    rank_metric_source: Mapped[str | None] = mapped_column(nullable=True)
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
