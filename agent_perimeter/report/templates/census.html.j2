@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Agent Perimeter — MCP ecosystem census</title>
-<style>{{ css }}</style>
+<style>{{ css|safe }}</style>
 </head>
 <body>
 <h1>MCP ecosystem census</h1>
@@ -78,17 +78,19 @@ count within each ecosystem, before any artifact is fetched.</p>
 publication.</p>
 {% else %}
 <table>
-<tr><th class="num">Sampled</th><th class="num">Supports</th><th class="num">Unknown</th>
-    <th class="num">Share</th></tr>
+<tr><th class="num">Sampled</th><th class="num">Supports</th><th class="num">Unknown</th></tr>
 <tr>
   <td class="num">{{ probe_n }}</td>
   <td class="num">{{ probe_agg.supports }}</td>
   <td class="num">{{ probe_agg.unknown }} unknown</td>
-  <td class="num">{{ "n/a" if probe_agg.share is none else "%.0f%%"|format(probe_agg.share * 100) }}</td>
 </tr>
 </table>
-<p class="deriv">does not support: {{ probe_agg.does_not_support }} — structurally always 0 for
-this stratum; see "live-discover sample" below.</p>
+<p class="deriv">No share/percentage is reported for this stratum. "Does not support" is
+structurally always 0 here — a single probe can confirm support, never its absence (see
+"live-discover sample" below) — so a supports-over-n ratio would look fully positive even when
+most of the sample never answered at all. {{ probe_agg.unknown }} of the {{ probe_n }} sampled
+hosts never answered a request, or were excluded before one was sent: that non-response count
+is the number that matters here, not a derived percentage.</p>
 {% endif %}
 
 <h2>Terms</h2>

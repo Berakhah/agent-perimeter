@@ -163,3 +163,36 @@ def test_raw_export_carries_a_stratum_column_and_still_no_names(tmp_path) -> Non
     assert "stratum" in body
     assert "acme-mcp-server" not in body
     assert "registry/acme-mcp-server" not in body
+
+
+# --- Review fixes ----------------------------------------------------------
+
+
+def test_embedded_stylesheet_is_not_html_escaped() -> None:
+    """report.css's `font-family: "IBM Plex Mono", ...` and the print-mode
+    `content: attr(data-glyph) " ";` rules are the no-colour-only-encoding
+    mechanism this task was required to reuse from Week 3. Jinja's default
+    autoescape turns every `"` into `&#34;`, which is invalid inside a
+    <style> block and would silently break both rules. The stylesheet must
+    reach the page unescaped."""
+    run, records = census_fixture()
+    html = render_census(run, records)
+    assert '"IBM Plex Mono"' in html
+    style_block = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    assert "&#34;" not in style_block
+    assert "&quot;" not in style_block
+
+
+def test_probe_stratum_never_renders_a_bare_percentage() -> None:
+    """does_not_support is structurally always 0 for this stratum, so a
+    naive supports/n share would read 100% even when most of the sample
+    never answered at all - e.g. 2 supports against 5 non-responses. The
+    live-discover section must never state a percentage; it must state the
+    non-response count instead."""
+    run, records = census_fixture(probe_supports=2, probe_unknown=5)
+    html = render_census(run, records)
+
+    section = html.split("<h2>Live-discover stratum</h2>", 1)[1].split("<h2>", 1)[0]
+    assert "%" not in section
+    assert "5" in section and "7" in section  # unknown / sampled counts, stated as raw numbers
+    assert "non-response" in section.lower()

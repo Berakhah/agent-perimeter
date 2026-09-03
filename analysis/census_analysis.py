@@ -1,24 +1,32 @@
-"""Recompute the published census numbers from the raw CSV alone, and check
-them against the sidecar the report was actually built from.
+"""Recompute every published census figure from `records.csv` alone.
 
-`agent_perimeter.report.census_report.export_raw` writes two files into a
-publication directory: `records.csv` (one row per record, keyed by a digest -
-no names, no URLs) and `records.summary.json` (the same aggregate figures
-`render_census` puts in the report's prose and tables, computed by the same
-`aggregate()` call). This script reads `records.csv`, recomputes every one of
-those figures from scratch using nothing but the stdlib, and prints each one
-next to the summary's figure with a pass/fail per line.
+`records.csv` (written by `agent_perimeter.report.census_report.export_raw`,
+one row per record, keyed by a digest - no names, no URLs) carries everything
+needed to recompute per-stratum, per-ecosystem supports/does_not_support/
+unknown counts: group by its `stratum`/`ecosystem` columns and count its
+`supports_2026_07_28` column. That is the whole reproducibility claim - the
+CSV alone, no database, no salt, no API key - and this script's success does
+not depend on anything else existing.
 
-Deliberately stdlib-only and free of any `agent_perimeter` import: the
-reproducibility claim is that a stranger with the published CSV and its
-summary sidecar - no database, no salt, no API key - can verify the report,
-without even needing to trust this project's own aggregation code was called
-correctly. Two independently-written computations agreeing is the check.
+`export_raw` also writes an optional `records.summary.json` sidecar next to
+the CSV, carrying the same figures `render_census` put in the report's prose
+and tables. When that sidecar is present, this script additionally checks its
+own from-scratch recomputation against it and prints a pass/fail per line -
+useful for catching drift between a specific publication and its own raw
+data. When it is absent, the script still runs to completion and simply
+prints the recomputed figures for a human to compare against the report by
+eye.
+
+Deliberately stdlib-only and free of any `agent_perimeter` import: two
+independently-written computations agreeing (or a human eyeballing one
+against the report) is the check, not this project's own aggregation code
+vouching for itself.
 
     uv run python analysis/census_analysis.py docs/census/2026-09-01/records.csv
 
-Expected: every line reports `match`. A `MISMATCH` line means the published
-report and the published raw data disagree - report it, don't paper over it.
+Expected, when a summary sidecar is present: every line reports `match`. A
+`MISMATCH` line means the published report and the published raw data
+disagree - report it, don't paper over it.
 """
 
 from __future__ import annotations
@@ -31,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 _ROW = "{label:<45} {published:>10} {computed:>10}  {result}"
+SUMMARY_NAME = "records.summary.json"
 
 
 def _recompute(csv_path: Path) -> dict[str, Any]:
@@ -93,50 +102,69 @@ def _compare(label: str, published: object, computed: object, *, lines: list[str
     return ok
 
 
-def check(csv_path: Path, summary_path: Path) -> bool:
-    summary: Any = json.loads(summary_path.read_text(encoding="utf-8"))
+def _figures(computed: dict[str, Any]) -> list[tuple[str, object]]:
+    """Flatten `_recompute`'s output into (label, value) pairs, in the order
+    the report states them: population->artifact figures, then live-discover.
+    The single source of truth for "every number in the report" - both the
+    summary-comparison path and the summary-less print-only path walk this
+    same list, so they can never drift apart from each other.
+    """
+    out: list[tuple[str, object]] = [
+        ("artifact.n_examined", computed["artifact"]["n_examined"]),
+    ]
+    for field in ("supports", "does_not_support", "unknown", "n"):
+        out.append((f"artifact.pooled.{field}", computed["artifact"]["pooled"][field]))
+    for eco, row in computed["artifact"]["by_ecosystem"].items():
+        for field in ("supports", "does_not_support", "unknown", "n"):
+            out.append((f"artifact.by_ecosystem.{eco}.{field}", row[field]))
+
+    live = computed["live_discover"]
+    if live is None:
+        out.append(("live_discover", None))
+    else:
+        for field in ("n_sampled", "supports", "does_not_support", "unknown", "n"):
+            out.append((f"live_discover.{field}", live[field]))
+    return out
+
+
+def _lookup(summary: dict[str, Any], label: str) -> object:
+    """The summary's value for one dotted `_figures` label, or a sentinel
+    string when the summary has nothing at that path (e.g. an ecosystem this
+    CSV has rows for but the summary never recorded) - a genuine MISMATCH,
+    not a KeyError.
+    """
+    node: Any = summary
+    for part in label.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return "<absent from summary>"
+        node = node[part]
+    return node
+
+
+def check(csv_path: Path, summary_path: Path | None) -> bool:
+    """Recompute every figure from `csv_path` alone, and - when
+    `summary_path` is given and exists - check it against that sidecar.
+    Always succeeds (returns True) when there is no sidecar to check
+    against; only a real published-vs-recomputed disagreement fails.
+    """
     computed = _recompute(csv_path)
+    summary: dict[str, Any] | None = (
+        json.loads(summary_path.read_text(encoding="utf-8"))
+        if summary_path is not None and summary_path.is_file()
+        else None
+    )
 
     lines: list[str] = []
     all_ok = True
-
-    all_ok &= _compare(
-        "artifact.n_examined",
-        summary["artifact"]["n_examined"],
-        computed["artifact"]["n_examined"],
-        lines=lines,
-    )
-    for field in ("supports", "does_not_support", "unknown", "n"):
-        all_ok &= _compare(
-            f"artifact.pooled.{field}",
-            summary["artifact"]["pooled"][field],
-            computed["artifact"]["pooled"][field],
-            lines=lines,
-        )
-    for eco, published_row in summary["artifact"]["by_ecosystem"].items():
-        computed_row = computed["artifact"]["by_ecosystem"].get(
-            eco, {"supports": 0, "does_not_support": 0, "unknown": 0, "n": 0}
-        )
-        for field in ("supports", "does_not_support", "unknown", "n"):
-            all_ok &= _compare(
-                f"artifact.by_ecosystem.{eco}.{field}",
-                published_row[field],
-                computed_row[field],
-                lines=lines,
+    if summary is None:
+        print(f"(no {SUMMARY_NAME} next to {csv_path.name} - printing recomputed figures only)")
+        for label, value in _figures(computed):
+            lines.append(
+                _ROW.format(label=label, published="-", computed=str(value), result="(no summary)")
             )
-
-    published_live = summary["live_discover"]
-    computed_live = computed["live_discover"]
-    if published_live is None or computed_live is None:
-        all_ok &= _compare("live_discover", published_live, computed_live, lines=lines)
     else:
-        for field in ("n_sampled", "supports", "does_not_support", "unknown", "n"):
-            all_ok &= _compare(
-                f"live_discover.{field}",
-                published_live[field],
-                computed_live[field],
-                lines=lines,
-            )
+        for label, value in _figures(computed):
+            all_ok = _compare(label, _lookup(summary, label), value, lines=lines) and all_ok
 
     for line in lines:
         print(line)
@@ -148,13 +176,10 @@ def main(argv: list[str]) -> int:
         print(f"usage: {argv[0]} <path/to/records.csv>", file=sys.stderr)
         return 2
     csv_path = Path(argv[1])
-    summary_path = csv_path.with_name("records.summary.json")
     if not csv_path.is_file():
         print(f"no such file: {csv_path}", file=sys.stderr)
         return 2
-    if not summary_path.is_file():
-        print(f"no summary sidecar next to {csv_path}: expected {summary_path}", file=sys.stderr)
-        return 2
+    summary_path = csv_path.with_name(SUMMARY_NAME)
 
     ok = check(csv_path, summary_path)
     return 0 if ok else 1
