@@ -22,9 +22,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
 
 from agent_perimeter._contracts import Claim, Derivation, Method
 from agent_perimeter.api.app import create_app
+from agent_perimeter.db.models import FindingRow, Scan
 from agent_perimeter.model.feature import Feature, Revision
 from agent_perimeter.transport.revision import Fingerprint
 
@@ -173,3 +176,76 @@ def test_active_mode_with_a_valid_scope_file_is_accepted_and_completes(
 def test_census_run_not_found_is_404(client: TestClient) -> None:
     r = client.get("/api/census/runs/999999")
     assert r.status_code == 404
+
+
+# --- fix round 1: malformed scope_file, passive-mode false refusal, and the
+# untested _persist() DB write path (agent-perimeter task-9-fix-round-1) ----
+
+
+def test_a_whitespace_only_scope_field_is_refused_with_a_422_not_a_500(
+    client: TestClient,
+) -> None:
+    scope = {
+        "target": TARGET,
+        "authorising_party": "   ",
+        "authorised_on": "2026-08-30",
+        "attestation": "I authorise active probing.",
+    }
+    r = client.post("/api/scans", json={"target": TARGET, "mode": "active", "scope_file": scope})
+    assert r.status_code == 422, r.text
+    body = r.json()
+    assert body["error"] == "authorization_required"
+    assert body["missing_field"] == "authorising_party"
+
+
+def test_expires_on_before_authorised_on_is_refused_with_a_422_not_a_500(
+    client: TestClient,
+) -> None:
+    scope = {
+        "target": TARGET,
+        "authorising_party": "Example Ltd",
+        "authorised_on": "2026-08-30",
+        "attestation": "I authorise active probing.",
+        "expires_on": "2026-08-01",
+    }
+    r = client.post("/api/scans", json={"target": TARGET, "mode": "active", "scope_file": scope})
+    assert r.status_code == 422, r.text
+    body = r.json()
+    assert body["error"] == "authorization_required"
+    assert body["missing_field"] == "expires_on"
+
+
+def test_passive_mode_with_an_incomplete_scope_file_is_accepted(client: TestClient) -> None:
+    # A passive-mode request is never refused for scope-file reasons, no
+    # matter how incomplete the supplied scope_file is -- the CLI ignores
+    # --scope-file in passive mode too.
+    scope = {"target": TARGET, "authorising_party": "Acme Ltd"}  # no attestation
+    r = client.post("/api/scans", json={"target": TARGET, "mode": "passive", "scope_file": scope})
+    assert r.status_code == 202, r.text
+
+
+def test_persist_writes_scan_and_finding_rows_to_the_database(
+    tmp_path: Path, stub_pipeline: None
+) -> None:
+    """`_persist`'s DB write path (scans.py) had no coverage -- every other
+    test in this file asserts only against the in-process cache. Reads back
+    through a second connection to the same sqlite file
+    `create_app(database_url=...)` was given, the way an external
+    durability/audit consumer would.
+    """
+    db_url = f"sqlite:///{tmp_path / 'persist.db'}"
+    with TestClient(create_app(database_url=db_url)) as c:
+        scan_id = _post_passive(c)
+        findings_count = c.get(f"/api/scans/{scan_id}").json()["findings_count"]
+
+    engine = create_engine(db_url)
+    with Session(engine) as session:
+        scan_row = session.get(Scan, scan_id)
+        assert scan_row is not None
+        assert scan_row.target_ref == TARGET
+        assert scan_row.mode == "passive"
+
+        finding_rows = (
+            session.execute(select(FindingRow).where(FindingRow.scan_id == scan_id)).scalars().all()
+        )
+        assert len(finding_rows) == findings_count

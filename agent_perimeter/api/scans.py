@@ -27,6 +27,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
 from agent_perimeter.api.schemas import ScanRequest, ScopeFileInput
 from agent_perimeter.api.state import AppState
@@ -70,13 +71,31 @@ def _build_scope(raw: ScopeFileInput | None, *, today: date) -> ScopeFile | None
         raise AuthorizationRequired(
             "scope_file.attestation is required.", missing_field="attestation"
         )
-    return ScopeFile(
-        target=target,
-        authorising_party=authorising_party,
-        authorised_on=raw.authorised_on if raw.authorised_on is not None else today,
-        attestation=attestation,
-        expires_on=raw.expires_on,
-    )
+    try:
+        return ScopeFile(
+            target=target,
+            authorising_party=authorising_party,
+            authorised_on=raw.authorised_on if raw.authorised_on is not None else today,
+            attestation=attestation,
+            expires_on=raw.expires_on,
+        )
+    except ValidationError as exc:
+        # Structurally-present-but-invalid fields (blank strings, expires_on
+        # before authorised_on) reach ScopeFile's own validators. Funnel them
+        # through the same refusal path as structural absence above instead
+        # of letting pydantic_core.ValidationError propagate uncaught to a
+        # bare 500 (fix round 1, Finding 1).
+        first_error = exc.errors()[0]
+        # ponytail: a field_validator error's loc names the field directly;
+        # a model_validator (mode="after") error reports loc=() instead.
+        # ScopeFile has exactly one model-level check today (expiry vs.
+        # authorised_on), so that's the fallback -- name it explicitly if a
+        # second whole-model validator is ever added.
+        field = str(first_error["loc"][0]) if first_error["loc"] else "expires_on"
+        msg = first_error["msg"].removeprefix("Value error, ")
+        raise AuthorizationRequired(
+            f"scope_file.{field} is invalid: {msg}", missing_field=field
+        ) from exc
 
 
 @router.post("/scans", status_code=202)
@@ -97,8 +116,14 @@ def create_scan(
         )
 
     today = date.today()
-    scope = _build_scope(scan_request.scope_file, today=today)
+    scope: ScopeFile | None = None
     if scan_request.mode is ScanMode.ACTIVE:
+        # A passive-mode request must never be refused for scope-file
+        # reasons, however malformed scope_file is -- matching the CLI,
+        # where --scope-file is simply unused in passive mode (fix round 1,
+        # Finding 2). Only build and validate a real ScopeFile when the
+        # mode that actually needs one is the mode being requested.
+        scope = _build_scope(scan_request.scope_file, today=today)
         require_scope(scope, check_id="scan", target=scan_request.target, today=today)
 
     state: AppState = request.app.state.ap
@@ -170,6 +195,16 @@ def _persist(
                 tool_version="0.1.0",
             )
             session.add(scan_row)
+            # Flush the parent row before any child row is added. Scan/Tool/
+            # CapabilityEdge/FindingRow are related only by a raw FK column
+            # (no ORM `relationship()`), so SQLAlchemy's flush has no
+            # dependency information to order same-flush inserts by --
+            # without this, a scan with no tools (nothing else to trigger a
+            # flush before the finding rows are added) can emit the finding
+            # insert before the scan insert and fail FK enforcement (caught
+            # below on sqlite only when a test enables it; always enforced
+            # on Postgres). Found via fix round 1, Finding 3's new test.
+            session.flush()
 
             tool_ids: dict[str, str] = {}
             for tool in outcome.tools:
