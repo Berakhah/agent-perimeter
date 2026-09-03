@@ -21,6 +21,12 @@ class FetchStatus(StrEnum):
     PARSE_ERROR = "parse_error"
     UNSUPPORTED_COORDS = "unsupported_coords"
     TOO_LARGE = "too_large"
+    # A tier-3 server/discover probe got no usable answer - network failure, a
+    # non-200 status, an unparseable body, or a JSON-RPC response with no
+    # `result` (including a well-formed JSON-RPC error). Tier 3 does not try
+    # to distinguish those causes: every one of them means the host is never
+    # drawn into a future sample again (agent_perimeter.census.tier3).
+    UNREACHABLE = "unreachable"
 
     @property
     def is_failure(self) -> bool:
