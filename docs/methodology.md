@@ -71,6 +71,39 @@ array; `registryType` values seen include `npm`, `pypi`, `oci`, `nuget`, and
 types (Task 1's `Ecosystem` enum models only `pypi`/`npm`) and are counted
 distinctly from a genuinely unrecognised or missing `registryType`.
 
+## SDK version floors
+
+`agent_perimeter/census/detect.py`'s `SDK_FLOOR` bounds artifact-derived
+feature claims: a package pinned to an SDK release below a feature's floor
+cannot be credited with that feature, whatever its source mentions. Every
+number the artifact census reports moves if a floor below is wrong.
+
+**Status: TBD - none of the rows below are verified.** They were written
+during Task 4's implementation without live access to the real MCP SDK
+changelogs (sandboxed environment, no network egress). The version numbers
+are illustrative placeholders chosen only so the comparison logic in
+`detect.py` has something parseable to run against in tests - they are not
+claims about the real `mcp` or `@modelcontextprotocol/sdk` release history.
+**Do not cite these numbers, and do not run the registry scan for
+publication, until every row is verified against the live changelog and this
+table is updated with real dates and URLs.**
+
+| Feature | Ecosystem | Floor version | Release date | Changelog URL | Date checked |
+|---|---|---|---|---|---|
+| `server_discover` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
+| `server_discover` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
+| `result_type` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
+| `result_type` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
+| `cacheable_result` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
+| `cacheable_result` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
+| `mrtr` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
+| `mrtr` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
+
+`param_headers` has no floor row: it is a JSON Schema annotation convention
+(`x-mcp-header`) that any source can carry regardless of which SDK version is
+pinned, not an API the SDK gates by release - see the comment above
+`SDK_FLOOR` in `detect.py`.
+
 ## Measured precision and recall
 
 Regenerated on every commit by `agent_perimeter.eval.run`. If this table is
