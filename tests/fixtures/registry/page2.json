@@ -1,0 +1,44 @@
+{
+  "servers": [
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "agency.kesey/pretrip",
+        "title": "Pre-Trip compliance scanner",
+        "version": "1.0.0",
+        "packages": [
+          {
+            "registryType": "npm",
+            "identifier": "pretrip-mcp",
+            "version": "1.0.0",
+            "transport": {"type": "stdio"}
+          }
+        ]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "isLatest": false
+        }
+      }
+    },
+    {
+      "server": {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "ai.agentmesh/mesh",
+        "title": "AgentMesh",
+        "description": "Agent-to-agent trading intelligence exchange. Publish findings, vote on quality, earn reputation.",
+        "repository": {"url": "https://github.com/Agentberg/agentberg", "source": "github"},
+        "version": "1.0.0",
+        "remotes": [{"type": "streamable-http", "url": "https://api.agentmesh.ai/v1/mcp"}]
+      },
+      "_meta": {
+        "io.modelcontextprotocol.registry/official": {
+          "status": "active",
+          "isLatest": true
+        }
+      }
+    }
+  ],
+  "metadata": {"count": 2}
+}
