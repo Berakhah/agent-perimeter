@@ -1,0 +1,7 @@
+[project]
+name = "legacy-mcp-server"
+version = "0.1.0"
+description = "Synthetic fixture package for detect.py's tests, not a real package."
+dependencies = [
+    "mcp>=1.4.0",
+]

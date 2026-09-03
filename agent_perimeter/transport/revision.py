@@ -30,6 +30,10 @@ from agent_perimeter.transport.base import Transport, TransportError
 # the generic "no response at all" one (revision §2.2).
 KNOWN_OLDER_REVISIONS = ("2025-06-18", "2025-03-26")
 
+# A live probe observed the running server answer. It is the strongest evidence
+# this tool produces, and every other derivation is calibrated below it.
+LIVE_PROBE_CONFIDENCE = 0.95
+
 # The only features fingerprint() can ever add to a Fingerprint's features set
 # -- everything _claimed_revision and _observed_features actually grant below.
 # MRTR and SUBSCRIPTIONS_LISTEN need an active multi-step probe or an open
@@ -201,6 +205,7 @@ def fingerprint(transport: Transport) -> Fingerprint:
         value=claimed.value if claimed is not None else None,
         method=Method.DETERMINISTIC,
         derivation=Derivation.PROBE,
+        confidence=LIVE_PROBE_CONFIDENCE,
         observed_at=datetime.now(UTC),
         caveat=caveat,
     )

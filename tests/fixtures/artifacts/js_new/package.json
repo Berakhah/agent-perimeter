@@ -1,0 +1,8 @@
+{
+  "name": "demo-js-mcp-server",
+  "version": "0.1.0",
+  "description": "Synthetic fixture package for detect.py's tests, not a real package.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^2.1.0"
+  }
+}
