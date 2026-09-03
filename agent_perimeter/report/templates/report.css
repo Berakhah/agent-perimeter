@@ -1,0 +1,30 @@
+/* Light-first editorial instrument. Prints in greyscale without losing meaning. */
+:root {
+  --paper: oklch(0.985 0.004 85);
+  --ink: oklch(0.22 0.012 85);
+  --rule: oklch(0.85 0.006 85);
+  --accent: oklch(0.72 0.16 68);
+}
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Geist, system-ui, sans-serif;
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 2rem;
+}
+h1, h2 { font-family: Newsreader, Georgia, serif; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border-bottom: 1px solid var(--rule); padding: 0.4rem 0.6rem; text-align: left; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.sev { font-weight: 600; letter-spacing: 0.02em; }
+.sev::before { content: attr(data-glyph) " "; }
+.strip { border-left: 3px solid var(--accent); padding-left: 0.75rem; margin: 1rem 0; }
+.deriv { font-size: 0.85em; opacity: 0.8; }
+footer { margin-top: 3rem; border-top: 1px solid var(--rule); padding-top: 1rem; font-size: 0.9em; }
+@media print {
+  body { max-width: none; padding: 0; }
+  a::after { content: " (" attr(href) ")"; font-size: 0.8em; }
+  .sev { border: 1px solid var(--ink); padding: 0 0.3em; }
+}

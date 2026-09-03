@@ -77,6 +77,17 @@ CWE_TABLE: dict[str, CweEntry] = {
     entry.id: entry
     for entry in (
         CweEntry(
+            "CWE-22",
+            "Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')",
+            "https://cwe.mitre.org/data/definitions/22.html",
+        ),
+        CweEntry(
+            "CWE-78",
+            "Improper Neutralization of Special Elements used in an OS Command "
+            "('OS Command Injection')",
+            "https://cwe.mitre.org/data/definitions/78.html",
+        ),
+        CweEntry(
             "CWE-113", "HTTP Response Splitting", "https://cwe.mitre.org/data/definitions/113.html"
         ),
         CweEntry(

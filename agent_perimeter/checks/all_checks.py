@@ -10,6 +10,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from agent_perimeter.checks.active import (
+    command_injection,
+    confused_deputy,
+    path_traversal,
+    ssrf,
+)
 from agent_perimeter.checks.base import Check
 from agent_perimeter.checks.context import ScanContext, _UnauthorisedTransport
 from agent_perimeter.checks.descriptions import (
@@ -19,6 +25,7 @@ from agent_perimeter.checks.descriptions import (
     unicode_anomaly,
 )
 from agent_perimeter.checks.descriptions.llm_judge import LlmJudgeCheck, Verdict
+from agent_perimeter.checks.injection import agent_adapter, path_proof
 from agent_perimeter.checks.revision import (
     cache_scope,
     conformance_mismatch,
@@ -41,6 +48,7 @@ from agent_perimeter.checks.static import (
     session_state,
     token_passthrough,
 )
+from agent_perimeter.graph.policy_checks import POLICY_CHECKS
 from agent_perimeter.model.finding import Finding
 
 
@@ -87,6 +95,16 @@ ALL_CHECKS: tuple[Check, ...] = (
     config_scan.CHECK,
     env_scan.CHECK,
     history_scan.CHECK,
+    # active — 4 (all scope-gated)
+    path_traversal.CHECK,
+    ssrf.CHECK,
+    command_injection.CHECK,
+    confused_deputy.CHECK,
+    # injection — 2
+    path_proof.CHECK,
+    agent_adapter.CHECK,
+    # policy — 2 (registered checks now, not a bolted-on evaluate() call)
+    *POLICY_CHECKS,
 )
 
 

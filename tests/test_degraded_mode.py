@@ -1,21 +1,29 @@
-from agent_perimeter.checks.all_checks import ALL_CHECKS
+"""Degraded mode measured by findings actually produced, not by registrations.
+
+len([c for c in ALL_CHECKS if not c.requires_model]) / len(ALL_CHECKS) is a
+fixed ratio that cannot fail regardless of real behaviour. This runs the
+fixture corpus twice -- providers enabled, then disabled -- and compares the
+sets of check ids that actually fired. A metric that cannot fail is not a
+metric (revision §4.5).
+"""
+
+from agent_perimeter.eval.corpus import load_corpus
+from agent_perimeter.eval.harness import run_case
+
+
+def _distinct_firing_check_ids(*, models_available: bool) -> set[str]:
+    fired: set[str] = set()
+    for case in load_corpus():
+        fired |= run_case(case, models_available=models_available)
+    return fired
 
 
 def test_degraded_mode_still_produces_findings() -> None:
-    """With every model provider disabled, at least 90% of check classes survive.
-
-    Higher than the shared-foundation floor of 70%, because a security tool
-    that silently degrades is worse than one that was never installed.
-
-    Revision 2026-08-29 section 4.5: this must count checks that actually
-    *produce findings* against the fixture corpus, not merely checks that are
-    *registered*, or the metric cannot fail. Week 3's eval harness (which runs
-    the fixture corpus with providers on and off and diffs the emitting
-    check_ids) is where that stronger version lands; this week's version is
-    the honest interim — registrations only, and it says so.
-    """
-    total = len(ALL_CHECKS)
-    surviving = [c for c in ALL_CHECKS if not c.requires_model]
-    assert len(surviving) / total >= 0.90, (
-        f"only {len(surviving)}/{total} check classes survive with models disabled"
+    enabled = _distinct_firing_check_ids(models_available=True)
+    disabled = _distinct_firing_check_ids(models_available=False)
+    assert enabled, "no check fired with providers enabled -- nothing to compare against"
+    ratio = len(disabled) / len(enabled)
+    assert ratio >= 0.90, (
+        f"only {len(disabled)}/{len(enabled)} check classes still produced a "
+        f"finding with providers disabled"
     )
