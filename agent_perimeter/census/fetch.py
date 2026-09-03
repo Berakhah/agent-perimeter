@@ -20,7 +20,10 @@ from agent_perimeter.model.census import Ecosystem, FetchStatus, PackageCoords
 
 USER_AGENT = (
     f"agent-perimeter/{__version__} "
-    "(+https://github.com/OWNER/agent-perimeter/blob/main/docs/security.md)"
+    # Same placeholder repo path as agent_perimeter.cli.DEFAULT_CONTACT_URL - not
+    # imported from there to avoid pulling the CLI's typer/transport dependency
+    # graph into a read-only fetch module for one string.
+    "(+https://github.com/USER/agent-perimeter/blob/main/docs/security.md)"
 )
 
 # A page holds at most this many entries; also the signal the loud guard below
@@ -64,26 +67,33 @@ class RegistryEntry(BaseModel):
     coords: PackageCoords | None
     repository_url: str | None
     remotes: tuple[str, ...] = ()
+    # True when `packages` contains an entry whose registryType is a *known*
+    # ecosystem this module does not model (oci/nuget/mcpb) - distinct from
+    # coords is None because there was no package at all. A later task deriving
+    # census_record.distribution needs this to tell package_other from none
+    # without re-parsing the raw registry response.
+    has_unmodeled_package: bool = False
+
+
+# Ecosystem (model/census.py, Task 1's file) only models pypi/npm. These are
+# registryType values the registry actually uses that have no Ecosystem member
+# yet - known, just unsupported, not the same fact as an unrecognised value.
+_UNMODELED_REGISTRY_TYPES = frozenset({"oci", "nuget", "mcpb"})
+
+
+def _registry_type(package: dict[str, object]) -> str:
+    return str(package.get("registryType") or package.get("registry_name") or "").lower()
 
 
 def _coords(package: dict[str, object]) -> PackageCoords | None:
-    registry = str(package.get("registryType") or package.get("registry_name") or "")
     name = package.get("identifier") or package.get("name")
     if not isinstance(name, str):
         return None
-    match registry.lower():
+    match _registry_type(package):
         case "pypi":
             eco = Ecosystem.PYPI
         case "npm":
             eco = Ecosystem.NPM
-        case "oci" | "nuget" | "mcpb":
-            # Recognised registry types with no Ecosystem member yet (Ecosystem is
-            # owned by model/census.py, Task 1's file). Returning None here is
-            # deliberate, not a fallthrough: it lets a later task tell "known
-            # ecosystem we don't model" apart from "unrecognised value" if it
-            # inspects the raw registryType, rather than merging both into one
-            # "no coordinates" bucket the way the original draft did.
-            return None
         case _:
             return None
     version = package.get("version")
@@ -116,13 +126,16 @@ def _entry(item: dict[str, object]) -> RegistryEntry | None:
     registry_id = f"{name}:{version}" if isinstance(version, str) and version else name
 
     coords: PackageCoords | None = None
+    has_unmodeled_package = False
     packages = server.get("packages")
     if isinstance(packages, list):
         for package in packages:
-            if isinstance(package, dict):
+            if not isinstance(package, dict):
+                continue
+            if coords is None:
                 coords = _coords(package)
-                if coords is not None:
-                    break
+            if _registry_type(package) in _UNMODELED_REGISTRY_TYPES:
+                has_unmodeled_package = True
 
     repository = server.get("repository")
     repository_url = repository.get("url") if isinstance(repository, dict) else None
@@ -135,6 +148,7 @@ def _entry(item: dict[str, object]) -> RegistryEntry | None:
         coords=coords,
         repository_url=repository_url,
         remotes=_remotes(server),
+        has_unmodeled_package=has_unmodeled_package,
     )
 
 
@@ -160,7 +174,12 @@ def _get_page(
         try:
             response = client.get(endpoint, params=params, headers=headers, timeout=10.0)
         except httpx.TimeoutException:
-            log.record(FetchStatus.TIMEOUT, f"page {page}: request timed out")
+            if attempt + 1 >= max_retries:
+                log.record(
+                    FetchStatus.TIMEOUT,
+                    f"page {page}: timed out, gave up after {max_retries} attempts",
+                )
+                return None
             continue
 
         if response.status_code == 429:
