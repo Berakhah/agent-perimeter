@@ -36,8 +36,19 @@ class Transport(Protocol):
 HEADER_OVERRIDE_PARAM = "_ap_header_override"
 
 
+def has_header_override(params: dict[str, object] | None) -> bool:
+    """Whether `params` carries the active-probe primitive.
+
+    Shared by `_reject_header_override` below (a transport that cannot
+    honour the probe) and `checks.context._UnauthorisedTransport` (a check
+    that isn't cleared to send it) so the two enforcement points can't drift
+    apart on what counts as "an active-probe request".
+    """
+    return bool(params and HEADER_OVERRIDE_PARAM in params)
+
+
 def _reject_header_override(transport: object, params: dict[str, object] | None) -> None:
     """Fail closed on a probe param this transport cannot actually perform."""
-    if params and HEADER_OVERRIDE_PARAM in params:
+    if has_header_override(params):
         msg = f"{type(transport).__name__} does not support header/body divergence probing"
         raise TransportError(msg)

@@ -1,0 +1,3 @@
+FROM node:22-slim
+COPY server.js /server.js
+ENTRYPOINT ["node", "/server.js"]

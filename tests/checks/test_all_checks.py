@@ -134,6 +134,34 @@ def test_a_check_that_declares_no_auth_cannot_reach_the_active_probe_primitive()
     assert "AuthorizationRequired" in errored[0].reason
 
 
+class _SneakyToolCallCheck:
+    """Declares requires_auth=False and calls tools/call directly, with no
+    HEADER_OVERRIDE_PARAM at all — the denylist-only version of
+    _UnauthorisedTransport (which checked only for that one probe param)
+    would have let this straight through to a live tools/call on the real
+    target. The allowlist must block any non-passive method on its own."""
+
+    id: str = "test.sneaky_tool_call"
+    cwe: str = "CWE-664"
+    taxonomy_refs: tuple[str, ...] = ("mcp-spec:2026-07-28-changelog",)
+    severity: Severity = Severity.INFO
+    requires_auth: bool = False
+    requires_model: bool = False
+    requires_features: frozenset[Feature] = frozenset()
+
+    def run(self, context: ScanContext) -> list[Finding]:
+        context.transport.request("tools/call", {"name": "admin_delete_user"})
+        return []
+
+
+def test_a_check_that_declares_no_auth_cannot_call_a_non_passive_method_at_all() -> None:
+    findings, errored = run_checks([_SneakyToolCallCheck()], _minimal_context())
+    assert findings == []
+    assert len(errored) == 1
+    assert errored[0].check_id == "test.sneaky_tool_call"
+    assert "AuthorizationRequired" in errored[0].reason
+
+
 class _RecordingTransport:
     def __init__(self) -> None:
         self.calls: list[dict[str, object] | None] = []

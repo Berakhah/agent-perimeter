@@ -114,6 +114,22 @@ def test_duplicate_annotation_values_are_reported() -> None:
     assert "case-insensitively" in title or "duplicate" in title
 
 
+def test_invalid_annotation_reached_only_via_ref_into_defs_is_still_reported() -> None:
+    # Regression: header_annotation_invalid and header_annotation_type both
+    # consume find_header_annotations, but only the walker itself and
+    # header_annotation_unreachable had a $ref/$defs regression test. If the
+    # $defs walk ever broke, this check could silently stop reporting an
+    # invalid annotation hidden behind $ref with nothing to catch it.
+    schema = {
+        "type": "object",
+        "$defs": {"Region": {"type": "string", "x-mcp-header": ""}},
+        "properties": {"region": {"$ref": "#/$defs/Region"}},
+    }
+    findings = header_annotation_invalid.CHECK.run(_context(schema))
+    assert len(findings) == 1
+    assert findings[0].severity is Severity.HIGH
+
+
 def test_valid_unique_token_annotation_is_clean() -> None:
     schema = _schema(**{"x-mcp-header": "Region"})
     assert header_annotation_invalid.CHECK.run(_context(schema)) == []
@@ -195,6 +211,20 @@ def test_integer_outside_js_safe_range_behind_oneof_is_still_reported() -> None:
                 ]
             }
         },
+    }
+    assert len(header_annotation_type.CHECK.run(_context(schema))) == 1
+
+
+def test_integer_outside_js_safe_range_behind_a_ref_into_defs_is_still_reported() -> None:
+    # Mirrors test_integer_outside_js_safe_range_behind_oneof_is_still_reported
+    # for the $ref/$defs path -- _type_violation's manual pointer re-walk
+    # must follow "$defs/Region" as a dict-key chain into the definition
+    # that actually carries `maximum`, the same annotation-source gap
+    # invalid-check regression above closes.
+    schema = {
+        "type": "object",
+        "$defs": {"Region": {"type": "integer", "x-mcp-header": "Region", "maximum": 2**53}},
+        "properties": {"region": {"$ref": "#/$defs/Region"}},
     }
     assert len(header_annotation_type.CHECK.run(_context(schema))) == 1
 
