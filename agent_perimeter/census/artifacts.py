@@ -15,9 +15,11 @@ parameter, so the zip path below still does a manual per-member check.
 from __future__ import annotations
 
 import shutil
+import struct
 import tarfile
 import tempfile
 import zipfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
@@ -42,6 +44,16 @@ USER_AGENT = (
 )
 
 _TIMEOUT_S = 15.0
+_STREAM_CHUNK_BYTES = 65536
+
+# A corrupted/truncated archive doesn't necessarily fail at open() - tarfile's
+# own gzip layer can raise a bare EOFError (not a TarError) partway through
+# reading, and a bit-flipped zip's DEFLATE stream can raise zlib.error or
+# zipfile.BadZipFile (bad CRC) partway through a member read. None of these
+# are attacker-controlled-content-specific like ArchiveRejected - they're
+# "this file is not a valid archive", which is just as untrusted-input-shaped
+# as a deliberate traversal attempt and must not escape as a raw exception.
+_CORRUPT_ARCHIVE_ERRORS = (tarfile.TarError, zipfile.BadZipFile, EOFError, zlib.error, struct.error)
 
 
 class ArchiveRejected(Exception):
@@ -108,10 +120,17 @@ def safe_extract(archive: Path, dest: Path) -> list[Path]:
     dest.mkdir(parents=True, exist_ok=True)
     resolved_dest = dest.resolve()
 
-    if tarfile.is_tarfile(archive):
-        return _extract_tar(archive, resolved_dest)
-    if zipfile.is_zipfile(archive):
-        return _extract_zip(archive, resolved_dest)
+    # A truncated/corrupted archive can raise mid-read rather than at open() -
+    # even tarfile.is_tarfile() itself raises a bare EOFError for a gzip
+    # stream cut off before its end marker. One guard here covers the format
+    # sniff and both extraction paths, rather than duplicating it in each.
+    try:
+        if tarfile.is_tarfile(archive):
+            return _extract_tar(archive, resolved_dest)
+        if zipfile.is_zipfile(archive):
+            return _extract_zip(archive, resolved_dest)
+    except _CORRUPT_ARCHIVE_ERRORS as exc:
+        raise ArchiveRejected(f"corrupt or truncated archive: {exc}") from exc
     raise ArchiveRejected("not a recognised tar or zip archive")
 
 
@@ -169,12 +188,30 @@ def _extract_zip(archive: Path, resolved_dest: Path) -> list[Path]:
             target = _member_target(resolved_dest, info.filename)
             if info.is_dir():
                 continue
-            if info.file_size > MAX_FILE_BYTES:
-                raise ArchiveRejected(f"member exceeds {MAX_FILE_BYTES} bytes: {info.filename}")
-            total += info.file_size
-            if total > MAX_UNCOMPRESSED_BYTES:
-                raise ArchiveRejected(f"uncompressed size exceeds {MAX_UNCOMPRESSED_BYTES}")
-            zf.extract(info, path=resolved_dest)
+            # `info.file_size` is attacker-controlled central-directory
+            # metadata, not something to size a write loop around - trust
+            # bytes actually produced while streaming instead, the same way
+            # `_download` bounds the HTTP body by bytes actually received
+            # rather than trusting Content-Length. (CPython's own ZipExtFile
+            # additionally truncates output to the declared size internally,
+            # so a member that understates its size is self-defeating - it
+            # just corrupts its own CRC - but that's an implementation detail
+            # of this stdlib version, not a contract we should rely on here.)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            member_bytes = 0
+            with zf.open(info) as src, target.open("wb") as dst:
+                while chunk := src.read(_STREAM_CHUNK_BYTES):
+                    member_bytes += len(chunk)
+                    if member_bytes > MAX_FILE_BYTES:
+                        raise ArchiveRejected(
+                            f"member exceeds {MAX_FILE_BYTES} bytes: {info.filename}"
+                        )
+                    total += len(chunk)
+                    if total > MAX_UNCOMPRESSED_BYTES:
+                        raise ArchiveRejected(
+                            f"uncompressed size exceeds {MAX_UNCOMPRESSED_BYTES}"
+                        )
+                    dst.write(chunk)
             written.append(target)
     return written
 
