@@ -13,7 +13,18 @@ from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, mod
 
 
 class AuthorizationRequired(Exception):
-    """Raised when an active check is attempted without valid authorisation."""
+    """Raised when an active check is attempted without valid authorisation.
+
+    `missing_field` names the one scope-file field that would fix this --
+    "scope_file" (none supplied), "target", "authorised_on" or "expires_on" --
+    structured rather than left for a caller to regex out of `message`. The
+    API (Task 9) puts this straight into a JSON body; the CLI keeps printing
+    `message` unchanged.
+    """
+
+    def __init__(self, message: str, *, missing_field: str) -> None:
+        super().__init__(message)
+        self.missing_field = missing_field
 
 
 class ScopeFile(BaseModel):
@@ -62,25 +73,25 @@ def require_scope(
             f"Attach a scope file naming target, authorising_party, authorised_on "
             f"and attestation."
         )
-        raise AuthorizationRequired(msg)
+        raise AuthorizationRequired(msg, missing_field="scope_file")
 
     if scope.target != target:
         msg = (
             f"Check {check_id} refused: scope file target is {scope.target!r} "
             f"but the scan target is {target!r}. Field: target."
         )
-        raise AuthorizationRequired(msg)
+        raise AuthorizationRequired(msg, missing_field="target")
 
     if scope.authorised_on > today:
         msg = (
             f"Check {check_id} refused: authorisation does not begin until "
             f"{scope.authorised_on}. Field: authorised_on."
         )
-        raise AuthorizationRequired(msg)
+        raise AuthorizationRequired(msg, missing_field="authorised_on")
 
     if scope.expires_on is not None and scope.expires_on < today:
         msg = (
             f"Check {check_id} refused: authorisation lapsed on {scope.expires_on}. "
             f"Field: expires_on."
         )
-        raise AuthorizationRequired(msg)
+        raise AuthorizationRequired(msg, missing_field="expires_on")

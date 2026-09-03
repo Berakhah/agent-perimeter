@@ -77,3 +77,36 @@ def test_scope_authorised_today_permits() -> None:
 def test_inverted_date_range_is_rejected_at_construction() -> None:
     with pytest.raises(ValueError, match="expires_on"):
         _scope(authorised_on=date(2026, 9, 10), expires_on=date(2026, 9, 1))
+
+
+def test_missing_field_is_set_on_every_raise_path() -> None:
+    """An unstructured error is the kind of thing that quietly becomes
+    structured-ish later -- assert `missing_field` is set, and set to the
+    right name, on all four of require_scope's raise sites."""
+    with pytest.raises(AuthorizationRequired) as exc:
+        require_scope(None, check_id="active.ssrf", target=TARGET, today=TODAY)
+    assert exc.value.missing_field == "scope_file"
+
+    with pytest.raises(AuthorizationRequired) as exc:
+        require_scope(
+            _scope(), check_id="active.ssrf", target="https://other.example.test", today=TODAY
+        )
+    assert exc.value.missing_field == "target"
+
+    with pytest.raises(AuthorizationRequired) as exc:
+        require_scope(
+            _scope(authorised_on=date(2026, 9, 2)),
+            check_id="active.ssrf",
+            target=TARGET,
+            today=TODAY,
+        )
+    assert exc.value.missing_field == "authorised_on"
+
+    with pytest.raises(AuthorizationRequired) as exc:
+        require_scope(
+            _scope(expires_on=date(2026, 8, 31)),
+            check_id="active.ssrf",
+            target=TARGET,
+            today=TODAY,
+        )
+    assert exc.value.missing_field == "expires_on"

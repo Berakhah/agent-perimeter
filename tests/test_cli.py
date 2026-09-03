@@ -47,9 +47,12 @@ class _FakeTransport:
 
 @pytest.fixture
 def stub_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("agent_perimeter.cli.fingerprint", lambda transport: MODERN)
+    # Task 9 moved the pipeline (fingerprint()/build_transport()) out of
+    # cli.py and into scan_runner.py, shared with the API -- these patch the
+    # names scan_runner.run_scan() actually calls now.
+    monkeypatch.setattr("agent_perimeter.scan_runner.fingerprint", lambda transport: MODERN)
     monkeypatch.setattr(
-        "agent_perimeter.cli._build_transport",
+        "agent_perimeter.scan_runner.build_transport",
         lambda target, image, env: _FakeTransport(),
     )
     monkeypatch.setattr(

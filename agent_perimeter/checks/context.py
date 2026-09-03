@@ -79,7 +79,11 @@ class _UnauthorisedTransport:
                 f"{method!r} is not a passive method and this check does not "
                 "declare requires_auth=True."
             )
-            raise AuthorizationRequired(msg)
+            # Not a scope-file field: this check declared requires_auth=False
+            # and is not entitled to any active-probe call at all, regardless
+            # of scope. Named after the flag it violated, for the same
+            # "structured, not regexed" reason require_scope's four sites are.
+            raise AuthorizationRequired(msg, missing_field="requires_auth")
         return self._inner.request(method, params)
 
     def close(self) -> None:
