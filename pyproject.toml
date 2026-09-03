@@ -26,6 +26,7 @@ dev = [
     "ruff==0.16.5",
     "types-PyYAML>=6.0",
     "jsonschema>=4.22",
+    "hypothesis>=6.167.1",
 ]
 
 [build-system]
