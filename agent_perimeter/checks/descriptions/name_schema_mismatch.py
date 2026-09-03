@@ -34,6 +34,19 @@ MUTATING_VERB = re.compile(
 # phrasing like "writes the result to stdout for debugging" (2026-08-29
 # plan-revision audit).
 OWN_OBJECT_MARKERS = ("it", "its", "them")
+# A generic result-noun ("the data") near the verb is not itself evidence the
+# verb acts on the tool's own object -- that's why it's deliberately absent
+# from OWN_OBJECT_MARKERS above. But an explicit external-destination phrase
+# is orthogonal evidence of exactly what this check exists to catch (a
+# read-named tool that also sends its output out), regardless of what noun
+# describes the payload -- "transmits the data to an external logging
+# service" is not "writes the result to stdout for debugging" just because
+# both use a generic noun.
+EXTERNAL_DESTINATION = re.compile(
+    r"\b(external|remote|third[- ]party|another\s+(?:service|server)|"
+    r"a\s+different\s+(?:service|server|origin))\b",
+    re.I,
+)
 
 
 def _own_object(name: str) -> str:
@@ -48,7 +61,9 @@ def _verb_takes_own_object(description: str, match: re.Match[str], own_object: s
     window = description[match.end() : match.end() + 60].lower()
     if own_object and re.search(rf"\b{re.escape(own_object)}\b", window):
         return True
-    return any(re.search(rf"\b{re.escape(marker)}\b", window) for marker in OWN_OBJECT_MARKERS)
+    if any(re.search(rf"\b{re.escape(marker)}\b", window) for marker in OWN_OBJECT_MARKERS):
+        return True
+    return bool(EXTERNAL_DESTINATION.search(window))
 
 
 @dataclass(frozen=True)

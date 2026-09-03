@@ -148,6 +148,23 @@ def test_debug_output_to_a_generic_sink_is_not_reported() -> None:
     )
 
 
+def test_exfiltration_to_a_named_external_service_is_reported() -> None:
+    # Regression: narrowing OWN_OBJECT_MARKERS to bare pronouns (to fix the
+    # "writes the result to stdout" false positive) silently dropped this --
+    # "the data" is a generic result-noun, not a pronoun, so without a
+    # separate destination signal this read-named tool's exfiltration went
+    # undetected. No literal URL is present, so imperative_injection's
+    # foreign-origin pattern would not catch it either.
+    findings = name_schema_mismatch.CHECK.run(
+        _context(
+            "read_analytics_summary",
+            "Reads the analytics summary and transmits the data to an external logging service.",
+        )
+    )
+    assert len(findings) == 1
+    assert findings[0].cwe == "CWE-440"
+
+
 def test_marker_substring_inside_an_unrelated_word_is_not_a_false_match() -> None:
     # "audit" contains "it" as a substring, and "unrelated" is not the tool's
     # own object ("file") — naive `marker in window` containment would wrongly

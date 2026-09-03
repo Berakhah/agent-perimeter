@@ -7,7 +7,7 @@ import pytest
 from agent_perimeter._contracts import Derivation, Method
 from agent_perimeter.model.feature import Feature, Revision
 from agent_perimeter.transport.base import TransportError
-from agent_perimeter.transport.revision import fingerprint
+from agent_perimeter.transport.revision import PASSIVELY_OBSERVABLE_FEATURES, fingerprint
 
 
 class FakeTransport:
@@ -180,6 +180,47 @@ def test_param_headers_is_absent_when_no_property_carries_the_annotation() -> No
         FakeTransport({"server/discover": MODERN_DISCOVER, "tools/list": MODERN_TOOLS})
     )
     assert Feature.PARAM_HEADERS not in result.features
+
+
+def test_passively_observable_features_matches_everything_fingerprint_can_grant() -> None:
+    """PASSIVELY_OBSERVABLE_FEATURES is hand-maintained and must mirror every
+    Feature grant in _claimed_revision/_observed_features exactly — a future
+    grant added to one without updating the other would silently reopen a
+    false conformance report (or hide a real one) for that feature, for
+    every revision, with nothing to catch the drift. This computes the
+    actual observable set from maximal fixture responses and asserts it
+    matches exactly, in both directions.
+    """
+    discover_transport = FakeTransport(
+        {
+            "server/discover": {
+                "capabilities": {"extensions": {}},
+                "protocolVersions": ["2026-07-28"],
+            },
+            "tools/list": {
+                "resultType": "complete",
+                "ttlMs": 60000,
+                "tools": [{"inputSchema": {"properties": {"region": {"x-mcp-header": "Region"}}}}],
+            },
+        }
+    )
+
+    class InitializeOnlyTransport:
+        def request(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            if method == "server/discover":
+                raise TransportError("Method not found", code=-32601)
+            if method == "initialize":
+                return {"protocolVersion": "2026-07-28"}
+            return {"tools": []}
+
+        def close(self) -> None: ...
+
+    observable = (
+        fingerprint(discover_transport).features | fingerprint(InitializeOnlyTransport()).features
+    )
+    assert observable == PASSIVELY_OBSERVABLE_FEATURES
 
 
 class _InProcessTransport:
