@@ -197,7 +197,6 @@ def test_every_module_but_tier3_talks_only_to_the_allowed_hosts() -> None:
     assert hosts <= allowed, f"unexpected host in census: {hosts - allowed}"
 
 
-@pytest.mark.skip(reason="tier3.py lands in task 6b")
 def test_tier3_sends_exactly_one_method_and_owns_no_host() -> None:
     """Tier 3's targets come from the frame, so it is constrained by shape, not by host.
 
