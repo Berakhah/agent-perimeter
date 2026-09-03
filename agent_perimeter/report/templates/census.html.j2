@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent Perimeter — MCP ecosystem census</title>
+<style>{{ css }}</style>
+</head>
+<body>
+<h1>MCP ecosystem census</h1>
+<p class="mono">registry endpoint: {{ run.registry_endpoint }}</p>
+
+<h2>Headline</h2>
+<div class="strip">
+<p><strong>Artifact stratum.</strong> Of {{ artifact_n_examined }} npm/PyPI packages examined,
+{{ artifact_agg.supports }} of {{ artifact_agg.n }} show published-artifact evidence of support
+for <span class="mono">{{ revision }}</span> ({{ artifact_agg.does_not_support }} show no such
+evidence, {{ artifact_agg.unknown }} unknown).</p>
+
+{% if probe_agg is none %}
+<p><strong>Live-discover stratum.</strong> Tier 3 remote-stratum sample: not yet run. This
+report does not estimate live, ecosystem-wide support from artifact evidence alone — when Tier
+3 runs, its result will appear here as its own, separately labelled figure.</p>
+{% else %}
+<p><strong>Live-discover stratum.</strong> Of a random sample of {{ probe_n }} remote MCP
+servers, {{ probe_agg.supports }} answered a live discovery request in a way consistent with
+support for <span class="mono">{{ revision }}</span>; {{ probe_agg.unknown }} unknown (no
+answer, or excluded before a request was sent). A single unauthenticated probe can confirm
+support; it can never confirm its absence, so this stratum does not report a does-not-support
+count.</p>
+{% endif %}
+
+<p>These are two different populations, measured by two different methods. Neither figure is
+combined with the other, and neither stands in for "the MCP ecosystem" as a whole.</p>
+</div>
+
+<h2>Collection window</h2>
+<table>
+<tr><th>Started</th><td class="mono">{{ run.started_at.isoformat() }}</td></tr>
+<tr><th>Finished</th><td class="mono">{{ run.finished_at.isoformat() if run.finished_at else "in progress" }}</td></tr>
+<tr><th>Population</th><td class="num">{{ run.population_size }}</td></tr>
+</table>
+<p>Fetch failures: {{ run.fetch_failures }}</p>
+
+<h2>Artifact stratum</h2>
+<p><strong>Method.</strong> {{ selection_method|safe }}</p>
+<table>
+<tr><th>Ecosystem</th><th class="num">Tier-2 target n</th><th class="num">Examined</th>
+    <th class="num">Supports</th><th class="num">Does not support</th><th class="num">Unknown</th>
+    <th class="num">Share</th></tr>
+{% for eco, row in by_ecosystem.items() %}
+<tr>
+  <td class="mono">{{ eco }}</td>
+  <td class="num">{{ run.tier2_n }}</td>
+  <td class="num">{{ row.n_examined }}</td>
+  <td class="num">{{ row.aggregate.supports }}</td>
+  <td class="num">{{ row.aggregate.does_not_support }}</td>
+  <td class="num">{{ row.aggregate.unknown }} unknown</td>
+  <td class="num">{{ "n/a" if row.aggregate.share is none else "%.0f%%"|format(row.aggregate.share * 100) }}</td>
+</tr>
+{% endfor %}
+<tr>
+  <td class="mono"><strong>pooled (both ecosystems)</strong></td>
+  <td class="num">—</td>
+  <td class="num">{{ artifact_n_examined }}</td>
+  <td class="num">{{ artifact_agg.supports }}</td>
+  <td class="num">{{ artifact_agg.does_not_support }}</td>
+  <td class="num">{{ artifact_agg.unknown }} unknown</td>
+  <td class="num">{{ "n/a" if artifact_agg.share is none else "%.0f%%"|format(artifact_agg.share * 100) }}</td>
+</tr>
+</table>
+<p class="deriv">Tier-2 target n is per ecosystem, not pooled: up to {{ run.tier2_n }} npm
+packages and up to {{ run.tier2_n }} PyPI packages are independently selected, by download
+count within each ecosystem, before any artifact is fetched.</p>
+
+<h2>Live-discover stratum</h2>
+{% if probe_agg is none %}
+<p>Tier 3 remote-stratum sample: not yet run. No live-discover records exist in this
+publication.</p>
+{% else %}
+<table>
+<tr><th class="num">Sampled</th><th class="num">Supports</th><th class="num">Unknown</th>
+    <th class="num">Share</th></tr>
+<tr>
+  <td class="num">{{ probe_n }}</td>
+  <td class="num">{{ probe_agg.supports }}</td>
+  <td class="num">{{ probe_agg.unknown }} unknown</td>
+  <td class="num">{{ "n/a" if probe_agg.share is none else "%.0f%%"|format(probe_agg.share * 100) }}</td>
+</tr>
+</table>
+<p class="deriv">does not support: {{ probe_agg.does_not_support }} — structurally always 0 for
+this stratum; see "live-discover sample" below.</p>
+{% endif %}
+
+<h2>Terms</h2>
+<dl>
+{% for term, definition in term_definitions.items() %}
+<dt><strong>{{ term }}</strong></dt>
+<dd>{{ definition|safe }}</dd>
+{% endfor %}
+</dl>
+
+<footer>
+<h2>Methodology</h2>
+<p>Tool version <span class="mono">{{ run.tool_version }}</span>, method hash
+<span class="mono">{{ run.method_hash }}</span>. A changed collection method cannot silently
+reuse this label - see the changelog below.</p>
+<p>Raw data (digest-keyed, no names or URLs): <a href="records.csv">records.csv</a>. Reproduce
+every number above with <a href="../../../analysis/census_analysis.py">analysis/census_analysis.py records.csv</a> -
+no database, no salt, no API key required.</p>
+<p>Secrets or other sensitive findings from this collection are handled per the
+<a href="../../security.md">disclosure policy</a>, never published here.</p>
+<p>Results are versioned, never overwritten: see the
+<a href="../CHANGELOG.md">census changelog</a>.</p>
+</footer>
+</body>
+</html>
