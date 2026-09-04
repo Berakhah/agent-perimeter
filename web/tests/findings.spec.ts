@@ -58,3 +58,15 @@ test("empty findings never claim the target is secure", async ({ page }) => {
   await expect(empty).toContainText(/\d+ skipped/);
   await expect(empty).not.toContainText(/secure/i);
 });
+
+// Review round 1, Important #1: Enter/Space on a Claim nested inside an
+// expandable row must not also toggle the row -- RED test 6 above only
+// exercises Meta+Period, which the row's own Enter/Space expand-toggle
+// handler doesn't intercept, so it never caught this.
+test("Enter on a claim inside an expandable row only opens the rail, not the row underneath it", async ({ page }) => {
+  await page.goto("/scans/1/findings?fixture=mixed");
+  await page.getByTestId("claim").first().focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("complementary", { name: /provenance/i })).toBeVisible();
+  await expect(page.getByTestId("reproduction")).toHaveCount(0);
+});

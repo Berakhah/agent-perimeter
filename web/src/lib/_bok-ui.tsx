@@ -113,6 +113,12 @@ export function Claim({ value, derivation, numeric, onActivate, className }: Cla
     const activates = event.key === "Enter" || event.key === " " || ((event.metaKey || event.ctrlKey) && event.key === ".");
     if (activates) {
       event.preventDefault();
+      // A Claim activating must not also trigger whatever a parent element
+      // does with the same keys -- FindingsTable's row cells toggle
+      // expansion on Enter/Space, and without this an Enter on a Claim
+      // nested in an expandable row both opened the provenance rail *and*
+      // expanded the row underneath it.
+      event.stopPropagation();
       onActivate();
     }
   };
