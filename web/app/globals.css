@@ -625,6 +625,136 @@ body {
   background: color-mix(in oklch, var(--accent) 8%, transparent);
 }
 
+/* CapabilityGraph -- Screen 4, the capability graph (task 14). */
+.bok-graph-page {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--density-gap) * 2);
+}
+.bok-graph {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--density-gap) * 2);
+  max-width: 640px;
+}
+.bok-graph-canvas {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--neutral-150);
+  border-radius: var(--radius-control);
+  background: var(--neutral-50);
+}
+.bok-graph-node-tool circle,
+.bok-graph-node-capability circle {
+  fill: var(--paper);
+  stroke: var(--neutral-400);
+  stroke-width: 1.5;
+}
+.bok-graph-node-tool {
+  cursor: pointer;
+}
+.bok-graph-node-tool text,
+.bok-graph-node-capability text {
+  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+  font-size: 11px;
+  fill: var(--ink);
+}
+.bok-graph-node-tool:focus-visible {
+  outline: none;
+}
+.bok-graph-node-tool:focus-visible circle {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+.bok-graph-node-flagged .bok-graph-node-circle {
+  stroke: var(--accent);
+}
+.bok-graph-static-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+/* The one-shot pulse: a real CSS animation, not a JS timer (task-14
+   REFACTOR step). transform-box: fill-box makes the circle scale from its
+   own center rather than the <svg>'s (0,0) origin. */
+.bok-graph-pulse-ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: bok-graph-pulse 900ms ease-out 1;
+}
+@keyframes bok-graph-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+.bok-graph-edge {
+  stroke: var(--neutral-400);
+  stroke-width: 1.5;
+}
+.bok-graph-edge:hover,
+.bok-graph-edge:focus-visible {
+  stroke: var(--ink);
+  stroke-width: 2;
+  outline: none;
+}
+
+.bok-edge-tooltip {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-cell);
+  padding: var(--density-cell-y) var(--density-cell-x);
+  background: color-mix(in oklch, var(--accent) 8%, transparent);
+}
+.bok-edge-tooltip p {
+  margin: 0.25em 0 0;
+  color: var(--neutral-700);
+}
+
+.bok-graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--density-gap);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 0.85em;
+  color: var(--neutral-700);
+}
+.bok-graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+}
+
+/* Visually secondary to the canvas above it, but genuinely visible -- the
+   accessible text alternative for the same edge data, not a hidden one. */
+.bok-graph-table {
+  font-size: 0.85em;
+  color: var(--neutral-700);
+  border-collapse: collapse;
+  width: 100%;
+}
+.bok-graph-table caption {
+  text-align: left;
+  font-family: var(--font-newsreader), serif;
+  font-size: 1rem;
+  color: var(--neutral-600);
+  margin-bottom: var(--density-cell-y);
+}
+.bok-graph-table th,
+.bok-graph-table td {
+  text-align: left;
+  padding: var(--density-cell-y) var(--density-cell-x);
+  border-bottom: 1px solid var(--neutral-150);
+}
+
 /* FindingRow -- reproduction command + evidence, shown on row expansion. */
 .bok-finding-expanded {
   display: flex;

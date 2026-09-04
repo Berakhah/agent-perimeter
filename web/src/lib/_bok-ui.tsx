@@ -63,7 +63,12 @@ const SEVERITY_META: Record<Severity, { glyph: string; label: string }> = {
   info: { glyph: "▱▱▱▱", label: "Info" },
 };
 
-const DERIVATION_META: Record<Derivation, { glyph: string; label: string }> = {
+/**
+ * Exported (task-14 pre-flight ruling 4) so the capability graph screen can
+ * reuse the same glyph/label vocabulary for its legend instead of inventing
+ * a second one -- derivation must never be colour-alone (00 §5.2).
+ */
+export const DERIVATION_META: Record<Derivation, { glyph: string; label: string }> = {
   schema: { glyph: "▣", label: "Schema" },
   name: { glyph: "#", label: "Name" },
   description: { glyph: "✎", label: "Description" },
