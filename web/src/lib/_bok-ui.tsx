@@ -767,7 +767,9 @@ export function RunTimeline({ events }: RunTimelineProps) {
     <ol className="bok-timeline" data-testid="run-timeline">
       {events.map((e) => (
         <li key={e.id} className={cx("bok-timeline-item", e.status && `bok-timeline-${e.status}`)}>
-          <time className="bok-numeric" dateTime={e.at}>
+          {/* task-15 ruling 3: no prior consumer of RunTimeline exists, so a
+              second testid on the same element is zero-regression-risk. */}
+          <time className="bok-numeric" data-testid="drift-timestamp" dateTime={e.at}>
             {e.at}
           </time>
           <span>{e.label}</span>
@@ -786,6 +788,15 @@ export interface DiffViewProps {
   after: string;
   beforeLabel?: string;
   afterLabel?: string;
+  /**
+   * `"line"` (default) is the original two-column stacked diff below --
+   * unchanged for any existing/future line-mode caller. `"word"` renders a
+   * single inline red-lined paragraph instead (task-15 ruling 2): a tool
+   * description silently changing a word or two is the drift screen's
+   * signature artifact, and a line-level diff would just show the whole
+   * one-line description swapped wholesale, not the actual words that moved.
+   */
+  granularity?: "line" | "word";
 }
 
 /**
@@ -795,7 +806,7 @@ export interface DiffViewProps {
  * npm package (MIT) for a real aligned diff if drift detection (v2) needs
  * precise line pairing.
  */
-export function DiffView({ before, after, beforeLabel = "Before", afterLabel = "After" }: DiffViewProps) {
+function LineDiff({ before, after, beforeLabel, afterLabel }: Required<Pick<DiffViewProps, "before" | "after" | "beforeLabel" | "afterLabel">>) {
   const beforeLines = before.split("\n");
   const afterLines = after.split("\n");
   const beforeSet = new Set(beforeLines);
@@ -823,6 +834,65 @@ export function DiffView({ before, after, beforeLabel = "Before", afterLabel = "
       </div>
     </div>
   );
+}
+
+/**
+ * ponytail: naive too, but a different simplification than `LineDiff` --
+ * finds the first word where `before`/`after` diverge (a straight positional
+ * scan, no LCS realignment) and treats everything from there to the end of
+ * each side as one changed run. Precise for the common case this stand-in
+ * exists for (one clause of a sentence swapped for another) and cheap to
+ * read; it won't re-sync on a shared tail after the divergence point (e.g.
+ * a single word inserted near the start makes the rest of the sentence read
+ * as "changed" even where it word-for-word matches) -- upgrade to the `diff`
+ * npm package's word-diff mode if drift descriptions get long enough for
+ * that to read as noisy.
+ */
+function WordDiff({ before, after }: { before: string; after: string }) {
+  const beforeWords = before.split(/\s+/).filter(Boolean);
+  const afterWords = after.split(/\s+/).filter(Boolean);
+
+  let split = 0;
+  while (split < beforeWords.length && split < afterWords.length && beforeWords[split] === afterWords[split]) {
+    split++;
+  }
+  const unchanged = beforeWords.slice(0, split).join(" ");
+  const removed = beforeWords.slice(split).join(" ");
+  const added = afterWords.slice(split).join(" ");
+
+  return (
+    <div className="bok-diff bok-diff-word" data-testid="diff-view">
+      <p>
+        {unchanged && <span>{unchanged} </span>}
+        {removed && (
+          <span data-testid="removed" data-glyph="−" className="bok-diff-word-removed">
+            {"− "}
+            {removed}
+          </span>
+        )}
+        {removed && added && " "}
+        {added && (
+          <span data-testid="added" data-glyph="+" className="bok-diff-word-added">
+            {"+ "}
+            {added}
+          </span>
+        )}
+      </p>
+    </div>
+  );
+}
+
+export function DiffView({
+  before,
+  after,
+  beforeLabel = "Before",
+  afterLabel = "After",
+  granularity = "line",
+}: DiffViewProps) {
+  if (granularity === "word") {
+    return <WordDiff before={before} after={after} />;
+  }
+  return <LineDiff before={before} after={after} beforeLabel={beforeLabel} afterLabel={afterLabel} />;
 }
 
 // ---------------------------------------------------------------------------
