@@ -1,0 +1,6 @@
+{
+  "target": "https://example.com/mcp",
+  "authorising_party": "Example Corp Security Team",
+  "attestation": "Example Corp authorises this scan of the named target.",
+  "authorised_on": "2026-09-04"
+}
