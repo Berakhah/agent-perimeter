@@ -17,6 +17,12 @@
 /blob-report/
 /playwright/.cache/
 
+# generated static-report fixtures (analysis/render_web_fixtures.py, run as
+# `pretest` before every Playwright invocation) -- never committed, so they
+# can never drift from the emitter that produces them.
+/tests/fixtures/report.html
+/tests/fixtures/census.html
+
 # next.js
 /.next/
 /out/
