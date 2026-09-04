@@ -96,10 +96,13 @@ export function CapabilityGraph({ edges, flaggedTools, onActivateTool }: Capabil
 
   return (
     <div className="bok-graph">
+      {/* No `role="img"` here -- this SVG has real interactive descendants
+          (focusable tool nodes and edges), and `role="img"` would tell
+          assistive tech to flatten them into a single opaque image, the
+          opposite of what "fully navigable from the keyboard" needs. */}
       <svg
         className="bok-graph-canvas"
         viewBox={`0 0 ${VIEW_W} ${height}`}
-        role="img"
         aria-label="Capability graph: tools on the left, capabilities on the right"
       >
         {toolOrder.map((tool) => (
