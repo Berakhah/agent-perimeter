@@ -34,29 +34,54 @@ function claim(
   return { value, method, derivation, confidence, observed_at: NOW, parents: [], caveat: null };
 }
 
+// The two findings below mirror `agent_perimeter/checks/revision/
+// conformance_mismatch.py::ConformanceMismatchCheck.run()` field-for-field
+// (verified directly, review round 1 finding "Important #2"): it diffs the
+// claimed revision's bundle against `PASSIVELY_OBSERVABLE_FEATURES`
+// (`transport/revision.py`) only -- MRTR and SUBSCRIPTIONS_LISTEN can never
+// be passively observed and are excluded from that set entirely, so this
+// check can structurally never name either as a missing feature. For
+// 2026-07-28 the eligible intersection is {server_discover, result_type,
+// cacheable_result, param_headers, extensions}; `scan.featuresObserved`
+// below omits mrtr/subscriptions_listen for the same reason (a passive
+// fingerprint never grants them) and is missing result_type and
+// cacheable_result, the two `SECURITY_CONSEQUENCE`-mapped features, so this
+// fixture exercises both a MEDIUM and a LOW real severity rather than the
+// check's INFO default. `cwe`/`taxonomy_refs`/`evidence.kind` and the title
+// format are copied verbatim from the real check, not approximated.
 const MISMATCH_FINDINGS: Finding[] = [
   {
     check_id: "revision.conformance_mismatch",
-    severity: "high",
-    title: "Server advertises `subscriptions_listen` but never emits `subscriptions/list_changed`",
-    cwe: "CWE-1007",
-    taxonomy_refs: ["mcp-spec:2026-07-28-changelog", "owasp-mcp:MCP10"],
-    evidence: { kind: "transcript", excerpt: "initialize -> capabilities.subscriptions.listChanged = true", highlight: [0, 10] },
+    severity: "low",
+    title:
+      "Server claims 2026-07-28 but does not implement cacheable_result: cache lifetime and scope are unstated, so intermediaries decide for themselves",
+    cwe: "CWE-440",
+    taxonomy_refs: ["owasp-mcp:MCP10", "mcp-spec:2026-07-28-changelog"],
+    evidence: {
+      kind: "excerpt",
+      excerpt: "claimed: 2026-07-28\nmissing: cacheable_result\nobserved: extensions, param_headers, server_discover",
+      highlight: null,
+    },
     reproduction: "ap scan replay --id 1 --check revision.conformance_mismatch",
-    claim: claim(false, "deterministic", "probe", 0.9),
-    confidence: 0.9,
+    claim: claim("cacheable_result", "deterministic", "probe", null),
+    confidence: null,
     location: null,
   },
   {
     check_id: "revision.conformance_mismatch",
     severity: "medium",
-    title: "`extensions` capability is declared but the registry endpoint 404s",
-    cwe: "CWE-1007",
-    taxonomy_refs: ["mcp-spec:2026-07-28-changelog"],
-    evidence: { kind: "transcript", excerpt: "GET /extensions -> 404 Not Found", highlight: null },
-    reproduction: "ap scan replay --id 1 --check revision.conformance_mismatch --extension registry",
-    claim: claim(false, "deterministic", "probe", 0.85),
-    confidence: 0.85,
+    title:
+      "Server claims 2026-07-28 but does not implement result_type: clients cannot distinguish a complete result from an input_required one",
+    cwe: "CWE-440",
+    taxonomy_refs: ["owasp-mcp:MCP10", "mcp-spec:2026-07-28-changelog"],
+    evidence: {
+      kind: "excerpt",
+      excerpt: "claimed: 2026-07-28\nmissing: result_type\nobserved: extensions, param_headers, server_discover",
+      highlight: null,
+    },
+    reproduction: "ap scan replay --id 1 --check revision.conformance_mismatch",
+    claim: claim("result_type", "deterministic", "probe", null),
+    confidence: null,
     location: null,
   },
   {
@@ -144,10 +169,12 @@ export const FIXTURES: Record<string, FindingsFixture> = {
   mismatch: {
     scan: {
       revisionClaimed: "2026-07-28",
-      // 5 of the 7 real 2026-07-28 features (transport/features.yaml) --
-      // subscriptions_listen and extensions are the two the mismatch
-      // findings above are about.
-      featuresObserved: ["server_discover", "result_type", "cacheable_result", "mrtr", "param_headers"],
+      // 3 of the 7 real 2026-07-28 features -- mrtr and subscriptions_listen
+      // omitted because the real passive fingerprinter can never grant them
+      // (`PASSIVELY_OBSERVABLE_FEATURES`, `transport/revision.py`), not
+      // because this scan happened to miss them; result_type and
+      // cacheable_result are the two the findings above are about.
+      featuresObserved: ["server_discover", "param_headers", "extensions"],
       skippedCount: 0,
     },
     findings: MISMATCH_FINDINGS,
