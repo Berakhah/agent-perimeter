@@ -146,6 +146,29 @@ html[data-density="dense"] {
   --density-gap: 4px;
 }
 
+/*
+ * Per-instance density override for FindingsTable's `density` prop --
+ * CSS custom properties inherit down the actual DOM tree, so setting these
+ * on the wrapper (a descendant of <html>) overrides the page-level
+ * `data-density` for just this table, without touching anything else on
+ * the page.
+ */
+.bok-table-wrap.bok-density-comfortable {
+  --density-cell-y: 10px;
+  --density-cell-x: 14px;
+  --density-gap: 12px;
+}
+.bok-table-wrap.bok-density-compact {
+  --density-cell-y: 6px;
+  --density-cell-x: 10px;
+  --density-gap: 8px;
+}
+.bok-table-wrap.bok-density-dense {
+  --density-cell-y: 3px;
+  --density-cell-x: 6px;
+  --density-gap: 4px;
+}
+
 body {
   background: var(--paper);
   color: var(--ink);
@@ -306,6 +329,9 @@ body {
   gap: var(--density-gap);
   margin-bottom: var(--density-gap);
 }
+.bok-table-scroll {
+  overflow-y: auto;
+}
 .bok-table {
   border-collapse: collapse;
   width: 100%;
@@ -318,6 +344,12 @@ body {
   border-bottom: 1px solid var(--neutral-150);
   border-radius: var(--radius-rule);
   position: relative;
+}
+.bok-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--paper);
+  z-index: 1;
 }
 .bok-table th:focus-visible,
 .bok-table td:focus-visible {

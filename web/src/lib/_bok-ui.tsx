@@ -13,12 +13,12 @@
  * brief and carried to the `backoffice-kit` session verbatim.
  *
  * Deliberately out of scope for this stand-in, each with a ponytail note at
- * its call site below: `FindingsTable` row virtualisation (small fixture/demo
- * row counts today), a full `cmdk` command palette, and Recharts-backed
+ * its call site below: a full `cmdk` command palette, and Recharts-backed
  * charting for `QuotaStrip`/`RunTimeline` (both render as plain marked-up
  * lists/strips here).
  */
 
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -35,8 +35,14 @@ import {
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
-/** bok-core requirement 1 (see `agent_perimeter/_contracts.py::Derivation`). */
-export type Derivation = "schema" | "description" | "probe" | "artifact";
+/**
+ * bok-core requirement 1 (see `agent_perimeter/_contracts.py::Derivation`,
+ * all 5 members: SCHEMA/NAME/DESCRIPTION/PROBE/ARTIFACT). `name` is a
+ * regex/pattern match over a tool or parameter identifier -- actively used
+ * across `graph/policy.py`, `graph/build.py`, and 5 check modules, not a
+ * deprecated or unused value.
+ */
+export type Derivation = "schema" | "name" | "description" | "probe" | "artifact";
 
 export type Method = "deterministic" | "model" | "human" | "derived";
 
@@ -58,6 +64,7 @@ const SEVERITY_META: Record<Severity, { glyph: string; label: string }> = {
 
 const DERIVATION_META: Record<Derivation, { glyph: string; label: string }> = {
   schema: { glyph: "▣", label: "Schema" },
+  name: { glyph: "#", label: "Name" },
   description: { glyph: "✎", label: "Description" },
   probe: { glyph: "◎", label: "Probe" },
   artifact: { glyph: "▤", label: "Artifact" },
@@ -87,7 +94,7 @@ function inferProvenanceState(method: Method): ProvenanceState {
 
 export interface ClaimProps {
   value: ReactNode;
-  /** bok-core requirement 1: schema / description / probe / artifact, each rendered distinguishably. */
+  /** bok-core requirement 1: schema / name / description / probe / artifact, each rendered distinguishably. */
   derivation: Derivation;
   /** Applies `.bok-numeric` (tabular numerals) to the rendered value. */
   numeric?: boolean;
@@ -153,8 +160,35 @@ export interface ProvenanceRailProps {
   onClose: () => void;
 }
 
-/** The right-hand evidence panel (00 §5.3). 380px, slides in, disabled under `prefers-reduced-motion`. */
+/**
+ * The right-hand evidence panel (00 §5.3). 380px, slides in, disabled under
+ * `prefers-reduced-motion`.
+ *
+ * Accessibility: a closed rail is still in the DOM (for the slide-out
+ * transition) but must have zero reachable/tabbable descendants -- `inert`
+ * (a real DOM property, not just a style) strips focusability and click
+ * handling from the whole subtree in one call, which is what makes
+ * `aria-hidden` on the closed rail true instead of a lie axe-core would
+ * catch (an aria-hidden container with a focusable descendant). Focus moves
+ * to the close button on open and back to whatever triggered the rail on
+ * close.
+ */
 export function ProvenanceRail({ open, chain, onClose }: ProvenanceRailProps) {
+  const railRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (railRef.current) railRef.current.inert = !open;
+    if (open) {
+      triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      closeButtonRef.current?.focus();
+    } else {
+      triggerRef.current?.focus();
+      triggerRef.current = null;
+    }
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -166,6 +200,7 @@ export function ProvenanceRail({ open, chain, onClose }: ProvenanceRailProps) {
 
   return (
     <aside
+      ref={railRef}
       className={cx("bok-rail", open && "bok-rail-open")}
       data-testid="provenance-rail"
       aria-hidden={!open}
@@ -173,7 +208,7 @@ export function ProvenanceRail({ open, chain, onClose }: ProvenanceRailProps) {
     >
       <div className="bok-rail-header">
         <span>Provenance</span>
-        <button type="button" onClick={onClose} aria-label="Close provenance rail">
+        <button type="button" ref={closeButtonRef} onClick={onClose} aria-label="Close provenance rail">
           ×
         </button>
       </div>
@@ -295,18 +330,23 @@ function download(filename: string, contents: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
-/**
- * Virtualised, column-resizable, keyboard-navigable, CSV/JSON export (00 §5.4).
- *
- * ponytail: no row virtualisation -- every stand-in fixture/demo dataset is
- * small enough to render in full. Swap in `@tanstack/react-virtual` (already
- * MIT-licensed, no new heavy dep) if a real scan's row count ever makes
- * that matter.
- */
+// Fixed per-density row-height estimate for the virtualizer -- every cell in
+// this stand-in's rows is single-line, so a per-density constant is exact,
+// not just an estimate. ponytail: if a future column ever wraps to multiple
+// lines, switch to @tanstack/react-virtual's `measureElement` dynamic-sizing
+// API instead of hardcoding these.
+const ROW_HEIGHT_BY_DENSITY: Record<Density, number> = {
+  comfortable: 44,
+  compact: 36,
+  dense: 28,
+};
+
+/** Column-resizable, keyboard-navigable, CSV/JSON export, virtualised (00 §5.4). */
 export function FindingsTable({ rows, density = "compact", caption }: FindingsTableProps) {
   const [widths, setWidths] = useState<number[]>(() => FINDINGS_COLUMNS.map(() => 160));
   const dragState = useRef<{ col: number; startX: number; startWidth: number } | null>(null);
   const cellRefs = useRef<Array<Array<HTMLTableCellElement | null>>>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const onResizerDown = (col: number) => (event: ReactMouseEvent) => {
     dragState.current = { col, startX: event.clientX, startWidth: widths[col] ?? 160 };
@@ -331,6 +371,12 @@ export function FindingsTable({ rows, density = "compact", caption }: FindingsTa
     };
   }, []);
 
+  // ponytail: keyboard nav focuses currently-*mounted* rows only -- a row
+  // scrolled out of the virtualizer's rendered window has no ref to focus.
+  // Fine at fixture/demo scale (the whole table fits without scrolling);
+  // `rowVirtualizer.scrollToIndex()` before focusing is the upgrade path if
+  // real scan-sized tables make blind arrow-key nav across thousands of
+  // rows a real user complaint.
   const focusCell = useCallback((row: number, col: number) => {
     const clampedRow = Math.max(0, Math.min(rows.length - 1, row));
     const clampedCol = Math.max(0, Math.min(FINDINGS_COLUMNS.length - 1, col));
@@ -363,6 +409,18 @@ export function FindingsTable({ rows, density = "compact", caption }: FindingsTa
     }
   };
 
+  const rowHeight = ROW_HEIGHT_BY_DENSITY[density];
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => rowHeight,
+    overscan: 8,
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const paddingTop = virtualRows.length > 0 ? (virtualRows[0]?.start ?? 0) : 0;
+  const paddingBottom =
+    virtualRows.length > 0 ? rowVirtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1]?.end ?? 0) : 0;
+
   return (
     <div className={cx("bok-table-wrap", `bok-density-${density}`)}>
       <div className="bok-table-toolbar bok-no-print">
@@ -373,73 +431,90 @@ export function FindingsTable({ rows, density = "compact", caption }: FindingsTa
           Export JSON
         </button>
       </div>
-      <table className="bok-table" data-testid="findings-table">
-        {caption && <caption>{caption}</caption>}
-        <colgroup>
-          {FINDINGS_COLUMNS.map((_, i) => (
-            <col key={i} style={{ width: widths[i] }} />
-          ))}
-        </colgroup>
-        <thead>
-          <tr>
-            {FINDINGS_COLUMNS.map((col, i) => (
-              <th key={col} scope="col">
-                {col}
-                <span
-                  className="bok-col-resizer bok-no-print"
-                  onMouseDown={onResizerDown(i)}
-                  role="separator"
-                  aria-orientation="vertical"
-                  aria-label={`Resize ${col} column`}
-                />
-              </th>
+      <div className="bok-table-scroll" ref={scrollRef} style={{ maxHeight: rowHeight * 12 }}>
+        <table className="bok-table" data-testid="findings-table">
+          {caption && <caption>{caption}</caption>}
+          <colgroup>
+            {FINDINGS_COLUMNS.map((_, i) => (
+              <col key={i} style={{ width: widths[i] }} />
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, rowIndex) => (
-            <tr key={row.id} data-testid="finding-row">
-              <td
-                ref={setCellRef(rowIndex, 0)}
-                tabIndex={rowIndex === 0 ? 0 : -1}
-                onKeyDown={onCellKeyDown(rowIndex, 0)}
-              >
-                <SeverityBadge severity={row.severity} />
-              </td>
-              <td ref={setCellRef(rowIndex, 1)} tabIndex={-1} onKeyDown={onCellKeyDown(rowIndex, 1)}>
-                {row.title}
-              </td>
-              <td
-                ref={setCellRef(rowIndex, 2)}
-                tabIndex={-1}
-                onKeyDown={onCellKeyDown(rowIndex, 2)}
-                className="bok-numeric"
-              >
-                {row.checkId}
-              </td>
-              <td
-                ref={setCellRef(rowIndex, 3)}
-                tabIndex={-1}
-                onKeyDown={onCellKeyDown(rowIndex, 3)}
-                data-testid="provenance-cell"
-                data-glyph={DERIVATION_META[row.derivation].glyph}
-              >
-                <span aria-hidden="true">{DERIVATION_META[row.derivation].glyph}</span>{" "}
-                {DERIVATION_META[row.derivation].label}
-              </td>
-              <td
-                ref={setCellRef(rowIndex, 4)}
-                tabIndex={-1}
-                onKeyDown={onCellKeyDown(rowIndex, 4)}
-                data-testid="numeric-cell"
-                className="bok-numeric"
-              >
-                {row.confidence != null ? row.confidence.toFixed(2) : "—"}
-              </td>
+          </colgroup>
+          <thead>
+            <tr>
+              {FINDINGS_COLUMNS.map((col, i) => (
+                <th key={col} scope="col">
+                  {col}
+                  <span
+                    className="bok-col-resizer bok-no-print"
+                    onMouseDown={onResizerDown(i)}
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label={`Resize ${col} column`}
+                  />
+                </th>
+              ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {paddingTop > 0 && (
+              <tr aria-hidden="true">
+                <td colSpan={FINDINGS_COLUMNS.length} style={{ height: paddingTop, padding: 0, border: 0 }} />
+              </tr>
+            )}
+            {virtualRows.map((virtualRow) => {
+              const row = rows[virtualRow.index];
+              if (!row) return null;
+              const rowIndex = virtualRow.index;
+              return (
+                <tr key={row.id} data-testid="finding-row" style={{ height: rowHeight }}>
+                  <td
+                    ref={setCellRef(rowIndex, 0)}
+                    tabIndex={rowIndex === 0 ? 0 : -1}
+                    onKeyDown={onCellKeyDown(rowIndex, 0)}
+                  >
+                    <SeverityBadge severity={row.severity} />
+                  </td>
+                  <td ref={setCellRef(rowIndex, 1)} tabIndex={-1} onKeyDown={onCellKeyDown(rowIndex, 1)}>
+                    {row.title}
+                  </td>
+                  <td
+                    ref={setCellRef(rowIndex, 2)}
+                    tabIndex={-1}
+                    onKeyDown={onCellKeyDown(rowIndex, 2)}
+                    className="bok-numeric"
+                  >
+                    {row.checkId}
+                  </td>
+                  <td
+                    ref={setCellRef(rowIndex, 3)}
+                    tabIndex={-1}
+                    onKeyDown={onCellKeyDown(rowIndex, 3)}
+                    data-testid="provenance-cell"
+                    data-glyph={DERIVATION_META[row.derivation].glyph}
+                  >
+                    <span aria-hidden="true">{DERIVATION_META[row.derivation].glyph}</span>{" "}
+                    {DERIVATION_META[row.derivation].label}
+                  </td>
+                  <td
+                    ref={setCellRef(rowIndex, 4)}
+                    tabIndex={-1}
+                    onKeyDown={onCellKeyDown(rowIndex, 4)}
+                    data-testid="numeric-cell"
+                    className="bok-numeric"
+                  >
+                    {row.confidence != null ? row.confidence.toFixed(2) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+            {paddingBottom > 0 && (
+              <tr aria-hidden="true">
+                <td colSpan={FINDINGS_COLUMNS.length} style={{ height: paddingBottom, padding: 0, border: 0 }} />
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
