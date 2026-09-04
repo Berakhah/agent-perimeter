@@ -129,7 +129,58 @@ export function getScan(id: string): Promise<ScanStatus> {
   return request(`/api/scans/${id}`);
 }
 
-export function getFindings(id: string): Promise<unknown[]> {
+/**
+ * Wire shape of `agent_perimeter/model/finding.py::Finding`, serialized as-is
+ * by `GET /api/scans/{id}/findings` (`jsonable_encoder`, no field renaming --
+ * task-13 pre-flight ruling 1). Duplicated from `_bok-ui.tsx`'s
+ * `Method`/`Derivation` string unions rather than importing them: this is
+ * the API layer's copy of a *backend* enum's wire values, not a UI concern,
+ * and the two files stay independently correct even though the string sets
+ * happen to line up today.
+ */
+export type FindingSeverity = "critical" | "high" | "medium" | "low" | "info";
+export type ClaimMethod = "deterministic" | "model" | "human" | "derived";
+export type ClaimDerivation = "schema" | "name" | "description" | "probe" | "artifact";
+
+export interface FindingClaim {
+  value: unknown;
+  method: ClaimMethod;
+  derivation?: ClaimDerivation | null;
+  confidence?: number | null;
+  /** ISO 8601 timestamp. */
+  observed_at: string;
+  parents?: FindingClaim[];
+  caveat?: string | null;
+}
+
+export interface FindingEvidence {
+  kind: "transcript" | "excerpt" | "screenshot" | "diff";
+  excerpt: string;
+  highlight?: [number, number] | null;
+  redacted?: boolean;
+}
+
+export interface FindingLocation {
+  uri: string;
+  line?: number;
+}
+
+export interface Finding {
+  check_id: string;
+  severity: FindingSeverity;
+  title: string;
+  /** "CWE-nnn". */
+  cwe: string;
+  /** "scheme:id", e.g. "owasp-llm:LLM01" (`checks/taxonomy.py`). */
+  taxonomy_refs: string[];
+  evidence: FindingEvidence;
+  reproduction: string;
+  claim: FindingClaim;
+  confidence?: number | null;
+  location?: FindingLocation | null;
+}
+
+export function getFindings(id: string): Promise<Finding[]> {
   return request(`/api/scans/${id}/findings`);
 }
 
