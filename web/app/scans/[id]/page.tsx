@@ -34,14 +34,15 @@
  * signature and dispatches on a real `setTimeout` cadence -- not one
  * synchronous dump. No live backend is reachable from this project's
  * Playwright runs (no CORS/rewrite wired), so the real `subscribeToScanEvents`
- * branch below is wired for production but isn't exercised by any test here
- * -- the same forward-reference pattern `app/page.tsx`'s real `createScan`
- * call already uses.
+ * branch below -- `onError` surfaced through `ErrorState`, `onRetry` bumping
+ * `retryCount` to re-run the subscription effect -- is wired for production
+ * but isn't exercised by any test here -- the same forward-reference pattern
+ * `app/page.tsx`'s real `createScan` call already uses.
  */
 import { use, useEffect, useMemo, useState } from "react";
 
 import { PhaseGroup, type PhaseGroupCheck } from "@/app/components/PhaseGroup";
-import { EmptyState, QuotaStrip, Skeleton, type ProviderQuota } from "@/src/lib/_bok-ui";
+import { EmptyState, ErrorState, QuotaStrip, Skeleton, type ProviderQuota } from "@/src/lib/_bok-ui";
 import { isTerminalEvent, subscribeToScanEvents, type ScanEvent, type ScanTerminalEvent } from "@/src/lib/api";
 import { FIXTURES } from "./fixtures";
 
@@ -93,7 +94,9 @@ const MODEL_CHECK_ID = "descriptions.llm_judge";
 
 // ponytail: `ScanEvent` carries no real provider-quota numbers on the wire
 // today -- this acknowledges the model lane engaged, it isn't live quota
-// telemetry. Swap for real numbers once the backend streams them.
+// telemetry, and is gated on `fixture` (below) so it only ever appears in a
+// fixture demo, never as fabricated data in a real scan. Swap for real
+// numbers, unconditionally rendered, once the backend streams them.
 const PLACEHOLDER_PROVIDERS: ProviderQuota[] = [{ name: "model provider", status: "ok", used: 1, limit: 1 }];
 
 export default function LiveScanPage({
@@ -110,12 +113,18 @@ export default function LiveScanPage({
   const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
   const [terminalEvent, setTerminalEvent] = useState<ScanTerminalEvent | null>(null);
   const [modelEngaged, setModelEngaged] = useState(false);
+  const [connectionError, setConnectionError] = useState(false);
+  // Bumping this re-runs the subscription effect -- `onRetry` below's way of
+  // re-opening the real EventSource after a connection error (fixture mode
+  // never errors, so this is only ever touched on the real path).
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     setRows([]);
     setProgress(null);
     setTerminalEvent(null);
     setModelEngaged(false);
+    setConnectionError(false);
 
     function handleEvent(event: ScanEvent) {
       if (isTerminalEvent(event)) {
@@ -145,8 +154,8 @@ export default function LiveScanPage({
     if (fixture) {
       return replayScanEvents(id, FIXTURES[fixture] ?? [], handleEvent);
     }
-    return subscribeToScanEvents(id, handleEvent);
-  }, [id, fixture]);
+    return subscribeToScanEvents(id, handleEvent, () => setConnectionError(true));
+  }, [id, fixture, retryCount]);
 
   const phases = useMemo(() => {
     const grouped = new Map<string, PhaseGroupCheck[]>();
@@ -183,7 +192,17 @@ export default function LiveScanPage({
         />
       )}
 
-      {modelEngaged && <QuotaStrip providers={PLACEHOLDER_PROVIDERS} />}
+      {connectionError && (
+        <ErrorState
+          title="Lost connection to the scan"
+          description="The live update stream disconnected — retry to reconnect."
+          onRetry={() => setRetryCount((n) => n + 1)}
+        />
+      )}
+
+      {/* Fixture-gated (not just `modelEngaged`): `ScanEvent` carries no real
+          quota telemetry, so a real scan must never show invented numbers. */}
+      {modelEngaged && fixture && <QuotaStrip providers={PLACEHOLDER_PROVIDERS} />}
 
       {[...phases.entries()].map(([phase, checks]) => (
         <PhaseGroup key={phase} phase={phase} checks={checks} />

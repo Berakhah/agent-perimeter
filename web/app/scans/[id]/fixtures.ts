@@ -18,7 +18,7 @@ import type { ScanCheckEvent, ScanEvent, ScanTerminalEvent } from "@/src/lib/api
 
 // 30 real, non-model check ids spanning every phase in the namespace list
 // the brief hands us (`active`, `descriptions`, `injection`, `revision`,
-// `secrets`, `static`) -- `revision` alone contributes 11, so any 29-slice
+// `secrets`, `static`) -- `revision` alone contributes 12, so any 29-slice
 // below keeps at least one `revision` row (RED test 1's requirement).
 const NON_MODEL_CHECK_IDS = [
   "active.command_injection",
@@ -84,7 +84,10 @@ const degradedTerminal: ScanTerminalEvent = {
     {
       check_id: MODEL_CHECK_ID,
       reason: "model_unavailable",
-      detail: "Skipped — no model provider is configured for this scan.",
+      // No "Skipped --" prefix here -- `PhaseGroup` already renders one
+      // (`Skipped — {check.detail}`); doubling it up read as
+      // "Skipped — Skipped — ...".
+      detail: "no model provider is configured for this scan.",
     },
   ],
 };
