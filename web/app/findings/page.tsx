@@ -1,4 +1,5 @@
 import { EmptyState, type FindingsTableRow, FindingsTable } from "@/src/lib/_bok-ui";
+import { ProvenanceDemo } from "./ProvenanceDemo";
 
 /**
  * Fixture-only route for exercising `FindingsTable` end to end (severity
@@ -75,6 +76,7 @@ export default async function FindingsPage({
     <main>
       <h1>Findings</h1>
       <FindingsTable rows={rows} caption="Fixture data for design-token verification" />
+      <ProvenanceDemo />
     </main>
   );
 }
