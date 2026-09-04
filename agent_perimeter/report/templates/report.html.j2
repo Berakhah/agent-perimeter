@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Agent Perimeter — {{ target }}</title>
-<style>{{ css }}</style>
+<style>{{ css|safe }}</style>
 </head>
 <body>
 <h1>Agent Perimeter scan</h1>
@@ -20,11 +20,11 @@
 <table>
 <tr><th>Severity</th><th>Check</th><th>Title</th><th>CWE</th><th>Evidence</th></tr>
 {% for f in findings %}
-<tr>
-  <td><span class="sev" data-glyph="{{ glyphs[f.severity.value] }}">{{ f.severity.value|upper }}</span></td>
+<tr data-testid="finding-row">
+  <td><span class="sev" data-testid="severity-badge" data-glyph="{{ glyphs[f.severity.value] }}">{{ f.severity.value|upper }}</span></td>
   <td class="mono">{{ f.check_id }}</td>
   <td>{{ f.title }}</td>
-  <td class="mono">{{ f.cwe }}</td>
+  <td class="mono"><a href="https://cwe.mitre.org/data/definitions/{{ f.cwe.split('-')[-1] }}.html">{{ f.cwe }}</a></td>
   <td><code>{{ f.evidence.excerpt }}</code><br>
       <span class="deriv">derived from: {{ f.claim.derivation.value if f.claim.derivation else f.claim.method.value }}</span><br>
       <code>{{ f.reproduction }}</code></td>
@@ -56,7 +56,7 @@
 {% endfor %}
 </table>
 
-<footer>
+<footer data-testid="methodology-footer">
 <h2>Methodology</h2>
 <p><strong>What "vulnerable" means here:</strong> a finding states an observed
 property of the target with the derivation that produced it. Schema-derived and
