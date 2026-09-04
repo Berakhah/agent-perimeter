@@ -3,10 +3,11 @@
  *
  * Types match the real FastAPI response shapes read directly from
  * `agent_perimeter/api/{scans,census,schemas}.py`, not the plan's earlier
- * sketch (task-10 pre-flight ruling 3). `findings`/`graph` stay loose
- * (`unknown[]`) on purpose -- Task 11+ defines the narrower shape once a
- * screen actually needs it; inventing one here would just be a second,
- * possibly-drifting copy of the backend's domain models.
+ * sketch (task-10 pre-flight ruling 3). `findings` (task 13) and `graph`
+ * (task 14) are now typed against their real backend shapes; anything a
+ * later screen hasn't needed yet stays loose (`unknown[]`) rather than
+ * inventing a second, possibly-drifting copy of a backend domain model
+ * ahead of need.
  *
  * Base URL: same origin by default (`NEXT_PUBLIC_API_BASE_URL` overrides it
  * for a split frontend/backend deployment). No retry/cache layer -- nothing
@@ -184,7 +185,32 @@ export function getFindings(id: string): Promise<Finding[]> {
   return request(`/api/scans/${id}/findings`);
 }
 
-export function getGraph(id: string): Promise<unknown[]> {
+/**
+ * Wire shape of `agent_perimeter/model/edge.py::CapabilityEdge`, serialized
+ * as-is by `GET /api/scans/{id}/graph` (`jsonable_encoder`, no field
+ * renaming -- task-14 pre-flight ruling 1). There is no separate top-level
+ * `nodes` array: the frontend derives tool nodes and the 7 fixed capability
+ * nodes from this flat edge list itself.
+ */
+export type Capability =
+  | "fs_read"
+  | "fs_write"
+  | "net_out"
+  | "exec"
+  | "secret_read"
+  | "db_read"
+  | "db_write";
+
+export interface CapabilityEdge {
+  tool: string;
+  capability: Capability;
+  /** Always present on the edge itself, unlike the (optional) `claim.derivation`. */
+  derivation: ClaimDerivation;
+  claim: FindingClaim;
+  rationale: string;
+}
+
+export function getGraph(id: string): Promise<CapabilityEdge[]> {
   return request(`/api/scans/${id}/graph`);
 }
 
