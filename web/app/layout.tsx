@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
+import "./print.css";
 
 // Self-hosted (00 §5.2: Google Fonts CDN is a privacy/offline-demo liability).
 // Files copied one-time from the `geist` / `@fontsource/*` npm packages into

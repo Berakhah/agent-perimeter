@@ -1,0 +1,30 @@
+/*
+ * Print stylesheet for the Next.js application screens (1-5). Screen 6 (the
+ * static report/census artifacts, report/html.py + report.css) has its own
+ * self-contained print block and is verified separately (web/tests/print.spec.ts
+ * against port 4173) -- this file is 00 §5.5's "correct printing" for the
+ * live application shell, kept in its own file rather than folded into
+ * globals.css so it stays easy to audit as one unit.
+ */
+@media print {
+  /* Toolbar-only chrome (FindingsTable's export buttons, column-resize
+     handles) has no printed meaning -- already marked with this class. */
+  .bok-no-print {
+    display: none !important;
+  }
+
+  /* A findings-table row, a live-scan check row, or a drift-timeline item
+     splitting across a page break is the same failure mode Screen 6's own
+     print CSS guards against (report.css, task-16 ruling 4) -- keep both
+     screens consistent rather than fixing it in one place only. */
+  [data-testid="finding-row"],
+  .bok-check-row,
+  .bok-timeline-item {
+    break-inside: avoid;
+  }
+
+  /* Focus rings and hover-only affordances are meaningless on paper. */
+  :focus {
+    outline: none !important;
+  }
+}

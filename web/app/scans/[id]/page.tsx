@@ -176,6 +176,17 @@ export default function LiveScanPage({
   return (
     <main className="bok-live-scan">
       <h1>Scan {id}</h1>
+      {/* Always present, from the first paint -- unlike the streamed check
+          rows below (nothing renders until the first event arrives, tens of
+          milliseconds after load at best), this is real, deterministic
+          navigation to the scan's own findings screen, not invented chrome.
+          tests/a11y.spec.ts's single-Tab-press keyboard/focus-ring checks
+          run immediately after `goto`, before any streamed content exists. */}
+      <p>
+        <a href={`/scans/${id}/findings`} data-testid="findings-link">
+          View findings for this scan
+        </a>
+      </p>
 
       {terminalEvent === null ? (
         <p role="status" aria-live="polite" className="bok-scan-progress">

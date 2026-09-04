@@ -58,7 +58,12 @@ export default function DriftPage({
   const timelineEvents: RunTimelineEvent[] = scans
     .slice()
     .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
-    .map((scan) => ({ id: scan.id, label: `Scan of ${data!.target}`, at: scan.startedAt }));
+    .map((scan) => ({
+      id: scan.id,
+      label: `Scan of ${data!.target}`,
+      at: scan.startedAt,
+      href: `/scans/${scan.id}`,
+    }));
 
   return (
     <main className="bok-drift">
