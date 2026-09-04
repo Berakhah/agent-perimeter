@@ -182,9 +182,16 @@ export interface ProvenanceRailProps {
  * (a real DOM property, not just a style) strips focusability and click
  * handling from the whole subtree in one call, which is what makes
  * `aria-hidden` on the closed rail true instead of a lie axe-core would
- * catch (an aria-hidden container with a focusable descendant). Focus moves
- * to the close button on open and back to whatever triggered the rail on
- * close.
+ * catch (an aria-hidden container with a focusable descendant). Set as a
+ * declarative JSX prop (React 19 reflects `inert` natively), not only via a
+ * `railRef.current.inert = ...` effect -- an effect-only assignment leaves a
+ * real window, from first paint/hydration until the effect commits, where
+ * the server/initial-render DOM already has `aria-hidden="true"` but not
+ * yet `inert`, which is exactly the violation axe-core's `aria-hidden-focus`
+ * rule caught (task 16) when it ran inside that window. The declarative
+ * prop renders correctly in the very first paint, closing the gap
+ * entirely. Focus moves to the close button on open and back to whatever
+ * triggered the rail on close.
  */
 export function ProvenanceRail({ open, chain, onClose }: ProvenanceRailProps) {
   const railRef = useRef<HTMLElement>(null);
@@ -192,7 +199,6 @@ export function ProvenanceRail({ open, chain, onClose }: ProvenanceRailProps) {
   const triggerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (railRef.current) railRef.current.inert = !open;
     if (open) {
       triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       closeButtonRef.current?.focus();
@@ -218,6 +224,7 @@ export function ProvenanceRail({ open, chain, onClose }: ProvenanceRailProps) {
       data-testid="provenance-rail"
       aria-hidden={!open}
       aria-label="Claim provenance"
+      inert={!open}
     >
       <div className="bok-rail-header">
         <span>Provenance</span>
@@ -757,6 +764,8 @@ export interface RunTimelineEvent {
   /** ISO 8601 timestamp. */
   at: string;
   status?: "ok" | "error" | "pending";
+  /** Omit to render a plain (non-interactive) label -- the pre-task-16 default. */
+  href?: string;
 }
 
 export interface RunTimelineProps {
@@ -773,7 +782,13 @@ export function RunTimeline({ events }: RunTimelineProps) {
           <time className="bok-numeric" data-testid="drift-timestamp" dateTime={e.at}>
             {e.at}
           </time>
-          <span>{e.label}</span>
+          {e.href ? (
+            <a href={e.href} data-testid="timeline-link">
+              {e.label}
+            </a>
+          ) : (
+            <span>{e.label}</span>
+          )}
         </li>
       ))}
     </ol>

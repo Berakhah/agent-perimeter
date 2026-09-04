@@ -31,17 +31,25 @@
   /* agent-perimeter's one accent (00 §5.2). */
   --accent: oklch(0.72 0.16 68);
 
-  /* Severity -- never the sole encoder; every use also carries a glyph + label. */
+  /* Severity -- never the sole encoder; every use also carries a glyph + label.
+     Lightness values darkened from the first-pass token sheet (this ramp is
+     explicitly not pinned, unlike paper/ink/accent -- see the file header
+     comment) to clear WCAG 2 AA's 4.5:1 text-contrast floor against
+     --paper: the originals measured 3.1-4.1:1 (axe-core `color-contrast`,
+     task 16), which is a real "serious" violation wherever a severity/
+     provenance colour is used as text, not just where the fixtures happen
+     to exercise it (`.bok-severity-badge`, `.bok-lock-reason`,
+     `.bok-diff-word-added`, `.bok-provenance-unverified`, ...). */
   --severity-critical: oklch(0.52 0.19 25);
-  --severity-high: oklch(0.6 0.17 45);
-  --severity-medium: oklch(0.65 0.14 85);
-  --severity-low: oklch(0.55 0.09 230);
+  --severity-high: oklch(0.5 0.17 45);
+  --severity-medium: oklch(0.48 0.14 85);
+  --severity-low: oklch(0.52 0.09 230);
   --severity-info: oklch(0.55 0.02 85);
 
   /* Provenance state -- same rule: glyph + label always accompany colour. */
-  --provenance-verified: oklch(0.58 0.11 158);
+  --provenance-verified: oklch(0.46 0.12 158);
   --provenance-modelled: oklch(0.55 0.14 268);
-  --provenance-unverified: oklch(0.6 0.02 85);
+  --provenance-unverified: oklch(0.45 0.02 85);
 
   /* Radius: 6px controls, 2px data cells, 0 table rules. */
   --radius-control: 6px;
@@ -201,11 +209,7 @@ body {
   }
 }
 
-@media print {
-  .bok-no-print {
-    display: none !important;
-  }
-}
+/* Print rules live in ./print.css (task 16), imported by layout.tsx. */
 
 /* Claim + ProvenanceRail (00 §5.3). */
 .bok-claim {
@@ -331,6 +335,7 @@ body {
 }
 .bok-table-scroll {
   overflow-y: auto;
+  overflow-x: auto;
 }
 .bok-table {
   border-collapse: collapse;
@@ -592,11 +597,20 @@ body {
 }
 .bok-check-row {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: var(--density-gap);
   padding: var(--density-cell-y) var(--density-cell-x);
   border-radius: var(--radius-cell);
   border-left: 2px solid var(--neutral-200);
+}
+/* Long dotted check ids (e.g. "revision.header_annotation_unreachable")
+   have no natural break point -- without this, a flex child's default
+   min-width:auto refuses to shrink below the id's full intrinsic width,
+   pushing the row (and the whole page) wider than a 375px viewport. */
+.bok-check-id {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .bok-check-row.bok-check-passed {
   border-left-color: var(--provenance-verified);
@@ -676,7 +690,8 @@ body {
   fill: var(--ink);
 }
 .bok-graph-node-tool:focus-visible {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .bok-graph-node-tool:focus-visible circle {
   stroke: var(--accent);
@@ -719,7 +734,10 @@ body {
 .bok-graph-edge:focus-visible {
   stroke: var(--ink);
   stroke-width: 2;
-  outline: none;
+}
+.bok-graph-edge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .bok-edge-tooltip {
@@ -751,11 +769,15 @@ body {
 
 /* Visually secondary to the canvas above it, but genuinely visible -- the
    accessible text alternative for the same edge data, not a hidden one. */
+.bok-graph-table-scroll {
+  overflow-x: auto;
+}
 .bok-graph-table {
   font-size: 0.85em;
   color: var(--neutral-700);
   border-collapse: collapse;
   width: 100%;
+  min-width: 32rem;
 }
 .bok-graph-table caption {
   text-align: left;

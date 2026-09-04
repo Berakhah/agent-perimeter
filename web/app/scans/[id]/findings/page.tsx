@@ -119,38 +119,54 @@ export default function FindingsPage({
   const { id } = use(params);
   const { fixture } = use(searchParams);
 
-  const [findings, setFindings] = useState<Finding[]>([]);
-  const [scan, setScan] = useState<FindingsFixture["scan"] | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  // Fixture data is a module-level constant, already resolved by the time
+  // this renders -- computed directly in the render body (not behind a
+  // `useEffect`), the same fix `graph/page.tsx` (Task 14) already applies
+  // and documents: an effect-deferred fixture load leaves the first paint
+  // showing `Skeleton` (zero focusable elements), and `tests/a11y.spec.ts`'s
+  // single-Tab-press "visible focus ring" check runs immediately after
+  // `goto` with no wait for content, so it would land on nothing.
+  const fixtureData = fixture ? FIXTURES[fixture] : undefined;
+
+  const [liveFindings, setLiveFindings] = useState<Finding[]>([]);
+  const [liveScan, setLiveScan] = useState<FindingsFixture["scan"] | null>(null);
+  const [liveLoaded, setLiveLoaded] = useState(false);
   const [railOpen, setRailOpen] = useState(false);
   const [railChain, setRailChain] = useState<ProvenanceChainEntry[]>([]);
 
   useEffect(() => {
+    if (fixture) return;
     let cancelled = false;
-    setLoaded(false);
-
-    if (fixture) {
-      const data = FIXTURES[fixture];
-      setFindings(data?.findings ?? []);
-      setScan(data?.scan ?? { revisionClaimed: null, featuresObserved: [], skippedCount: 0 });
-      setLoaded(true);
-      return;
-    }
+    setLiveLoaded(false);
 
     Promise.all([getFindings(id), getScan(id)]).then(([findingsData, scanData]) => {
       if (cancelled) return;
-      setFindings(findingsData);
-      setScan({
+      setLiveFindings(findingsData);
+      setLiveScan({
         revisionClaimed: scanData.revision_claimed ?? null,
         featuresObserved: scanData.features_observed ?? [],
         skippedCount: scanData.skipped_count ?? 0,
       });
-      setLoaded(true);
+      setLiveLoaded(true);
     });
     return () => {
       cancelled = true;
     };
   }, [id, fixture]);
+
+  // Gated on `fixture` (the param itself), not `fixtureData` -- an unknown
+  // fixture name must still render immediately (as an empty findings list),
+  // not hang on the Skeleton waiting for a `useEffect` that returns early.
+  // Memoized so its identity is stable across renders that don't actually
+  // change the underlying data -- the two `useMemo`s below key off it.
+  const findings = useMemo(
+    () => (fixture ? (fixtureData?.findings ?? []) : liveFindings),
+    [fixture, fixtureData, liveFindings],
+  );
+  const scan = fixture
+    ? (fixtureData?.scan ?? { revisionClaimed: null, featuresObserved: [], skippedCount: 0 })
+    : liveScan;
+  const loaded = fixture ? true : liveLoaded;
 
   const { rows, findingById } = useMemo(() => {
     const builtRows = findings.map(toRow);

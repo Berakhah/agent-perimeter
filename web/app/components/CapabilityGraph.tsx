@@ -179,6 +179,7 @@ export function CapabilityGraph({ edges, flaggedTools, onActivateTool }: Capabil
         ))}
       </ul>
 
+      <div className="bok-graph-table-scroll">
       <table className="bok-graph-table" data-testid="capability-edges-table">
         <caption>Capability edges</caption>
         <thead>
@@ -206,6 +207,7 @@ export function CapabilityGraph({ edges, flaggedTools, onActivateTool }: Capabil
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
