@@ -484,6 +484,61 @@ body {
   color: var(--severity-critical);
 }
 
+/* Scan setup screen (task 11). */
+.bok-scan-setup form {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--density-gap) * 2);
+  max-width: 32rem;
+}
+.bok-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--density-cell-y);
+}
+.bok-field input[type="text"] {
+  border: 1px solid var(--neutral-300);
+  border-radius: var(--radius-control);
+  padding: var(--density-cell-y) var(--density-cell-x);
+  background: var(--paper);
+  color: var(--ink);
+}
+.bok-mode-selector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--density-cell-y);
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-control);
+  padding: var(--density-gap);
+}
+.bok-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+.bok-lock-reason {
+  color: var(--severity-medium);
+  border-left: 2px solid var(--severity-medium);
+  padding-left: var(--density-cell-x);
+  font-size: 0.9em;
+}
+.bok-scope-file-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--density-cell-y);
+  border: 1px dashed var(--neutral-300);
+  border-radius: var(--radius-control);
+  padding: var(--density-gap);
+}
+.bok-hint {
+  color: var(--neutral-600);
+  font-size: 0.9em;
+}
+.bok-scope-file-name {
+  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+}
+
 /* Skeleton -- loading is a skeleton, never a spinner (00 §5.5). */
 .bok-skeleton {
   display: flex;
