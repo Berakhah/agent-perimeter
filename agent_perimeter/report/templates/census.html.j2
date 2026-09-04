@@ -11,7 +11,7 @@
 
 <h2>Headline</h2>
 <div class="strip">
-<p><strong>Artifact stratum.</strong> Of {{ artifact_n_examined }} npm/PyPI packages examined,
+<p data-testid="unknown-count"><strong>Artifact stratum.</strong> Of {{ artifact_n_examined }} npm/PyPI packages examined,
 {{ artifact_agg.supports }} of {{ artifact_agg.n }} show published-artifact evidence of support
 for <span class="mono">{{ revision }}</span> ({{ artifact_agg.does_not_support }} show no such
 evidence, {{ artifact_agg.unknown }} unknown).</p>
@@ -37,9 +37,9 @@ combined with the other, and neither stands in for "the MCP ecosystem" as a whol
 <table>
 <tr><th>Started</th><td class="mono">{{ run.started_at.isoformat() }}</td></tr>
 <tr><th>Finished</th><td class="mono">{{ run.finished_at.isoformat() if run.finished_at else "in progress" }}</td></tr>
-<tr><th>Population</th><td class="num">{{ run.population_size }}</td></tr>
+<tr><th>Population</th><td class="num" data-testid="population-size">{{ run.population_size }}</td></tr>
 </table>
-<p>Fetch failures: {{ run.fetch_failures }}</p>
+<p data-testid="fetch-failures">Fetch failures: {{ run.fetch_failures }}</p>
 
 <h2>Artifact stratum</h2>
 <p><strong>Method.</strong> {{ selection_method|safe }}</p>
@@ -68,9 +68,10 @@ combined with the other, and neither stands in for "the MCP ecosystem" as a whol
   <td class="num">{{ "n/a" if artifact_agg.share is none else "%.0f%%"|format(artifact_agg.share * 100) }}</td>
 </tr>
 </table>
-<p class="deriv">Tier-2 target n is per ecosystem, not pooled: up to {{ run.tier2_n }} npm
-packages and up to {{ run.tier2_n }} PyPI packages are independently selected, by download
-count within each ecosystem, before any artifact is fetched.</p>
+<p class="deriv">Tier-2 target n is per ecosystem, not pooled: up to
+<span data-testid="tier2-n">{{ run.tier2_n }}</span> npm packages and up to {{ run.tier2_n }}
+PyPI packages are independently selected, by download count within each ecosystem, before any
+artifact is fetched.</p>
 
 <h2>Live-discover stratum</h2>
 {% if probe_agg is none %}
@@ -94,7 +95,7 @@ is the number that matters here, not a derived percentage.</p>
 {% endif %}
 
 <h2>Terms</h2>
-<dl>
+<dl data-testid="term-definitions">
 {% for term, definition in term_definitions.items() %}
 <dt><strong>{{ term }}</strong></dt>
 <dd>{{ definition|safe }}</dd>

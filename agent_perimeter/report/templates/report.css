@@ -15,6 +15,12 @@ body {
 }
 h1, h2 { font-family: Newsreader, Georgia, serif; }
 table { border-collapse: collapse; width: 100%; }
+/* Narrow viewports (00 §5.5, "usable at 375px"): scroll a wide table
+   within its own box rather than letting it push the whole page wider
+   than the viewport. */
+@media (max-width: 480px) {
+  table { display: block; overflow-x: auto; white-space: nowrap; }
+}
 th, td { border-bottom: 1px solid var(--rule); padding: 0.4rem 0.6rem; text-align: left; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
@@ -27,4 +33,5 @@ footer { margin-top: 3rem; border-top: 1px solid var(--rule); padding-top: 1rem;
   body { max-width: none; padding: 0; }
   a::after { content: " (" attr(href) ")"; font-size: 0.8em; }
   .sev { border: 1px solid var(--ink); padding: 0 0.3em; }
+  [data-testid="finding-row"] { break-inside: avoid; }
 }
