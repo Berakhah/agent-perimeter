@@ -475,6 +475,22 @@ body {
 .bok-diff-remove {
   background: color-mix(in oklch, var(--severity-critical) 18%, transparent);
 }
+.bok-diff-word {
+  display: block;
+}
+.bok-diff-word p {
+  margin: 0;
+  line-height: 1.6;
+}
+.bok-diff-word-removed {
+  color: var(--severity-critical);
+  text-decoration: line-through;
+  background: color-mix(in oklch, var(--severity-critical) 12%, transparent);
+}
+.bok-diff-word-added {
+  color: var(--provenance-verified);
+  background: color-mix(in oklch, var(--provenance-verified) 12%, transparent);
+}
 
 /* EmptyState / ErrorState. */
 .bok-empty-state,
@@ -776,4 +792,12 @@ body {
   border-radius: var(--radius-cell);
   overflow-x: auto;
   font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+}
+
+/* Description drift screen -- Screen 5 (task 15). */
+.bok-drift {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--density-gap) * 2);
+  max-width: 48rem;
 }
