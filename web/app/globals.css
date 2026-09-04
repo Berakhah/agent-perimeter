@@ -539,6 +539,54 @@ body {
   font-size: 0.9em;
 }
 
+/* Live scan screen (task 12). */
+.bok-live-scan {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--density-gap) * 2);
+  max-width: 48rem;
+}
+.bok-scan-progress {
+  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+  color: var(--neutral-700);
+}
+.bok-phase-group {
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-control);
+  padding: var(--density-gap);
+}
+.bok-phase-group-heading {
+  text-transform: capitalize;
+  font-family: var(--font-newsreader), serif;
+  margin: 0 0 var(--density-cell-y);
+}
+.bok-phase-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--density-cell-y);
+}
+.bok-check-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--density-gap);
+  padding: var(--density-cell-y) var(--density-cell-x);
+  border-radius: var(--radius-cell);
+  border-left: 2px solid var(--neutral-200);
+}
+.bok-check-row.bok-check-passed {
+  border-left-color: var(--provenance-verified);
+}
+.bok-check-row.bok-check-errored {
+  border-left-color: var(--severity-critical);
+}
+.bok-check-row.bok-check-skipped {
+  border-left-color: var(--severity-medium);
+  color: var(--neutral-600);
+}
+
 /* Skeleton -- loading is a skeleton, never a spinner (00 §5.5). */
 .bok-skeleton {
   display: flex;
