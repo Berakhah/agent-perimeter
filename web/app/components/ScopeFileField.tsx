@@ -41,12 +41,12 @@ export function ScopeFileField({ onScopeFile, onError }: ScopeFileFieldProps) {
       parsed = JSON.parse(await file.text());
     } catch {
       onScopeFile(null);
-      onError(`${file.name} is not valid JSON.`);
+      onError(`${file.name} is not valid JSON — attach a valid JSON scope file.`);
       return;
     }
     if (typeof parsed !== "object" || parsed === null) {
       onScopeFile(null);
-      onError(`${file.name} must contain a JSON object.`);
+      onError(`${file.name} must contain a JSON object — attach a valid JSON scope file.`);
       return;
     }
 
@@ -54,7 +54,7 @@ export function ScopeFileField({ onScopeFile, onError }: ScopeFileFieldProps) {
     const missing = REQUIRED_FIELDS.find(({ key }) => isBlank(record[key]));
     if (missing) {
       onScopeFile(null);
-      onError(`Scope file is missing ${missing.label}.`);
+      onError(`Scope file is missing ${missing.label} — add it and reattach the file.`);
       return;
     }
 

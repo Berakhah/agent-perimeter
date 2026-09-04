@@ -51,8 +51,8 @@ export default function Home() {
     } catch (err) {
       const message =
         err instanceof ApiError
-          ? `The scan API returned ${err.status}.`
-          : "Could not reach the scan API.";
+          ? `The scan API returned ${err.status} — check the target and try again.`
+          : "Could not reach the scan API — confirm it is running and retry.";
       setSubmitError(message);
     } finally {
       setSubmitting(false);
