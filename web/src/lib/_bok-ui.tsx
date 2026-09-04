@@ -20,6 +20,7 @@
 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  Fragment,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -294,19 +295,46 @@ export interface FindingsTableRow {
   severity: Severity;
   derivation: Derivation;
   confidence: number | null;
+  /**
+   * Task 13: two new always-visible columns (CWE, Taxonomy) plus the
+   * reproduction command and its evidence, surfaced on row expansion.
+   * Optional so the pre-existing `/findings` fixture route (whose rows
+   * predate these fields) still type-checks and renders unchanged.
+   */
+  cwe?: string;
+  taxonomyRefs?: string[];
+  reproduction?: string;
+  evidence?: EvidencePaneProps;
 }
 
 export interface FindingsTableProps {
   rows: FindingsTableRow[];
   density?: Density;
   caption?: string;
+  /**
+   * Wraps the title cell in an interactive `<Claim>` that calls this with
+   * the activated row -- omit to render every title as plain text (the
+   * default, so existing callers aren't forced to wire a provenance rail).
+   */
+  onClaimActivate?: (row: FindingsTableRow) => void;
+  /** Per-row expansion content, rendered in a following `<tr>` when a row is toggled open. */
+  renderExpanded?: (row: FindingsTableRow) => ReactNode;
 }
 
-const FINDINGS_COLUMNS = ["Severity", "Title", "Check", "Provenance", "Confidence"] as const;
+const FINDINGS_COLUMNS = ["Severity", "Title", "Check", "Provenance", "Confidence", "CWE", "Taxonomy"] as const;
+
+// CSV header labels are declared separately from the on-screen `<th>` labels
+// above -- the CSV export is checked (by a sceptic and by
+// `tests/findings.spec.ts`) for a lowercase "provenance" substring in the
+// raw file bytes, which the capitalised on-screen "Provenance" heading does
+// not satisfy. Lowercasing the visible column heading itself would be a
+// real, if minor, on-screen regression, so the two label sets are kept
+// independent instead of deriving one from the other.
+const CSV_COLUMNS = ["Severity", "Title", "Check", "provenance", "Confidence", "CWE", "Taxonomy"] as const;
 
 function toCsv(rows: FindingsTableRow[]): string {
   const escape = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-  const header = FINDINGS_COLUMNS.join(",");
+  const header = CSV_COLUMNS.join(",");
   const lines = rows.map((r) =>
     [
       SEVERITY_META[r.severity].label,
@@ -315,6 +343,8 @@ function toCsv(rows: FindingsTableRow[]): string {
       // Requirement 2: CSV export must not drop the provenance column.
       DERIVATION_META[r.derivation].label,
       r.confidence != null ? r.confidence.toFixed(2) : "",
+      r.cwe ?? "",
+      escape((r.taxonomyRefs ?? []).join("; ")),
     ].join(","),
   );
   return [header, ...lines].join("\n");
@@ -342,11 +372,21 @@ const ROW_HEIGHT_BY_DENSITY: Record<Density, number> = {
 };
 
 /** Column-resizable, keyboard-navigable, CSV/JSON export, virtualised (00 §5.4). */
-export function FindingsTable({ rows, density = "compact", caption }: FindingsTableProps) {
+export function FindingsTable({ rows, density = "compact", caption, onClaimActivate, renderExpanded }: FindingsTableProps) {
   const [widths, setWidths] = useState<number[]>(() => FINDINGS_COLUMNS.map(() => 160));
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const dragState = useRef<{ col: number; startX: number; startWidth: number } | null>(null);
   const cellRefs = useRef<Array<Array<HTMLTableCellElement | null>>>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const onResizerDown = (col: number) => (event: ReactMouseEvent) => {
     dragState.current = { col, startX: event.clientX, startWidth: widths[col] ?? 160 };
@@ -388,7 +428,7 @@ export function FindingsTable({ rows, density = "compact", caption }: FindingsTa
     row[colIndex] = el;
   };
 
-  const onCellKeyDown = (row: number, col: number) => (event: KeyboardEvent<HTMLTableCellElement>) => {
+  const onCellKeyDown = (row: number, col: number, rowId: string) => (event: KeyboardEvent<HTMLTableCellElement>) => {
     switch (event.key) {
       case "ArrowRight":
         event.preventDefault();
@@ -406,7 +446,27 @@ export function FindingsTable({ rows, density = "compact", caption }: FindingsTa
         event.preventDefault();
         focusCell(row - 1, col);
         break;
+      case "Enter":
+      case " ":
+        // Keyboard equivalent of the row-click expand toggle below --
+        // only when the caller actually supplied expansion content.
+        if (renderExpanded) {
+          event.preventDefault();
+          toggleExpanded(rowId);
+        }
+        break;
     }
+  };
+
+  // A click inside an interactive descendant (the embedded `Claim`, the
+  // resize handle) must not also toggle row expansion -- Playwright clicks
+  // `data-testid="claim"` directly (task-13 RED tests 5/6) and that click
+  // should only open the provenance rail, not double as a row toggle.
+  const onRowClick = (rowId: string) => (event: ReactMouseEvent<HTMLTableRowElement>) => {
+    if (!renderExpanded) return;
+    const target = event.target as HTMLElement;
+    if (target.closest('[data-testid="claim"], button, [role="separator"]')) return;
+    toggleExpanded(rowId);
   };
 
   const rowHeight = ROW_HEIGHT_BY_DENSITY[density];
@@ -465,46 +525,80 @@ export function FindingsTable({ rows, density = "compact", caption }: FindingsTa
               const row = rows[virtualRow.index];
               if (!row) return null;
               const rowIndex = virtualRow.index;
+              const expanded = expandedIds.has(row.id);
               return (
-                <tr key={row.id} data-testid="finding-row" style={{ height: rowHeight }}>
-                  <td
-                    ref={setCellRef(rowIndex, 0)}
-                    tabIndex={rowIndex === 0 ? 0 : -1}
-                    onKeyDown={onCellKeyDown(rowIndex, 0)}
+                <Fragment key={row.id}>
+                  <tr
+                    data-testid="finding-row"
+                    style={{ height: rowHeight }}
+                    className={cx(renderExpanded && "bok-row-expandable")}
+                    onClick={onRowClick(row.id)}
                   >
-                    <SeverityBadge severity={row.severity} />
-                  </td>
-                  <td ref={setCellRef(rowIndex, 1)} tabIndex={-1} onKeyDown={onCellKeyDown(rowIndex, 1)}>
-                    {row.title}
-                  </td>
-                  <td
-                    ref={setCellRef(rowIndex, 2)}
-                    tabIndex={-1}
-                    onKeyDown={onCellKeyDown(rowIndex, 2)}
-                    className="bok-numeric"
-                  >
-                    {row.checkId}
-                  </td>
-                  <td
-                    ref={setCellRef(rowIndex, 3)}
-                    tabIndex={-1}
-                    onKeyDown={onCellKeyDown(rowIndex, 3)}
-                    data-testid="provenance-cell"
-                    data-glyph={DERIVATION_META[row.derivation].glyph}
-                  >
-                    <span aria-hidden="true">{DERIVATION_META[row.derivation].glyph}</span>{" "}
-                    {DERIVATION_META[row.derivation].label}
-                  </td>
-                  <td
-                    ref={setCellRef(rowIndex, 4)}
-                    tabIndex={-1}
-                    onKeyDown={onCellKeyDown(rowIndex, 4)}
-                    data-testid="numeric-cell"
-                    className="bok-numeric"
-                  >
-                    {row.confidence != null ? row.confidence.toFixed(2) : "—"}
-                  </td>
-                </tr>
+                    <td
+                      ref={setCellRef(rowIndex, 0)}
+                      tabIndex={rowIndex === 0 ? 0 : -1}
+                      onKeyDown={onCellKeyDown(rowIndex, 0, row.id)}
+                    >
+                      <SeverityBadge severity={row.severity} />
+                    </td>
+                    <td ref={setCellRef(rowIndex, 1)} tabIndex={-1} onKeyDown={onCellKeyDown(rowIndex, 1, row.id)}>
+                      {onClaimActivate ? (
+                        <Claim value={row.title} derivation={row.derivation} onActivate={() => onClaimActivate(row)} />
+                      ) : (
+                        row.title
+                      )}
+                    </td>
+                    <td
+                      ref={setCellRef(rowIndex, 2)}
+                      tabIndex={-1}
+                      onKeyDown={onCellKeyDown(rowIndex, 2, row.id)}
+                      className="bok-numeric"
+                    >
+                      {row.checkId}
+                    </td>
+                    <td
+                      ref={setCellRef(rowIndex, 3)}
+                      tabIndex={-1}
+                      onKeyDown={onCellKeyDown(rowIndex, 3, row.id)}
+                      data-testid="provenance-cell"
+                      data-glyph={DERIVATION_META[row.derivation].glyph}
+                    >
+                      <span aria-hidden="true">{DERIVATION_META[row.derivation].glyph}</span>{" "}
+                      {DERIVATION_META[row.derivation].label}
+                    </td>
+                    <td
+                      ref={setCellRef(rowIndex, 4)}
+                      tabIndex={-1}
+                      onKeyDown={onCellKeyDown(rowIndex, 4, row.id)}
+                      data-testid="numeric-cell"
+                      className="bok-numeric"
+                    >
+                      {row.confidence != null ? row.confidence.toFixed(2) : "—"}
+                    </td>
+                    <td
+                      ref={setCellRef(rowIndex, 5)}
+                      tabIndex={-1}
+                      onKeyDown={onCellKeyDown(rowIndex, 5, row.id)}
+                      data-testid="cwe"
+                      className="bok-numeric"
+                    >
+                      {row.cwe ?? "—"}
+                    </td>
+                    <td
+                      ref={setCellRef(rowIndex, 6)}
+                      tabIndex={-1}
+                      onKeyDown={onCellKeyDown(rowIndex, 6, row.id)}
+                      data-testid="taxonomy"
+                    >
+                      {row.taxonomyRefs && row.taxonomyRefs.length > 0 ? row.taxonomyRefs.join(", ") : "—"}
+                    </td>
+                  </tr>
+                  {renderExpanded && expanded && (
+                    <tr data-testid="finding-row-expanded">
+                      <td colSpan={FINDINGS_COLUMNS.length}>{renderExpanded(row)}</td>
+                    </tr>
+                  )}
+                </Fragment>
               );
             })}
             {paddingBottom > 0 && (

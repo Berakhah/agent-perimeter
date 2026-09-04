@@ -364,6 +364,12 @@ body {
   width: 6px;
   cursor: col-resize;
 }
+.bok-row-expandable {
+  cursor: pointer;
+}
+.bok-row-expandable:hover {
+  background: var(--neutral-50);
+}
 
 /* EvidencePane. */
 .bok-evidence {
@@ -607,4 +613,37 @@ body {
   100% {
     background-position: -200% 0;
   }
+}
+
+/* ConformanceStrip -- the findings screen's header differentiator (task 13). */
+.bok-conformance-strip {
+  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+  padding: var(--density-cell-y) var(--density-cell-x);
+  margin-bottom: var(--density-gap);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-cell);
+  background: color-mix(in oklch, var(--accent) 8%, transparent);
+}
+
+/* FindingRow -- reproduction command + evidence, shown on row expansion. */
+.bok-finding-expanded {
+  display: flex;
+  flex-direction: column;
+  gap: var(--density-gap);
+  padding: var(--density-cell-y) var(--density-cell-x);
+}
+.bok-finding-reproduction {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--density-gap);
+}
+.bok-finding-reproduction pre {
+  flex: 1;
+  margin: 0;
+  padding: var(--density-cell-y) var(--density-cell-x);
+  background: var(--neutral-50);
+  border: 1px solid var(--neutral-150);
+  border-radius: var(--radius-cell);
+  overflow-x: auto;
+  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
 }
