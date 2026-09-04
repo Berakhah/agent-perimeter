@@ -1,0 +1,475 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens -- 00-SHARED-FOUNDATION.md §5.2.
+ *
+ * paper/ink/accent are the exact OKLCH values §5.2 specifies. The 12-step
+ * neutral ramp and the severity/provenance-state scales are not given exact
+ * numbers there -- these are a defensible first pass (warm graphite hue,
+ * same chroma family as the pinned accent), not the final `bok-ui` token
+ * sheet. Flagged as a `bok-ui` requirement, same as the three behavioural
+ * asks in the task-10 brief.
+ */
+:root {
+  --paper: oklch(0.985 0.004 85);
+  --ink: oklch(0.22 0.012 85);
+
+  /* Warm graphite neutral ramp, paper -> ink. */
+  --neutral-50: oklch(0.985 0.004 85);
+  --neutral-100: oklch(0.95 0.005 85);
+  --neutral-150: oklch(0.9 0.006 85);
+  --neutral-200: oklch(0.85 0.007 85);
+  --neutral-300: oklch(0.75 0.008 85);
+  --neutral-400: oklch(0.65 0.009 85);
+  --neutral-500: oklch(0.55 0.01 85);
+  --neutral-600: oklch(0.46 0.011 85);
+  --neutral-700: oklch(0.38 0.011 85);
+  --neutral-800: oklch(0.3 0.012 85);
+  --neutral-900: oklch(0.26 0.012 85);
+  --neutral-950: oklch(0.22 0.012 85);
+
+  /* agent-perimeter's one accent (00 §5.2). */
+  --accent: oklch(0.72 0.16 68);
+
+  /* Severity -- never the sole encoder; every use also carries a glyph + label. */
+  --severity-critical: oklch(0.52 0.19 25);
+  --severity-high: oklch(0.6 0.17 45);
+  --severity-medium: oklch(0.65 0.14 85);
+  --severity-low: oklch(0.55 0.09 230);
+  --severity-info: oklch(0.55 0.02 85);
+
+  /* Provenance state -- same rule: glyph + label always accompany colour. */
+  --provenance-verified: oklch(0.58 0.11 158);
+  --provenance-modelled: oklch(0.55 0.14 268);
+  --provenance-unverified: oklch(0.6 0.02 85);
+
+  /* Radius: 6px controls, 2px data cells, 0 table rules. */
+  --radius-control: 6px;
+  --radius-cell: 2px;
+  --radius-rule: 0px;
+
+  /* Density modes, 4px base, defaulting to compact (html[data-density] below). */
+  --density-cell-y: 6px;
+  --density-cell-x: 10px;
+  --density-gap: 8px;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+
+  --color-neutral-50: var(--neutral-50);
+  --color-neutral-100: var(--neutral-100);
+  --color-neutral-150: var(--neutral-150);
+  --color-neutral-200: var(--neutral-200);
+  --color-neutral-300: var(--neutral-300);
+  --color-neutral-400: var(--neutral-400);
+  --color-neutral-500: var(--neutral-500);
+  --color-neutral-600: var(--neutral-600);
+  --color-neutral-700: var(--neutral-700);
+  --color-neutral-800: var(--neutral-800);
+  --color-neutral-900: var(--neutral-900);
+  --color-neutral-950: var(--neutral-950);
+
+  --color-accent: var(--accent);
+
+  --color-severity-critical: var(--severity-critical);
+  --color-severity-high: var(--severity-high);
+  --color-severity-medium: var(--severity-medium);
+  --color-severity-low: var(--severity-low);
+  --color-severity-info: var(--severity-info);
+
+  --color-provenance-verified: var(--provenance-verified);
+  --color-provenance-modelled: var(--provenance-modelled);
+  --color-provenance-unverified: var(--provenance-unverified);
+
+  --radius-control: var(--radius-control);
+  --radius-cell: var(--radius-cell);
+
+  --font-display: var(--font-newsreader);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-ibm-plex-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: oklch(0.22 0.012 85);
+    --ink: oklch(0.96 0.004 85);
+
+    --neutral-50: oklch(0.26 0.012 85);
+    --neutral-100: oklch(0.3 0.012 85);
+    --neutral-150: oklch(0.34 0.012 85);
+    --neutral-200: oklch(0.38 0.011 85);
+    --neutral-300: oklch(0.46 0.011 85);
+    --neutral-400: oklch(0.55 0.01 85);
+    --neutral-500: oklch(0.65 0.009 85);
+    --neutral-600: oklch(0.75 0.008 85);
+    --neutral-700: oklch(0.85 0.007 85);
+    --neutral-800: oklch(0.9 0.006 85);
+    --neutral-900: oklch(0.95 0.005 85);
+    --neutral-950: oklch(0.985 0.004 85);
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: oklch(0.22 0.012 85);
+  --ink: oklch(0.96 0.004 85);
+
+  --neutral-50: oklch(0.26 0.012 85);
+  --neutral-100: oklch(0.3 0.012 85);
+  --neutral-150: oklch(0.34 0.012 85);
+  --neutral-200: oklch(0.38 0.011 85);
+  --neutral-300: oklch(0.46 0.011 85);
+  --neutral-400: oklch(0.55 0.01 85);
+  --neutral-500: oklch(0.65 0.009 85);
+  --neutral-600: oklch(0.75 0.008 85);
+  --neutral-700: oklch(0.85 0.007 85);
+  --neutral-800: oklch(0.9 0.006 85);
+  --neutral-900: oklch(0.95 0.005 85);
+  --neutral-950: oklch(0.985 0.004 85);
+}
+
+/* Density modes -- 00 §5.2: comfortable/compact/dense, default compact. */
+html[data-density="comfortable"] {
+  --density-cell-y: 10px;
+  --density-cell-x: 14px;
+  --density-gap: 12px;
+}
+html[data-density="compact"] {
+  --density-cell-y: 6px;
+  --density-cell-x: 10px;
+  --density-gap: 8px;
+}
+html[data-density="dense"] {
+  --density-cell-y: 3px;
+  --density-cell-x: 6px;
+  --density-gap: 4px;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Tabular numerals everywhere a number appears (00 §5.2). */
+.bok-numeric {
+  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@media print {
+  .bok-no-print {
+    display: none !important;
+  }
+}
+
+/* Claim + ProvenanceRail (00 §5.3). */
+.bok-claim {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3em;
+  border-bottom: 1px dotted var(--neutral-600);
+  cursor: default;
+}
+.bok-claim[role="button"] {
+  cursor: pointer;
+}
+.bok-claim-glyph {
+  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+  font-size: 0.75em;
+  color: var(--neutral-600);
+}
+.bok-claim-probe .bok-claim-glyph {
+  color: var(--accent);
+}
+
+.bok-rail {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 100vw;
+  background: var(--paper);
+  color: var(--ink);
+  border-left: 1px solid var(--neutral-200);
+  transform: translateX(100%);
+  transition: transform 180ms ease;
+  overflow-y: auto;
+  padding: var(--density-gap);
+  z-index: 40;
+}
+.bok-rail-open {
+  transform: translateX(0);
+}
+.bok-rail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-newsreader), serif;
+  margin-bottom: var(--density-gap);
+}
+.bok-rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--density-gap);
+}
+.bok-rail-item {
+  border-top: 1px solid var(--neutral-150);
+  padding-top: var(--density-cell-y);
+  animation: bok-rail-item-in 180ms ease backwards;
+}
+@keyframes bok-rail-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.bok-rail-row {
+  display: flex;
+  gap: 0.5em;
+  font-size: 0.9em;
+  color: var(--neutral-700);
+}
+.bok-rail-caveat {
+  font-style: italic;
+  color: var(--severity-medium);
+}
+.bok-provenance-verified {
+  color: var(--provenance-verified);
+}
+.bok-provenance-modelled {
+  color: var(--provenance-modelled);
+}
+.bok-provenance-unverified {
+  color: var(--provenance-unverified);
+}
+
+/* SeverityBadge. */
+.bok-severity-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+  font-size: 0.85em;
+  padding: 2px 6px;
+  border-radius: var(--radius-cell);
+  border: 1px solid currentColor;
+}
+.bok-severity-critical {
+  color: var(--severity-critical);
+}
+.bok-severity-high {
+  color: var(--severity-high);
+}
+.bok-severity-medium {
+  color: var(--severity-medium);
+}
+.bok-severity-low {
+  color: var(--severity-low);
+}
+.bok-severity-info {
+  color: var(--severity-info);
+}
+
+/* FindingsTable. */
+.bok-table-toolbar {
+  display: flex;
+  gap: var(--density-gap);
+  margin-bottom: var(--density-gap);
+}
+.bok-table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+}
+.bok-table th,
+.bok-table td {
+  text-align: left;
+  padding: var(--density-cell-y) var(--density-cell-x);
+  border-bottom: 1px solid var(--neutral-150);
+  border-radius: var(--radius-rule);
+  position: relative;
+}
+.bok-table th:focus-visible,
+.bok-table td:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.bok-col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+}
+
+/* EvidencePane. */
+.bok-evidence {
+  background: var(--neutral-50);
+  border: 1px solid var(--neutral-150);
+  border-radius: var(--radius-cell);
+  padding: var(--density-cell-y) var(--density-cell-x);
+  overflow-x: auto;
+  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+}
+.bok-evidence mark {
+  background: color-mix(in oklch, var(--accent) 35%, transparent);
+  color: inherit;
+}
+
+/* ConfidenceMeter -- uncalibrated is the default state, greyed. */
+.bok-confidence-meter {
+  display: flex;
+  align-items: center;
+  gap: var(--density-gap);
+}
+.bok-confidence-track {
+  width: 96px;
+  height: 6px;
+  background: var(--neutral-150);
+  border-radius: var(--radius-cell);
+  overflow: hidden;
+}
+.bok-confidence-fill {
+  height: 100%;
+  background: var(--accent);
+}
+.bok-confidence-uncalibrated .bok-confidence-fill {
+  background: var(--neutral-400);
+}
+.bok-confidence-uncalibrated .bok-confidence-label {
+  color: var(--neutral-500);
+}
+
+/* QuotaStrip. */
+.bok-quota-strip {
+  display: flex;
+  gap: var(--density-gap);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex-wrap: wrap;
+}
+.bok-quota-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  border: 1px solid var(--neutral-150);
+  border-radius: var(--radius-control);
+  padding: var(--density-cell-y) var(--density-cell-x);
+}
+.bok-quota-ok {
+  color: var(--provenance-verified);
+}
+.bok-quota-degraded {
+  color: var(--severity-medium);
+}
+.bok-quota-down {
+  color: var(--severity-critical);
+}
+
+/* RunTimeline. */
+.bok-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--density-cell-y);
+}
+.bok-timeline-item {
+  display: flex;
+  gap: var(--density-gap);
+  border-left: 2px solid var(--neutral-200);
+  padding-left: var(--density-cell-x);
+}
+.bok-timeline-error {
+  border-left-color: var(--severity-critical);
+}
+.bok-timeline-ok {
+  border-left-color: var(--provenance-verified);
+}
+
+/* DiffView. */
+.bok-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--density-gap);
+  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+}
+.bok-diff-line {
+  white-space: pre-wrap;
+}
+.bok-diff-add {
+  background: color-mix(in oklch, var(--provenance-verified) 18%, transparent);
+}
+.bok-diff-remove {
+  background: color-mix(in oklch, var(--severity-critical) 18%, transparent);
+}
+
+/* EmptyState / ErrorState. */
+.bok-empty-state,
+.bok-error-state {
+  border: 1px dashed var(--neutral-200);
+  border-radius: var(--radius-control);
+  padding: calc(var(--density-gap) * 2);
+  text-align: center;
+  color: var(--neutral-600);
+}
+.bok-error-state {
+  border-color: var(--severity-critical);
+  color: var(--severity-critical);
+}
+
+/* Skeleton -- loading is a skeleton, never a spinner (00 §5.5). */
+.bok-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--density-cell-y);
+}
+.bok-skeleton-line {
+  height: 1em;
+  border-radius: var(--radius-cell);
+  background: linear-gradient(90deg, var(--neutral-100), var(--neutral-150), var(--neutral-100));
+  background-size: 200% 100%;
+  animation: bok-skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes bok-skeleton-pulse {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
