@@ -19,6 +19,7 @@
  */
 
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { diffWords } from "diff";
 import {
   Fragment,
   type KeyboardEvent,
@@ -837,46 +838,42 @@ function LineDiff({ before, after, beforeLabel, afterLabel }: Required<Pick<Diff
 }
 
 /**
- * ponytail: naive too, but a different simplification than `LineDiff` --
- * finds the first word where `before`/`after` diverge (a straight positional
- * scan, no LCS realignment) and treats everything from there to the end of
- * each side as one changed run. Precise for the common case this stand-in
- * exists for (one clause of a sentence swapped for another) and cheap to
- * read; it won't re-sync on a shared tail after the divergence point (e.g.
- * a single word inserted near the start makes the rest of the sentence read
- * as "changed" even where it word-for-word matches) -- upgrade to the `diff`
- * npm package's word-diff mode if drift descriptions get long enough for
- * that to read as noisy.
+ * A real word-level diff (`diff` npm package, BSD-3-Clause -- within
+ * CLAUDE.md's Apache/MIT/BSD dependency policy), not a hand-rolled
+ * approximation: `diffWords` finds the actual longest-common-subsequence
+ * alignment, so unchanged text on either side of an edit -- however far it
+ * extends -- renders as plain text, never inside a `removed`/`added` span.
+ * (An earlier positional-scan version of this function read a single
+ * inserted/deleted word as "everything after this is changed"; replaced
+ * after review caught it misrepresenting untouched trailing text as
+ * changed.) Each contiguous run `diffWords` returns is already the correct
+ * grouping -- render it as one span, no extra merging logic needed.
  */
 function WordDiff({ before, after }: { before: string; after: string }) {
-  const beforeWords = before.split(/\s+/).filter(Boolean);
-  const afterWords = after.split(/\s+/).filter(Boolean);
-
-  let split = 0;
-  while (split < beforeWords.length && split < afterWords.length && beforeWords[split] === afterWords[split]) {
-    split++;
-  }
-  const unchanged = beforeWords.slice(0, split).join(" ");
-  const removed = beforeWords.slice(split).join(" ");
-  const added = afterWords.slice(split).join(" ");
+  const parts = diffWords(before, after);
 
   return (
     <div className="bok-diff bok-diff-word" data-testid="diff-view">
       <p>
-        {unchanged && <span>{unchanged} </span>}
-        {removed && (
-          <span data-testid="removed" data-glyph="−" className="bok-diff-word-removed">
-            {"− "}
-            {removed}
-          </span>
-        )}
-        {removed && added && " "}
-        {added && (
-          <span data-testid="added" data-glyph="+" className="bok-diff-word-added">
-            {"+ "}
-            {added}
-          </span>
-        )}
+        {parts.map((part, i) => {
+          if (part.removed) {
+            return (
+              <span key={i} data-testid="removed" data-glyph="−" className="bok-diff-word-removed">
+                {"− "}
+                {part.value}
+              </span>
+            );
+          }
+          if (part.added) {
+            return (
+              <span key={i} data-testid="added" data-glyph="+" className="bok-diff-word-added">
+                {"+ "}
+                {part.value}
+              </span>
+            );
+          }
+          return <Fragment key={i}>{part.value}</Fragment>;
+        })}
       </p>
     </div>
   );
