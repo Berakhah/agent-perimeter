@@ -1,0 +1,134 @@
+# Agent Perimeter
+
+Security posture scanner for MCP servers and tool-using agents.
+
+> *"You wired an agent into your internal systems. I will show you, with a
+> reproduction for each finding, exactly what an attacker can make it do."*
+
+Agent Perimeter is **the first MCP scanner that knows which revision of the
+protocol it is looking at**, and the only one that publishes its own
+precision and recall. Every check declares a CWE and a published taxonomy
+entry (OWASP LLM Top 10, OWASP MCP Top 10, CoSAI, NSA CSI, MITRE ATLAS), and
+every finding ships with a reproduction command a sceptic can run.
+
+## Before you scan anything: the scope-file requirement
+
+**An active probe against a server you do not own or have not been
+authorised to test refuses to run, with no exception.** Passive checks
+(static analysis of a manifest, a cloned public repo, or metadata already
+returned by `tools/list`) need nothing. An active probe — anything that
+sends a live request to confirm a finding — needs a scope file: `target`,
+`authorising_party`, `authorised_on`, `attestation`, and optionally
+`expires_on`. Without one, both the CLI and the HTTP API refuse the request
+through the same authorisation function (`agent_perimeter.model.scope`), not
+two implementations that could someday disagree — see
+`tests/api/test_refusal.py::test_the_api_and_the_cli_refuse_on_the_same_condition`.
+
+```bash
+agent-perimeter scan --target https://mcp.example.test/rpc --mode active \
+  --scope-file scope.yaml
+```
+
+```yaml
+# scope.yaml
+target: https://mcp.example.test/rpc
+authorising_party: Acme Ltd
+authorised_on: 2026-09-01
+attestation: "I am authorised to test this system."
+expires_on: 2026-12-01
+```
+
+Run the same request over HTTP with no scope file and the API refuses it
+with `422 authorization_required`, naming the missing field — never a silent
+skip, never a `500`.
+
+## Quickstart
+
+```bash
+git clone <repo-url> && cd agent-perimeter
+cp .env.example .env
+docker compose up -d --wait
+./scripts/smoke.sh
+```
+
+This brings up four things: `db` (Postgres 16), `api` (the FastAPI surface,
+running pending Alembic migrations on start), and `web` (the Next.js UI) —
+plus, opt-in only, `fixture`, a parameterised MCP stdio server for demos
+(it is not started by a bare `docker compose up`; a stdio server has no
+"healthy and listening" state the way an HTTP service does):
+
+```bash
+docker compose --profile demo run --rm fixture
+```
+
+Once `db`/`api`/`web` report healthy, the UI is at `http://localhost:3000`
+and the API at `http://localhost:8000` (`GET /api/health`, `POST
+/api/scans`, docs at `/api/docs`). `scripts/smoke.sh` asserts all of this
+end to end, including the scope-file refusal above, and is what
+`docs/evidence/clean-machine.md` records a run of.
+
+Scanning a **stdio** target (an untrusted binary you are about to execute)
+goes through the CLI, never the HTTP API, and always inside the
+containerised, non-root, read-only, network-off-unless-needed launcher —
+see hard constraint 4 in `CLAUDE.md`:
+
+```bash
+agent-perimeter scan --target "python /server.py" --mode passive
+```
+
+## CI: SARIF in GitHub code scanning
+
+`GET /api/scans/{id}/report.sarif` (or `agent-perimeter scan --sarif
+out.sarif`) produces SARIF 2.1.0 that validates against the schema and
+renders in GitHub's code scanning UI (`tests/report/test_sarif.py` is the
+golden-file proof). This project's own CI (`.github/workflows/ci.yml`) is
+the reference usage:
+
+```yaml
+- name: Upload SARIF sample to code scanning
+  if: github.event_name == 'push'
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: path/to/report.sarif
+```
+
+## What this is not
+
+Public-registry scanning is passive only — manifests, cloned repos, static
+artifacts, never a live probe against a server this project does not own
+(hard constraint 2). A discovered secret is never validated against a live
+service and never stored beyond its fingerprint — SHA-256 hash, entropy,
+prefix, last 4 characters, file/line (hard constraint 3). Probes prove
+reachability and stop; a path-traversal check reads one benign canary file
+and reports the path, nothing more (hard constraint 7).
+
+## Further reading
+
+- **[docs/methodology.md](docs/methodology.md)** — what "vulnerable" does and
+  does not mean here, the measured precision/recall table per check
+  (regenerated every commit, CI fails if it goes stale), sample/population
+  definitions, and every known limitation including the project's own
+  measured false-positive rate.
+- **The registry census report** — `docs/census/CHANGELOG.md` tracks it;
+  as of this release **no run has been published yet** (two prerequisites —
+  verified SDK version floors, and Tier 3 live-discover wiring — are called
+  out there as still outstanding). `analysis/census_analysis.py` is the
+  script that will reproduce every published figure from the raw CSV alone
+  once a run ships.
+- **[docs/security.md](docs/security.md)** — the coordinated-disclosure
+  policy for findings discovered *in* servers this project scans: a 90-day
+  embargo, no third-party server ever named in a published report, secrets
+  reported to the owner immediately and outside embargo, aggregate
+  statistics only. **[SECURITY.md](SECURITY.md)** is for vulnerabilities
+  *in Agent Perimeter itself*.
+- **[docs/licences.md](docs/licences.md)** — the full Python dependency
+  licence audit; no AGPL, SSPL, BUSL or non-commercial dependency, with
+  every non-Apache/MIT/BSD dependency (all MPL-2.0 or LGPL-3.0, none
+  copyleft-triggering for how this project uses them) flagged explicitly
+  rather than adopted silently.
+- **[docs/evidence/](docs/evidence/)** — accessibility (axe, keyboard,
+  375px, print), and the compose verification record.
+
+## Licence
+
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
