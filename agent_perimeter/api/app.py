@@ -74,6 +74,14 @@ def create_app(*, database_url: str | None = None) -> FastAPI:
             },
         )
 
+    @app.get("/api/health")
+    def _health() -> dict[str, str]:
+        # Plain liveness probe -- scripts/smoke.sh and docker-compose.yml's
+        # `api` healthcheck both target this route (task 17 ruling 3). No
+        # database round-trip: the API must report healthy even before
+        # Postgres is reachable (see the best-effort create_all above).
+        return {"status": "ok"}
+
     app.include_router(scans.router, prefix="/api")
     app.include_router(census.router, prefix="/api")
     return app
