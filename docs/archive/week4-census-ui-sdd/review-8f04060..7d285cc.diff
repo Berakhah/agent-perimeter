@@ -1,0 +1,936 @@
+# Review package: 8f04060..HEAD
+
+## Commits
+7d285cc fix: drop role=img from the capability graph's svg
+1812f75 feat: capability graph with per-edge derivation and a single pulse
+
+## Files changed
+ web/app/components/CapabilityGraph.tsx | 299 +++++++++++++++++++++++++++++++++
+ web/app/components/EdgeTooltip.tsx     |  28 +++
+ web/app/globals.css                    | 130 ++++++++++++++
+ web/app/scans/[id]/graph/fixtures.ts   |  96 +++++++++++
+ web/app/scans/[id]/graph/page.tsx      | 146 ++++++++++++++++
+ web/src/lib/_bok-ui.tsx                |   7 +-
+ web/src/lib/api.ts                     |  36 +++-
+ web/tests/graph.spec.ts                |  55 ++++++
+ 8 files changed, 791 insertions(+), 6 deletions(-)
+
+## Diff
+diff --git a/web/app/components/CapabilityGraph.tsx b/web/app/components/CapabilityGraph.tsx
+new file mode 100644
+index 0000000..14f9669
+--- /dev/null
++++ b/web/app/components/CapabilityGraph.tsx
+@@ -0,0 +1,299 @@
++"use client";
++
++/**
++ * Screen 4's canvas: a bipartite tool <-> capability graph (brief §7,
++ * task-14 pre-flight ruling 1) plus the always-in-DOM accessible table that
++ * is the graph's honest text alternative. Both are built from one shared,
++ * ordered `edges` list -- tool tab order follows each tool's first
++ * appearance in that list, the same order the table's rows render in
++ * (ruling 3) -- so the two views cannot drift apart.
++ *
++ * ponytail: node positions come from a static two-column layout (tools
++ * left, the 7 fixed capabilities right), not a real force simulation. No
++ * requirement or test here needs organic clustering at this bounded node
++ * count; swap in a force-layout pass (or a library) if a future task wants
++ * one for a much larger graph.
++ */
++import { useLayoutEffect, useMemo, useState, type KeyboardEvent } from "react";
++
++import { DERIVATION_META, type Derivation } from "@/src/lib/_bok-ui";
++import type { Capability, CapabilityEdge } from "@/src/lib/api";
++import { EdgeTooltip } from "./EdgeTooltip";
++
++const CAPABILITY_ORDER: Capability[] = [
++  "fs_read",
++  "fs_write",
++  "net_out",
++  "exec",
++  "secret_read",
++  "db_read",
++  "db_write",
++];
++
++const CAPABILITY_LABEL: Record<Capability, string> = {
++  fs_read: "Filesystem read",
++  fs_write: "Filesystem write",
++  net_out: "Network egress",
++  exec: "Exec",
++  secret_read: "Secret read",
++  db_read: "Database read",
++  db_write: "Database write",
++};
++
++const DERIVATIONS: Derivation[] = ["schema", "name", "description", "probe", "artifact"];
++
++// Derivation maps to stroke pattern AND a legend entry, never colour alone
++// (00 §5.2, task-14 pre-flight ruling 4) -- every value distinguishable
++// from every other, `probe` vs `description` specifically (tests/graph.spec.ts).
++const DASH_ARRAY: Record<Derivation, string> = {
++  schema: "1 0",
++  name: "2 2",
++  description: "6 3",
++  probe: "1 4",
++  artifact: "9 2 2 2",
++};
++
++const TOOL_X = 110;
++const CAP_X = 370;
++const ROW_H = 48;
++const TOP_PAD = 32;
++const VIEW_W = 520;
++
++function activates(event: KeyboardEvent) {
++  return event.key === "Enter" || event.key === " ";
++}
++
++export interface CapabilityGraphProps {
++  edges: CapabilityEdge[];
++  flaggedTools: ReadonlySet<string>;
++  onActivateTool: (tool: string) => void;
++}
++
++export function CapabilityGraph({ edges, flaggedTools, onActivateTool }: CapabilityGraphProps) {
++  // One shared ordered list drives both the table (rows below, in this
++  // order) and the graph's tool tab order (ruling 3).
++  const toolOrder = useMemo(() => {
++    const seen: string[] = [];
++    for (const edge of edges) if (!seen.includes(edge.tool)) seen.push(edge.tool);
++    return seen;
++  }, [edges]);
++
++  const toolY = useMemo(() => {
++    const map = new Map<string, number>();
++    toolOrder.forEach((tool, i) => map.set(tool, TOP_PAD + i * ROW_H));
++    return map;
++  }, [toolOrder]);
++
++  const capY = useMemo(() => {
++    const map = new Map<Capability, number>();
++    CAPABILITY_ORDER.forEach((cap, i) => map.set(cap, TOP_PAD + i * ROW_H));
++    return map;
++  }, []);
++
++  const height = TOP_PAD * 2 + Math.max(toolOrder.length, CAPABILITY_ORDER.length) * ROW_H;
++
++  const [activeEdge, setActiveEdge] = useState<CapabilityEdge | null>(null);
++
++  return (
++    <div className="bok-graph">
++      {/* No `role="img"` here -- this SVG has real interactive descendants
++          (focusable tool nodes and edges), and `role="img"` would tell
++          assistive tech to flatten them into a single opaque image, the
++          opposite of what "fully navigable from the keyboard" needs. */}
++      <svg
++        className="bok-graph-canvas"
++        viewBox={`0 0 ${VIEW_W} ${height}`}
++        aria-label="Capability graph: tools on the left, capabilities on the right"
++      >
++        {toolOrder.map((tool) => (
++          <ToolNode
++            key={tool}
++            tool={tool}
++            x={TOOL_X}
++            y={toolY.get(tool) ?? TOP_PAD}
++            flagged={flaggedTools.has(tool)}
++            onActivate={() => onActivateTool(tool)}
++          />
++        ))}
++
++        {CAPABILITY_ORDER.map((cap) => (
++          <g
++            key={cap}
++            transform={`translate(${CAP_X}, ${capY.get(cap) ?? TOP_PAD})`}
++            className="bok-graph-node-capability"
++          >
++            <circle r={12} />
++            <text x={20} dy="0.35em">
++              {CAPABILITY_LABEL[cap]}
++            </text>
++          </g>
++        ))}
++
++        {/* Rendered last so tool nodes above stay first in tab order
++            (tests/graph.spec.ts "the graph is fully navigable from the
++            keyboard" -- a single Tab press must land on the first node). */}
++        {edges.map((edge, i) => {
++          const y1 = toolY.get(edge.tool) ?? TOP_PAD;
++          const y2 = capY.get(edge.capability) ?? TOP_PAD;
++          return (
++            <line
++              key={`${edge.tool}-${edge.capability}-${i}`}
++              data-testid="edge"
++              data-derivation={edge.derivation}
++              className="bok-graph-edge"
++              x1={TOOL_X}
++              y1={y1}
++              x2={CAP_X}
++              y2={y2}
++              strokeDasharray={DASH_ARRAY[edge.derivation]}
++              tabIndex={0}
++              aria-label={`${edge.tool} has ${CAPABILITY_LABEL[edge.capability]}, ${DERIVATION_META[edge.derivation].label}-derived: ${edge.rationale}`}
++              onMouseEnter={() => setActiveEdge(edge)}
++              onMouseLeave={() => setActiveEdge((current) => (current === edge ? null : current))}
++              onFocus={() => setActiveEdge(edge)}
++              onBlur={() => setActiveEdge((current) => (current === edge ? null : current))}
++            >
++              <title>{`${DERIVATION_META[edge.derivation].label}: ${edge.rationale}`}</title>
++            </line>
++          );
++        })}
++      </svg>
++
++      {activeEdge && (
++        <EdgeTooltip
++          tool={activeEdge.tool}
++          capability={CAPABILITY_LABEL[activeEdge.capability]}
++          derivation={activeEdge.derivation}
++          rationale={activeEdge.rationale}
++        />
++      )}
++
++      <ul className="bok-graph-legend" aria-label="Edge derivation legend">
++        {DERIVATIONS.map((d) => (
++          <li key={d} className="bok-graph-legend-item">
++            <svg width="28" height="10" aria-hidden="true">
++              <line x1="0" y1="5" x2="28" y2="5" stroke="currentColor" strokeWidth={2} strokeDasharray={DASH_ARRAY[d]} />
++            </svg>
++            <span aria-hidden="true">{DERIVATION_META[d].glyph}</span> {DERIVATION_META[d].label}
++          </li>
++        ))}
++      </ul>
++
++      <table className="bok-graph-table" data-testid="capability-edges-table">
++        <caption>Capability edges</caption>
++        <thead>
++          <tr>
++            <th scope="col">Tool</th>
++            <th scope="col">Capability</th>
++            <th scope="col">Derivation</th>
++            <th scope="col">Rationale</th>
++          </tr>
++        </thead>
++        <tbody>
++          {edges.map((edge, i) => (
++            <tr key={`${edge.tool}-${edge.capability}-${i}`}>
++              <td>
++                {edge.tool}
++                {flaggedTools.has(edge.tool) ? " (policy-flagged)" : ""}
++              </td>
++              <td>{CAPABILITY_LABEL[edge.capability]}</td>
++              <td>
++                <span aria-hidden="true">{DERIVATION_META[edge.derivation].glyph}</span>{" "}
++                {DERIVATION_META[edge.derivation].label}
++              </td>
++              <td>{edge.rationale}</td>
++            </tr>
++          ))}
++        </tbody>
++      </table>
++    </div>
++  );
++}
++
++interface ToolNodeProps {
++  tool: string;
++  x: number;
++  y: number;
++  flagged: boolean;
++  onActivate: () => void;
++}
++
++function ToolNode({ tool, x, y, flagged, onActivate }: ToolNodeProps) {
++  if (flagged) return <FlaggedToolNode tool={tool} x={x} y={y} onActivate={onActivate} />;
++  return (
++    <g
++      transform={`translate(${x}, ${y})`}
++      className="bok-graph-node-tool"
++      data-testid="node"
++      role="button"
++      tabIndex={0}
++      aria-label={`Tool ${tool}`}
++      onClick={onActivate}
++      onKeyDown={(event) => {
++        if (!activates(event)) return;
++        event.preventDefault();
++        onActivate();
++      }}
++    >
++      <circle r={16} />
++      <text x={-24} dy="0.35em" textAnchor="end">
++        {tool}
++      </text>
++    </g>
++  );
++}
++
++type PulseState = "pending" | "playing" | "done" | "skipped";
++
++/**
++ * A policy-flagged tool pulses once, amber, on first render, then holds a
++ * static ring -- one orchestrated moment, not scattered effects or a loop
++ * (brief §7 screen 4).
++ *
++ * ponytail: pulse is a one-shot CSS animation keyed on first paint, not a
++ * JS timer. A timer would re-fire on re-render and turn the one
++ * orchestrated moment into a nervous tic, which is the exact failure 00
++ * §5.3 warns about.
++ */
++function FlaggedToolNode({ tool, x, y, onActivate }: Omit<ToolNodeProps, "flagged">) {
++  const [pulse, setPulse] = useState<PulseState>("pending");
++
++  // useLayoutEffect (not useEffect): resolves before the browser paints, so
++  // a reduced-motion viewer never sees `data-pulse` pass through "playing"
++  // at all -- it goes straight from the unpainted "pending" first render to
++  // "skipped".
++  useLayoutEffect(() => {
++    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
++    setPulse(reduced ? "skipped" : "playing");
++  }, []);
++
++  const ring = pulse === "done" || pulse === "skipped";
++
++  return (
++    <g
++      transform={`translate(${x}, ${y})`}
++      className="bok-graph-node-tool bok-graph-node-flagged"
++      data-testid="node-flagged"
++      data-pulse={pulse}
++      data-ring={ring}
++      role="button"
++      tabIndex={0}
++      aria-label={`Tool ${tool}, policy-flagged`}
++      onClick={onActivate}
++      onKeyDown={(event) => {
++        if (!activates(event)) return;
++        event.preventDefault();
++        onActivate();
++      }}
++    >
++      {pulse === "playing" && (
++        <circle r={16} className="bok-graph-pulse-ring" onAnimationEnd={() => setPulse("done")} />
++      )}
++      {ring && <circle r={22} className="bok-graph-static-ring" />}
++      <circle r={16} className="bok-graph-node-circle" />
++      <text x={-24} dy="0.35em" textAnchor="end">
++        {tool}
++      </text>
++    </g>
++  );
++}
+diff --git a/web/app/components/EdgeTooltip.tsx b/web/app/components/EdgeTooltip.tsx
+new file mode 100644
+index 0000000..a9a8c19
+--- /dev/null
++++ b/web/app/components/EdgeTooltip.tsx
+@@ -0,0 +1,28 @@
++/**
++ * Hovering or focusing a capability edge shows why the capability was
++ * inferred -- schema, description, or probe are not the same claim and must
++ * not look the same (brief §7 screen 4, B9). Rendered as a fixed panel
++ * beneath the graph rather than a floating tooltip positioned in the SVG's
++ * own coordinate space, which would need scale-aware math this small,
++ * static layout has no other reason to carry.
++ */
++import { DERIVATION_META, type Derivation } from "@/src/lib/_bok-ui";
++
++export interface EdgeTooltipProps {
++  tool: string;
++  capability: string;
++  derivation: Derivation;
++  rationale: string;
++}
++
++export function EdgeTooltip({ tool, capability, derivation, rationale }: EdgeTooltipProps) {
++  const meta = DERIVATION_META[derivation];
++  return (
++    <div className="bok-edge-tooltip" data-testid="edge-tooltip" role="status">
++      <strong>
++        <span aria-hidden="true">{meta.glyph}</span> {tool} → {capability} · {meta.label}-derived
++      </strong>
++      <p>{rationale}</p>
++    </div>
++  );
++}
+diff --git a/web/app/globals.css b/web/app/globals.css
+index c370c18..dda155c 100644
+--- a/web/app/globals.css
++++ b/web/app/globals.css
+@@ -618,20 +618,150 @@ body {
+ /* ConformanceStrip -- the findings screen's header differentiator (task 13). */
+ .bok-conformance-strip {
+   font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+   padding: var(--density-cell-y) var(--density-cell-x);
+   margin-bottom: var(--density-gap);
+   border: 1px solid var(--accent);
+   border-radius: var(--radius-cell);
+   background: color-mix(in oklch, var(--accent) 8%, transparent);
+ }
+ 
++/* CapabilityGraph -- Screen 4, the capability graph (task 14). */
++.bok-graph-page {
++  display: flex;
++  flex-direction: column;
++  gap: calc(var(--density-gap) * 2);
++}
++.bok-graph {
++  display: flex;
++  flex-direction: column;
++  gap: calc(var(--density-gap) * 2);
++  max-width: 640px;
++}
++.bok-graph-canvas {
++  width: 100%;
++  height: auto;
++  border: 1px solid var(--neutral-150);
++  border-radius: var(--radius-control);
++  background: var(--neutral-50);
++}
++.bok-graph-node-tool circle,
++.bok-graph-node-capability circle {
++  fill: var(--paper);
++  stroke: var(--neutral-400);
++  stroke-width: 1.5;
++}
++.bok-graph-node-tool {
++  cursor: pointer;
++}
++.bok-graph-node-tool text,
++.bok-graph-node-capability text {
++  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
++  font-size: 11px;
++  fill: var(--ink);
++}
++.bok-graph-node-tool:focus-visible {
++  outline: none;
++}
++.bok-graph-node-tool:focus-visible circle {
++  stroke: var(--accent);
++  stroke-width: 2.5;
++}
++.bok-graph-node-flagged .bok-graph-node-circle {
++  stroke: var(--accent);
++}
++.bok-graph-static-ring {
++  fill: none;
++  stroke: var(--accent);
++  stroke-width: 2;
++}
++/* The one-shot pulse: a real CSS animation, not a JS timer (task-14
++   REFACTOR step). transform-box: fill-box makes the circle scale from its
++   own center rather than the <svg>'s (0,0) origin. */
++.bok-graph-pulse-ring {
++  fill: none;
++  stroke: var(--accent);
++  stroke-width: 2;
++  transform-box: fill-box;
++  transform-origin: center;
++  animation: bok-graph-pulse 900ms ease-out 1;
++}
++@keyframes bok-graph-pulse {
++  0% {
++    transform: scale(1);
++    opacity: 0.9;
++  }
++  100% {
++    transform: scale(2.4);
++    opacity: 0;
++  }
++}
++.bok-graph-edge {
++  stroke: var(--neutral-400);
++  stroke-width: 1.5;
++}
++.bok-graph-edge:hover,
++.bok-graph-edge:focus-visible {
++  stroke: var(--ink);
++  stroke-width: 2;
++  outline: none;
++}
++
++.bok-edge-tooltip {
++  border: 1px solid var(--accent);
++  border-radius: var(--radius-cell);
++  padding: var(--density-cell-y) var(--density-cell-x);
++  background: color-mix(in oklch, var(--accent) 8%, transparent);
++}
++.bok-edge-tooltip p {
++  margin: 0.25em 0 0;
++  color: var(--neutral-700);
++}
++
++.bok-graph-legend {
++  display: flex;
++  flex-wrap: wrap;
++  gap: var(--density-gap);
++  list-style: none;
++  margin: 0;
++  padding: 0;
++  font-size: 0.85em;
++  color: var(--neutral-700);
++}
++.bok-graph-legend-item {
++  display: inline-flex;
++  align-items: center;
++  gap: 0.4em;
++}
++
++/* Visually secondary to the canvas above it, but genuinely visible -- the
++   accessible text alternative for the same edge data, not a hidden one. */
++.bok-graph-table {
++  font-size: 0.85em;
++  color: var(--neutral-700);
++  border-collapse: collapse;
++  width: 100%;
++}
++.bok-graph-table caption {
++  text-align: left;
++  font-family: var(--font-newsreader), serif;
++  font-size: 1rem;
++  color: var(--neutral-600);
++  margin-bottom: var(--density-cell-y);
++}
++.bok-graph-table th,
++.bok-graph-table td {
++  text-align: left;
++  padding: var(--density-cell-y) var(--density-cell-x);
++  border-bottom: 1px solid var(--neutral-150);
++}
++
+ /* FindingRow -- reproduction command + evidence, shown on row expansion. */
+ .bok-finding-expanded {
+   display: flex;
+   flex-direction: column;
+   gap: var(--density-gap);
+   padding: var(--density-cell-y) var(--density-cell-x);
+ }
+ .bok-finding-reproduction {
+   display: flex;
+   align-items: flex-start;
+diff --git a/web/app/scans/[id]/graph/fixtures.ts b/web/app/scans/[id]/graph/fixtures.ts
+new file mode 100644
+index 0000000..00ab68c
+--- /dev/null
++++ b/web/app/scans/[id]/graph/fixtures.ts
+@@ -0,0 +1,96 @@
++/**
++ * Canned capability-edge data for `?fixture=deputy|mixed-derivation|no-
++ * tools` (task-10's `?fixture=` precedent, carried through tasks 11-13). No
++ * live backend is reachable from this project's Playwright runs, so this is
++ * what drives every RED test in `tests/graph.spec.ts`.
++ *
++ * `CapabilityEdge` shape matches the real wire format 1:1
++ * (`agent_perimeter/model/edge.py`, task-14 pre-flight ruling 1). Fixture
++ * mode marks flagged tools directly (`flaggedTools`) rather than simulating
++ * the real findings cross-reference -- ruling 1 only binds the production
++ * (`graph/page.tsx`'s non-fixture branch) data-loading path.
++ */
++import type { CapabilityEdge } from "@/src/lib/api";
++
++export interface GraphFixture {
++  edges: CapabilityEdge[];
++  flaggedTools: string[];
++}
++
++const NOW = "2026-09-04T10:00:00Z";
++
++function claim(
++  value: unknown,
++  method: CapabilityEdge["claim"]["method"],
++  derivation: CapabilityEdge["claim"]["derivation"],
++  confidence: number | null,
++): CapabilityEdge["claim"] {
++  return { value, method, derivation, confidence, observed_at: NOW, parents: [], caveat: null };
++}
++
++// `list_files` is ordered first so the first Tab press
++// (tests/graph.spec.ts "the graph is fully navigable from the keyboard")
++// lands on an unflagged, plain-testid `node` -- `sync_to_remote` is the
++// confused-deputy tool: fs_read (schema-confirmed) + net_out
++// (probe-confirmed) trips `policy.confused_deputy`
++// (`agent_perimeter/graph/policy.py`).
++const DEPUTY_EDGES: CapabilityEdge[] = [
++  {
++    tool: "list_files",
++    capability: "fs_read",
++    derivation: "schema",
++    rationale: "input schema accepts a directory path and returns file contents",
++    claim: claim("list_files", "deterministic", "schema", 0.9),
++  },
++  {
++    tool: "sync_to_remote",
++    capability: "fs_read",
++    derivation: "schema",
++    rationale: "input schema accepts a local file path before uploading it",
++    claim: claim("sync_to_remote", "deterministic", "schema", 0.9),
++  },
++  {
++    tool: "sync_to_remote",
++    capability: "net_out",
++    derivation: "probe",
++    rationale: "probe confirmed an outbound HTTPS POST to a caller-supplied URL",
++    claim: claim("sync_to_remote", "deterministic", "probe", 0.97),
++  },
++];
++
++const MIXED_DERIVATION_EDGES: CapabilityEdge[] = [
++  {
++    tool: "read_config",
++    capability: "fs_read",
++    derivation: "schema",
++    rationale: "input schema accepts a config file path",
++    claim: claim("read_config", "deterministic", "schema", 0.9),
++  },
++  {
++    tool: "notify_webhook",
++    capability: "net_out",
++    derivation: "description",
++    rationale: 'tool description says it "posts a summary to the configured webhook"',
++    claim: claim("notify_webhook", "model", "description", 0.65),
++  },
++  {
++    tool: "notify_webhook",
++    capability: "net_out",
++    derivation: "probe",
++    rationale: "probe confirmed an outbound HTTPS POST",
++    claim: claim("notify_webhook", "deterministic", "probe", 0.95),
++  },
++  {
++    tool: "backup_db",
++    capability: "db_read",
++    derivation: "artifact",
++    rationale: "a SQL client library is bundled in the server's dependency manifest",
++    claim: claim("backup_db", "deterministic", "artifact", 0.6),
++  },
++];
++
++export const FIXTURES: Record<string, GraphFixture> = {
++  deputy: { edges: DEPUTY_EDGES, flaggedTools: ["sync_to_remote"] },
++  "mixed-derivation": { edges: MIXED_DERIVATION_EDGES, flaggedTools: [] },
++  "no-tools": { edges: [], flaggedTools: [] },
++};
+diff --git a/web/app/scans/[id]/graph/page.tsx b/web/app/scans/[id]/graph/page.tsx
+new file mode 100644
+index 0000000..5c90916
+--- /dev/null
++++ b/web/app/scans/[id]/graph/page.tsx
+@@ -0,0 +1,146 @@
++"use client";
++
++/**
++ * Screen 4 -- the capability graph (brief §7, "the signature moment, the
++ * screen the deck leads with"; task-14 pre-flight ruling). A Client
++ * Component, same reason as Tasks 12/13: it owns the ProvenanceRail
++ * open/close state a static Server Component can't. `params`/`searchParams`
++ * are both Promises in Next 15, unwrapped with `use()` (ruling 7).
++ *
++ * `?fixture=deputy|mixed-derivation|no-tools` replays canned data
++ * (`./fixtures.ts`); no live backend is reachable from this project's
++ * Playwright runs (ruling 6). Absent a fixture, this calls the real
++ * `getGraph`/`getFindings` and cross-references policy-flagged tools from
++ * the findings list -- wired for production, untested by this task's RED
++ * suite by design.
++ */
++import { use, useEffect, useState } from "react";
++
++import { CapabilityGraph } from "@/app/components/CapabilityGraph";
++import { EmptyState, ProvenanceRail, Skeleton, type ProvenanceChainEntry } from "@/src/lib/_bok-ui";
++import { getFindings, getGraph, type CapabilityEdge, type FindingClaim } from "@/src/lib/api";
++import { FIXTURES } from "./fixtures";
++
++// Pre-flight ruling 1: "policy-flagged" is not a field on the wire edge --
++// it's cross-referenced from real findings whose check_id starts with
++// "policy." (policy.confused_deputy / policy.secret_egress,
++// `agent_perimeter/graph/policy.py`), the same check_id-prefix pattern
++// `ConformanceStrip` (task 13) already used for its gaps count. A policy
++// finding's `claim.value` is the flagged tool's own name
++// (`graph/policy.py::evaluate()`: `claim=Claim(value=tool, ...)`).
++const POLICY_CHECK_PREFIX = "policy.";
++
++function claimValueLabel(value: unknown): string {
++  if (value == null) return "—";
++  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
++  try {
++    return JSON.stringify(value);
++  } catch {
++    return String(value);
++  }
++}
++
++// Nearest-first: the capability claim itself, then any recorded parents --
++// the same flattening `findings/page.tsx`'s `toChain` uses (task-13
++// pattern), applied per capability edge rather than per finding.
++function flattenClaim(claim: FindingClaim, source: string): ProvenanceChainEntry[] {
++  return [
++    {
++      value: claimValueLabel(claim.value),
++      method: claim.method,
++      derivation: claim.derivation ?? undefined,
++      source,
++      confidence: claim.confidence ?? null,
++      observedAt: claim.observed_at,
++      caveat: claim.caveat ?? null,
++    },
++    ...(claim.parents ?? []).flatMap((parent) => flattenClaim(parent, source)),
++  ];
++}
++
++function chainForTool(edges: CapabilityEdge[], tool: string): ProvenanceChainEntry[] {
++  return edges.filter((edge) => edge.tool === tool).flatMap((edge) => flattenClaim(edge.claim, edge.rationale));
++}
++
++export default function GraphPage({
++  params,
++  searchParams,
++}: {
++  params: Promise<{ id: string }>;
++  searchParams: Promise<{ fixture?: string }>;
++}) {
++  const { id } = use(params);
++  const { fixture } = use(searchParams);
++
++  // Fixture data is a module-level constant, already resolved by the time
++  // this renders -- computed directly in the render body (not behind a
++  // `useEffect`) so a fixture run's first paint already carries the real
++  // graph, with no Skeleton-then-content flash. `tests/graph.spec.ts`'s
++  // keyboard test presses Tab exactly once, immediately after `goto`, with
++  // no wait for content -- an effect-deferred fixture load would still be
++  // showing the loading Skeleton (no focusable nodes) at that instant.
++  const fixtureData = fixture ? FIXTURES[fixture] : undefined;
++
++  const [liveEdges, setLiveEdges] = useState<CapabilityEdge[]>([]);
++  const [liveFlaggedTools, setLiveFlaggedTools] = useState<Set<string>>(new Set());
++  const [liveLoaded, setLiveLoaded] = useState(false);
++  const [railOpen, setRailOpen] = useState(false);
++  const [railChain, setRailChain] = useState<ProvenanceChainEntry[]>([]);
++
++  useEffect(() => {
++    if (fixture) return;
++    let cancelled = false;
++    setLiveLoaded(false);
++
++    Promise.all([getGraph(id), getFindings(id)]).then(([graphData, findingsData]) => {
++      if (cancelled) return;
++      setLiveEdges(graphData);
++      const flagged = new Set<string>();
++      for (const finding of findingsData) {
++        if (finding.check_id.startsWith(POLICY_CHECK_PREFIX) && typeof finding.claim.value === "string") {
++          flagged.add(finding.claim.value);
++        }
++      }
++      setLiveFlaggedTools(flagged);
++      setLiveLoaded(true);
++    });
++    return () => {
++      cancelled = true;
++    };
++  }, [id, fixture]);
++
++  // Gated on `fixture` (the param itself), not `fixtureData` -- an unknown
++  // fixture name must still render (as an empty graph), not hang on the
++  // Skeleton forever waiting for a `useEffect` that returns early.
++  const edges = fixture ? (fixtureData?.edges ?? []) : liveEdges;
++  const flaggedTools = fixture ? new Set(fixtureData?.flaggedTools ?? []) : liveFlaggedTools;
++  const loaded = fixture ? true : liveLoaded;
++
++  function handleActivateTool(tool: string) {
++    setRailChain(chainForTool(edges, tool));
++    setRailOpen(true);
++  }
++
++  if (!loaded) {
++    return (
++      <main className="bok-graph-page">
++        <Skeleton lines={6} />
++      </main>
++    );
++  }
++
++  return (
++    <main className="bok-graph-page">
++      <h1>Capability graph</h1>
++      {edges.length === 0 ? (
++        <EmptyState
++          title="No tools were enumerated"
++          description="The scan produced no capability edges to graph — see the findings screen for why."
++        />
++      ) : (
++        <CapabilityGraph edges={edges} flaggedTools={flaggedTools} onActivateTool={handleActivateTool} />
++      )}
++      <ProvenanceRail open={railOpen} chain={railChain} onClose={() => setRailOpen(false)} />
++    </main>
++  );
++}
+diff --git a/web/src/lib/_bok-ui.tsx b/web/src/lib/_bok-ui.tsx
+index b409a04..c3ff8f0 100644
+--- a/web/src/lib/_bok-ui.tsx
++++ b/web/src/lib/_bok-ui.tsx
+@@ -56,21 +56,26 @@ function cx(...parts: Array<string | false | null | undefined>): string {
+ }
+ 
+ const SEVERITY_META: Record<Severity, { glyph: string; label: string }> = {
+   critical: { glyph: "▰▰▰▰", label: "Critical" },
+   high: { glyph: "▰▰▰▱", label: "High" },
+   medium: { glyph: "▰▰▱▱", label: "Medium" },
+   low: { glyph: "▰▱▱▱", label: "Low" },
+   info: { glyph: "▱▱▱▱", label: "Info" },
+ };
+ 
+-const DERIVATION_META: Record<Derivation, { glyph: string; label: string }> = {
++/**
++ * Exported (task-14 pre-flight ruling 4) so the capability graph screen can
++ * reuse the same glyph/label vocabulary for its legend instead of inventing
++ * a second one -- derivation must never be colour-alone (00 §5.2).
++ */
++export const DERIVATION_META: Record<Derivation, { glyph: string; label: string }> = {
+   schema: { glyph: "▣", label: "Schema" },
+   name: { glyph: "#", label: "Name" },
+   description: { glyph: "✎", label: "Description" },
+   probe: { glyph: "◎", label: "Probe" },
+   artifact: { glyph: "▤", label: "Artifact" },
+ };
+ 
+ const PROVENANCE_STATE_META: Record<ProvenanceState, { glyph: string; label: string }> = {
+   verified: { glyph: "✓", label: "Verified" },
+   modelled: { glyph: "≈", label: "Modelled" },
+diff --git a/web/src/lib/api.ts b/web/src/lib/api.ts
+index d7b22ef..764cf8f 100644
+--- a/web/src/lib/api.ts
++++ b/web/src/lib/api.ts
+@@ -1,19 +1,20 @@
+ /**
+  * Thin typed client for the Task 9 API (`agent_perimeter/api/`).
+  *
+  * Types match the real FastAPI response shapes read directly from
+  * `agent_perimeter/api/{scans,census,schemas}.py`, not the plan's earlier
+- * sketch (task-10 pre-flight ruling 3). `findings`/`graph` stay loose
+- * (`unknown[]`) on purpose -- Task 11+ defines the narrower shape once a
+- * screen actually needs it; inventing one here would just be a second,
+- * possibly-drifting copy of the backend's domain models.
++ * sketch (task-10 pre-flight ruling 3). `findings` (task 13) and `graph`
++ * (task 14) are now typed against their real backend shapes; anything a
++ * later screen hasn't needed yet stays loose (`unknown[]`) rather than
++ * inventing a second, possibly-drifting copy of a backend domain model
++ * ahead of need.
+  *
+  * Base URL: same origin by default (`NEXT_PUBLIC_API_BASE_URL` overrides it
+  * for a split frontend/backend deployment). No retry/cache layer -- nothing
+  * in this task calls for one.
+  */
+ 
+ const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+ 
+ export type ScanMode = "passive" | "active";
+ 
+@@ -177,21 +178,46 @@ export interface Finding {
+   reproduction: string;
+   claim: FindingClaim;
+   confidence?: number | null;
+   location?: FindingLocation | null;
+ }
+ 
+ export function getFindings(id: string): Promise<Finding[]> {
+   return request(`/api/scans/${id}/findings`);
+ }
+ 
+-export function getGraph(id: string): Promise<unknown[]> {
++/**
++ * Wire shape of `agent_perimeter/model/edge.py::CapabilityEdge`, serialized
++ * as-is by `GET /api/scans/{id}/graph` (`jsonable_encoder`, no field
++ * renaming -- task-14 pre-flight ruling 1). There is no separate top-level
++ * `nodes` array: the frontend derives tool nodes and the 7 fixed capability
++ * nodes from this flat edge list itself.
++ */
++export type Capability =
++  | "fs_read"
++  | "fs_write"
++  | "net_out"
++  | "exec"
++  | "secret_read"
++  | "db_read"
++  | "db_write";
++
++export interface CapabilityEdge {
++  tool: string;
++  capability: Capability;
++  /** Always present on the edge itself, unlike the (optional) `claim.derivation`. */
++  derivation: ClaimDerivation;
++  claim: FindingClaim;
++  rationale: string;
++}
++
++export function getGraph(id: string): Promise<CapabilityEdge[]> {
+   return request(`/api/scans/${id}/graph`);
+ }
+ 
+ export function getSarifReport(id: string): Promise<Record<string, unknown>> {
+   return request(`/api/scans/${id}/report.sarif`);
+ }
+ 
+ export function getCensusRun(id: number): Promise<CensusRun> {
+   return request(`/api/census/runs/${id}`);
+ }
+diff --git a/web/tests/graph.spec.ts b/web/tests/graph.spec.ts
+new file mode 100644
+index 0000000..c345677
+--- /dev/null
++++ b/web/tests/graph.spec.ts
+@@ -0,0 +1,55 @@
++import { expect, test } from "@playwright/test";
++
++test("a policy-flagged node pulses once and then holds a ring", async ({ page }) => {
++  await page.goto("/scans/1/graph?fixture=deputy");
++  const node = page.getByTestId("node-flagged").first();
++  await expect(node).toHaveAttribute("data-pulse", "playing");
++  await expect(node).toHaveAttribute("data-pulse", "done", { timeout: 3_000 });
++  await expect(node).toHaveAttribute("data-ring", "true");
++});
++
++test("reduced motion skips the pulse and keeps the ring", async ({ browser }) => {
++  const page = await (await browser.newContext({ reducedMotion: "reduce" })).newPage();
++  await page.goto("/scans/1/graph?fixture=deputy");
++  const node = page.getByTestId("node-flagged").first();
++  await expect(node).toHaveAttribute("data-pulse", "skipped");
++  await expect(node).toHaveAttribute("data-ring", "true");
++});
++
++test("every edge exposes its derivation", async ({ page }) => {
++  await page.goto("/scans/1/graph?fixture=mixed-derivation");
++  for (const edge of await page.getByTestId("edge").all()) {
++    await expect(edge).toHaveAttribute("data-derivation", /schema|description|probe|artifact/);
++  }
++});
++
++test("a probe-derived edge is visually distinct from a description-derived one", async ({
++  page,
++}) => {
++  await page.goto("/scans/1/graph?fixture=mixed-derivation");
++  const probe = page.locator("[data-derivation='probe']").first();
++  const desc = page.locator("[data-derivation='description']").first();
++  expect(await probe.getAttribute("stroke-dasharray")).not.toBe(
++    await desc.getAttribute("stroke-dasharray"),
++  );
++});
++
++test("the graph is fully navigable from the keyboard", async ({ page }) => {
++  await page.goto("/scans/1/graph?fixture=deputy");
++  await page.keyboard.press("Tab");
++  await expect(page.getByTestId("node").first()).toBeFocused();
++  await page.keyboard.press("Enter");
++  await expect(page.getByRole("complementary", { name: /provenance/i })).toBeVisible();
++});
++
++test("a text alternative lists every node and edge", async ({ page }) => {
++  await page.goto("/scans/1/graph?fixture=deputy");
++  const table = page.getByRole("table", { name: /capability edges/i });
++  await expect(table).toBeVisible();
++  await expect(table.getByRole("row")).toHaveCount(await page.getByTestId("edge").count() + 1);
++});
++
++test("an empty graph explains itself", async ({ page }) => {
++  await page.goto("/scans/1/graph?fixture=no-tools");
++  await expect(page.getByTestId("empty-state")).toContainText(/no tools were enumerated/i);
++});

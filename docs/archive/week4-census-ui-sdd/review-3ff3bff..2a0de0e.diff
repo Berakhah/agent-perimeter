@@ -1,0 +1,757 @@
+# Review package: 3ff3bff..HEAD
+
+## Commits
+2a0de0e fix: close 4 Important review findings on the Task 10 web scaffold
+
+## Files changed
+ web/app/findings/ProvenanceDemo.tsx |  37 ++++++
+ web/app/findings/page.tsx           |   2 +
+ web/app/globals.css                 |  32 +++++
+ web/package-lock.json               |  28 +++++
+ web/package.json                    |   1 +
+ web/src/lib/_bok-ui.tsx             | 235 ++++++++++++++++++++++++------------
+ web/tests/provenance-rail.spec.ts   |  28 +++++
+ 7 files changed, 283 insertions(+), 80 deletions(-)
+
+## Diff
+diff --git a/web/app/findings/ProvenanceDemo.tsx b/web/app/findings/ProvenanceDemo.tsx
+new file mode 100644
+index 0000000..4513fbd
+--- /dev/null
++++ b/web/app/findings/ProvenanceDemo.tsx
+@@ -0,0 +1,37 @@
++"use client";
++
++/**
++ * Fixture-only demo of `Claim` opening `ProvenanceRail` -- exercises the
++ * activation/focus-management contract end to end so it's covered by a real
++ * page, not just unit-level reasoning. Task 11's real findings screen wires
++ * a `Claim` like this one around each finding's confidence value; this is
++ * the minimal wiring needed to prove the contract works, not that screen.
++ */
++import { useState } from "react";
++
++import { Claim, ProvenanceRail, type ProvenanceChainEntry } from "@/src/lib/_bok-ui";
++
++const DEMO_CHAIN: ProvenanceChainEntry[] = [
++  {
++    value: "0.95",
++    method: "deterministic",
++    derivation: "probe",
++    source: "agent_perimeter/checks/active/path_traversal.py:42",
++    confidence: 0.95,
++    calibrated: false,
++    observedAt: "2026-09-04T10:00:00Z",
++  },
++];
++
++export function ProvenanceDemo() {
++  const [open, setOpen] = useState(false);
++  return (
++    <section>
++      <h2>Provenance</h2>
++      <p>
++        Confidence: <Claim value="0.95" derivation="probe" numeric onActivate={() => setOpen(true)} />
++      </p>
++      <ProvenanceRail open={open} chain={DEMO_CHAIN} onClose={() => setOpen(false)} />
++    </section>
++  );
++}
+diff --git a/web/app/findings/page.tsx b/web/app/findings/page.tsx
+index 6979f1c..6f415da 100644
+--- a/web/app/findings/page.tsx
++++ b/web/app/findings/page.tsx
+@@ -1,11 +1,12 @@
+ import { EmptyState, type FindingsTableRow, FindingsTable } from "@/src/lib/_bok-ui";
++import { ProvenanceDemo } from "./ProvenanceDemo";
+ 
+ /**
+  * Fixture-only route for exercising `FindingsTable` end to end (severity
+  * glyphs, tabular numeric cells, provenance column) -- this is what
+  * `tests/tokens.spec.ts` drives via `?fixture=mixed`. Task 11 replaces this
+  * with the real screen wired to `src/lib/api.ts::getFindings`; this page
+  * intentionally does not call the API yet.
+  */
+ const FIXTURES: Record<string, FindingsTableRow[]> = {
+   mixed: [
+@@ -68,13 +69,14 @@ export default async function FindingsPage({
+           description="Pass ?fixture=mixed to preview the table, or run a scan from the setup screen."
+         />
+       </main>
+     );
+   }
+ 
+   return (
+     <main>
+       <h1>Findings</h1>
+       <FindingsTable rows={rows} caption="Fixture data for design-token verification" />
++      <ProvenanceDemo />
+     </main>
+   );
+ }
+diff --git a/web/app/globals.css b/web/app/globals.css
+index c627f6f..2200406 100644
+--- a/web/app/globals.css
++++ b/web/app/globals.css
+@@ -139,20 +139,43 @@ html[data-density="compact"] {
+   --density-cell-y: 6px;
+   --density-cell-x: 10px;
+   --density-gap: 8px;
+ }
+ html[data-density="dense"] {
+   --density-cell-y: 3px;
+   --density-cell-x: 6px;
+   --density-gap: 4px;
+ }
+ 
++/*
++ * Per-instance density override for FindingsTable's `density` prop --
++ * CSS custom properties inherit down the actual DOM tree, so setting these
++ * on the wrapper (a descendant of <html>) overrides the page-level
++ * `data-density` for just this table, without touching anything else on
++ * the page.
++ */
++.bok-table-wrap.bok-density-comfortable {
++  --density-cell-y: 10px;
++  --density-cell-x: 14px;
++  --density-gap: 12px;
++}
++.bok-table-wrap.bok-density-compact {
++  --density-cell-y: 6px;
++  --density-cell-x: 10px;
++  --density-gap: 8px;
++}
++.bok-table-wrap.bok-density-dense {
++  --density-cell-y: 3px;
++  --density-cell-x: 6px;
++  --density-gap: 4px;
++}
++
+ body {
+   background: var(--paper);
+   color: var(--ink);
+   font-family: var(--font-geist-sans), system-ui, sans-serif;
+ }
+ 
+ .sr-only {
+   position: absolute;
+   width: 1px;
+   height: 1px;
+@@ -299,33 +322,42 @@ body {
+ .bok-severity-info {
+   color: var(--severity-info);
+ }
+ 
+ /* FindingsTable. */
+ .bok-table-toolbar {
+   display: flex;
+   gap: var(--density-gap);
+   margin-bottom: var(--density-gap);
+ }
++.bok-table-scroll {
++  overflow-y: auto;
++}
+ .bok-table {
+   border-collapse: collapse;
+   width: 100%;
+   table-layout: fixed;
+ }
+ .bok-table th,
+ .bok-table td {
+   text-align: left;
+   padding: var(--density-cell-y) var(--density-cell-x);
+   border-bottom: 1px solid var(--neutral-150);
+   border-radius: var(--radius-rule);
+   position: relative;
+ }
++.bok-table thead th {
++  position: sticky;
++  top: 0;
++  background: var(--paper);
++  z-index: 1;
++}
+ .bok-table th:focus-visible,
+ .bok-table td:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: -2px;
+ }
+ .bok-col-resizer {
+   position: absolute;
+   top: 0;
+   right: 0;
+   bottom: 0;
+diff --git a/web/package-lock.json b/web/package-lock.json
+index 59ecc4a..b33d7aa 100644
+--- a/web/package-lock.json
++++ b/web/package-lock.json
+@@ -1,20 +1,21 @@
+ {
+   "name": "web",
+   "version": "0.1.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "web",
+       "version": "0.1.0",
+       "dependencies": {
++        "@tanstack/react-virtual": "^3.14.10",
+         "next": "15.5.25",
+         "react": "19.1.0",
+         "react-dom": "19.1.0"
+       },
+       "devDependencies": {
+         "@axe-core/playwright": "^4.13.0",
+         "@eslint/eslintrc": "^3",
+         "@playwright/test": "^1.62.1",
+         "@tailwindcss/postcss": "^4",
+         "@types/node": "^20",
+@@ -1435,20 +1436,47 @@
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@alloc/quick-lru": "^5.2.0",
+         "@tailwindcss/node": "4.3.3",
+         "@tailwindcss/oxide": "4.3.3",
+         "postcss": "^8.5.16",
+         "tailwindcss": "4.3.3"
+       }
+     },
++    "node_modules/@tanstack/react-virtual": {
++      "version": "3.14.10",
++      "resolved": "https://registry.npmjs.org/@tanstack/react-virtual/-/react-virtual-3.14.10.tgz",
++      "integrity": "sha512-SRyoUbdFMRHuYXMijV5H4ZarQWpXkj3iANq8OFre+pybeVap8ZJjZ3Nz9bVjx4d8PfobVUQUdKyyyHYk3E+djw==",
++      "license": "MIT",
++      "dependencies": {
++        "@tanstack/virtual-core": "3.17.8"
++      },
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/tannerlinsley"
++      },
++      "peerDependencies": {
++        "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0",
++        "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0"
++      }
++    },
++    "node_modules/@tanstack/virtual-core": {
++      "version": "3.17.8",
++      "resolved": "https://registry.npmjs.org/@tanstack/virtual-core/-/virtual-core-3.17.8.tgz",
++      "integrity": "sha512-BfEvehNpOT75r5Ksc5xW6NZuXujTfb7nlSEyVu4XHG3gdxNg1KqXruWbDewXOUaUYIo4oRbSfkjIajz4MAT8tA==",
++      "license": "MIT",
++      "funding": {
++        "type": "github",
++        "url": "https://github.com/sponsors/tannerlinsley"
++      }
++    },
+     "node_modules/@tybys/wasm-util": {
+       "version": "0.10.3",
+       "resolved": "https://registry.npmjs.org/@tybys/wasm-util/-/wasm-util-0.10.3.tgz",
+       "integrity": "sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==",
+       "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+         "tslib": "^2.4.0"
+       }
+diff --git a/web/package.json b/web/package.json
+index 3d62bf2..b3e42d7 100644
+--- a/web/package.json
++++ b/web/package.json
+@@ -2,20 +2,21 @@
+   "name": "web",
+   "version": "0.1.0",
+   "private": true,
+   "scripts": {
+     "dev": "next dev",
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint"
+   },
+   "dependencies": {
++    "@tanstack/react-virtual": "^3.14.10",
+     "next": "15.5.25",
+     "react": "19.1.0",
+     "react-dom": "19.1.0"
+   },
+   "devDependencies": {
+     "@axe-core/playwright": "^4.13.0",
+     "@eslint/eslintrc": "^3",
+     "@playwright/test": "^1.62.1",
+     "@tailwindcss/postcss": "^4",
+     "@types/node": "^20",
+diff --git a/web/src/lib/_bok-ui.tsx b/web/src/lib/_bok-ui.tsx
+index 22e4f5b..ce8df75 100644
+--- a/web/src/lib/_bok-ui.tsx
++++ b/web/src/lib/_bok-ui.tsx
+@@ -6,44 +6,50 @@
+  * `bok-ui` is not published yet. This mirrors what `agent_perimeter/_contracts.py`
+  * does for `bok-core`: real, minimal, correct implementations of the twelve
+  * components' behavioural contract, not a full design system. When the
+  * package ships, every `@/lib/_bok-ui` import becomes `@backoffice-kit/bok-ui`
+  * and this file is deleted. `bok-ui` requirements raised while building this
+  * stand-in (derivation-aware `Claim`, glyph-plus-label provenance columns,
+  * uncalibrated-by-default `ConfidenceMeter`) are recorded in the task-10
+  * brief and carried to the `backoffice-kit` session verbatim.
+  *
+  * Deliberately out of scope for this stand-in, each with a ponytail note at
+- * its call site below: `FindingsTable` row virtualisation (small fixture/demo
+- * row counts today), a full `cmdk` command palette, and Recharts-backed
++ * its call site below: a full `cmdk` command palette, and Recharts-backed
+  * charting for `QuotaStrip`/`RunTimeline` (both render as plain marked-up
+  * lists/strips here).
+  */
+ 
++import { useVirtualizer } from "@tanstack/react-virtual";
+ import {
+   type KeyboardEvent,
+   type MouseEvent as ReactMouseEvent,
+   type ReactNode,
+   useCallback,
+   useEffect,
+   useRef,
+   useState,
+ } from "react";
+ 
+ // ---------------------------------------------------------------------------
+ // Shared vocabulary
+ // ---------------------------------------------------------------------------
+ 
+ export type Severity = "critical" | "high" | "medium" | "low" | "info";
+ 
+-/** bok-core requirement 1 (see `agent_perimeter/_contracts.py::Derivation`). */
+-export type Derivation = "schema" | "description" | "probe" | "artifact";
++/**
++ * bok-core requirement 1 (see `agent_perimeter/_contracts.py::Derivation`,
++ * all 5 members: SCHEMA/NAME/DESCRIPTION/PROBE/ARTIFACT). `name` is a
++ * regex/pattern match over a tool or parameter identifier -- actively used
++ * across `graph/policy.py`, `graph/build.py`, and 5 check modules, not a
++ * deprecated or unused value.
++ */
++export type Derivation = "schema" | "name" | "description" | "probe" | "artifact";
+ 
+ export type Method = "deterministic" | "model" | "human" | "derived";
+ 
+ export type ProvenanceState = "verified" | "modelled" | "unverified";
+ 
+ export type Density = "comfortable" | "compact" | "dense";
+ 
+ function cx(...parts: Array<string | false | null | undefined>): string {
+   return parts.filter(Boolean).join(" ");
+ }
+@@ -51,20 +57,21 @@ function cx(...parts: Array<string | false | null | undefined>): string {
+ const SEVERITY_META: Record<Severity, { glyph: string; label: string }> = {
+   critical: { glyph: "▰▰▰▰", label: "Critical" },
+   high: { glyph: "▰▰▰▱", label: "High" },
+   medium: { glyph: "▰▰▱▱", label: "Medium" },
+   low: { glyph: "▰▱▱▱", label: "Low" },
+   info: { glyph: "▱▱▱▱", label: "Info" },
+ };
+ 
+ const DERIVATION_META: Record<Derivation, { glyph: string; label: string }> = {
+   schema: { glyph: "▣", label: "Schema" },
++  name: { glyph: "#", label: "Name" },
+   description: { glyph: "✎", label: "Description" },
+   probe: { glyph: "◎", label: "Probe" },
+   artifact: { glyph: "▤", label: "Artifact" },
+ };
+ 
+ const PROVENANCE_STATE_META: Record<ProvenanceState, { glyph: string; label: string }> = {
+   verified: { glyph: "✓", label: "Verified" },
+   modelled: { glyph: "≈", label: "Modelled" },
+   unverified: { glyph: "?", label: "Unverified" },
+ };
+@@ -80,21 +87,21 @@ function inferProvenanceState(method: Method): ProvenanceState {
+       return "unverified";
+   }
+ }
+ 
+ // ---------------------------------------------------------------------------
+ // Claim + ProvenanceRail (00 §5.3 -- the signature element)
+ // ---------------------------------------------------------------------------
+ 
+ export interface ClaimProps {
+   value: ReactNode;
+-  /** bok-core requirement 1: schema / description / probe / artifact, each rendered distinguishably. */
++  /** bok-core requirement 1: schema / name / description / probe / artifact, each rendered distinguishably. */
+   derivation: Derivation;
+   /** Applies `.bok-numeric` (tabular numerals) to the rendered value. */
+   numeric?: boolean;
+   /** Opens the ProvenanceRail for this claim. Omit to render a plain (non-interactive) claim. */
+   onActivate?: () => void;
+   className?: string;
+ }
+ 
+ /** A value that carries where it came from, underlined per 00 §5.3. */
+ export function Claim({ value, derivation, numeric, onActivate, className }: ClaimProps) {
+@@ -146,41 +153,69 @@ export interface ProvenanceChainEntry {
+   state?: ProvenanceState;
+ }
+ 
+ export interface ProvenanceRailProps {
+   open: boolean;
+   /** Top to bottom: the claim itself, then its parents, nearest first. */
+   chain: ProvenanceChainEntry[];
+   onClose: () => void;
+ }
+ 
+-/** The right-hand evidence panel (00 §5.3). 380px, slides in, disabled under `prefers-reduced-motion`. */
++/**
++ * The right-hand evidence panel (00 §5.3). 380px, slides in, disabled under
++ * `prefers-reduced-motion`.
++ *
++ * Accessibility: a closed rail is still in the DOM (for the slide-out
++ * transition) but must have zero reachable/tabbable descendants -- `inert`
++ * (a real DOM property, not just a style) strips focusability and click
++ * handling from the whole subtree in one call, which is what makes
++ * `aria-hidden` on the closed rail true instead of a lie axe-core would
++ * catch (an aria-hidden container with a focusable descendant). Focus moves
++ * to the close button on open and back to whatever triggered the rail on
++ * close.
++ */
+ export function ProvenanceRail({ open, chain, onClose }: ProvenanceRailProps) {
++  const railRef = useRef<HTMLElement>(null);
++  const closeButtonRef = useRef<HTMLButtonElement>(null);
++  const triggerRef = useRef<HTMLElement | null>(null);
++
++  useEffect(() => {
++    if (railRef.current) railRef.current.inert = !open;
++    if (open) {
++      triggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
++      closeButtonRef.current?.focus();
++    } else {
++      triggerRef.current?.focus();
++      triggerRef.current = null;
++    }
++  }, [open]);
++
+   useEffect(() => {
+     if (!open) return;
+     const onKeyDown = (event: globalThis.KeyboardEvent) => {
+       if (event.key === "Escape") onClose();
+     };
+     window.addEventListener("keydown", onKeyDown);
+     return () => window.removeEventListener("keydown", onKeyDown);
+   }, [open, onClose]);
+ 
+   return (
+     <aside
++      ref={railRef}
+       className={cx("bok-rail", open && "bok-rail-open")}
+       data-testid="provenance-rail"
+       aria-hidden={!open}
+       aria-label="Claim provenance"
+     >
+       <div className="bok-rail-header">
+         <span>Provenance</span>
+-        <button type="button" onClick={onClose} aria-label="Close provenance rail">
++        <button type="button" ref={closeButtonRef} onClick={onClose} aria-label="Close provenance rail">
+           ×
+         </button>
+       </div>
+       <ol className="bok-rail-list">
+         {chain.map((entry, index) => {
+           const state = entry.state ?? inferProvenanceState(entry.method);
+           const stateMeta = PROVENANCE_STATE_META[state];
+           return (
+             <li
+               key={index}
+@@ -288,32 +323,37 @@ function toCsv(rows: FindingsTableRow[]): string {
+ function download(filename: string, contents: string, mime: string) {
+   const blob = new Blob([contents], { type: mime });
+   const url = URL.createObjectURL(blob);
+   const a = document.createElement("a");
+   a.href = url;
+   a.download = filename;
+   a.click();
+   URL.revokeObjectURL(url);
+ }
+ 
+-/**
+- * Virtualised, column-resizable, keyboard-navigable, CSV/JSON export (00 §5.4).
+- *
+- * ponytail: no row virtualisation -- every stand-in fixture/demo dataset is
+- * small enough to render in full. Swap in `@tanstack/react-virtual` (already
+- * MIT-licensed, no new heavy dep) if a real scan's row count ever makes
+- * that matter.
+- */
++// Fixed per-density row-height estimate for the virtualizer -- every cell in
++// this stand-in's rows is single-line, so a per-density constant is exact,
++// not just an estimate. ponytail: if a future column ever wraps to multiple
++// lines, switch to @tanstack/react-virtual's `measureElement` dynamic-sizing
++// API instead of hardcoding these.
++const ROW_HEIGHT_BY_DENSITY: Record<Density, number> = {
++  comfortable: 44,
++  compact: 36,
++  dense: 28,
++};
++
++/** Column-resizable, keyboard-navigable, CSV/JSON export, virtualised (00 §5.4). */
+ export function FindingsTable({ rows, density = "compact", caption }: FindingsTableProps) {
+   const [widths, setWidths] = useState<number[]>(() => FINDINGS_COLUMNS.map(() => 160));
+   const dragState = useRef<{ col: number; startX: number; startWidth: number } | null>(null);
+   const cellRefs = useRef<Array<Array<HTMLTableCellElement | null>>>([]);
++  const scrollRef = useRef<HTMLDivElement>(null);
+ 
+   const onResizerDown = (col: number) => (event: ReactMouseEvent) => {
+     dragState.current = { col, startX: event.clientX, startWidth: widths[col] ?? 160 };
+     event.preventDefault();
+   };
+ 
+   useEffect(() => {
+     const onMove = (event: globalThis.MouseEvent) => {
+       const drag = dragState.current;
+       if (!drag) return;
+@@ -324,20 +364,26 @@ export function FindingsTable({ rows, density = "compact", caption }: FindingsTa
+       dragState.current = null;
+     };
+     window.addEventListener("mousemove", onMove);
+     window.addEventListener("mouseup", onUp);
+     return () => {
+       window.removeEventListener("mousemove", onMove);
+       window.removeEventListener("mouseup", onUp);
+     };
+   }, []);
+ 
++  // ponytail: keyboard nav focuses currently-*mounted* rows only -- a row
++  // scrolled out of the virtualizer's rendered window has no ref to focus.
++  // Fine at fixture/demo scale (the whole table fits without scrolling);
++  // `rowVirtualizer.scrollToIndex()` before focusing is the upgrade path if
++  // real scan-sized tables make blind arrow-key nav across thousands of
++  // rows a real user complaint.
+   const focusCell = useCallback((row: number, col: number) => {
+     const clampedRow = Math.max(0, Math.min(rows.length - 1, row));
+     const clampedCol = Math.max(0, Math.min(FINDINGS_COLUMNS.length - 1, col));
+     cellRefs.current[clampedRow]?.[clampedCol]?.focus();
+   }, [rows.length]);
+ 
+   const setCellRef = (rowIndex: number, colIndex: number) => (el: HTMLTableCellElement | null) => {
+     const row = (cellRefs.current[rowIndex] ??= []);
+     row[colIndex] = el;
+   };
+@@ -356,97 +402,126 @@ export function FindingsTable({ rows, density = "compact", caption }: FindingsTa
+         event.preventDefault();
+         focusCell(row + 1, col);
+         break;
+       case "ArrowUp":
+         event.preventDefault();
+         focusCell(row - 1, col);
+         break;
+     }
+   };
+ 
++  const rowHeight = ROW_HEIGHT_BY_DENSITY[density];
++  const rowVirtualizer = useVirtualizer({
++    count: rows.length,
++    getScrollElement: () => scrollRef.current,
++    estimateSize: () => rowHeight,
++    overscan: 8,
++  });
++  const virtualRows = rowVirtualizer.getVirtualItems();
++  const paddingTop = virtualRows.length > 0 ? (virtualRows[0]?.start ?? 0) : 0;
++  const paddingBottom =
++    virtualRows.length > 0 ? rowVirtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1]?.end ?? 0) : 0;
++
+   return (
+     <div className={cx("bok-table-wrap", `bok-density-${density}`)}>
+       <div className="bok-table-toolbar bok-no-print">
+         <button type="button" onClick={() => download("findings.csv", toCsv(rows), "text/csv")}>
+           Export CSV
+         </button>
+         <button type="button" onClick={() => download("findings.json", JSON.stringify(rows, null, 2), "application/json")}>
+           Export JSON
+         </button>
+       </div>
+-      <table className="bok-table" data-testid="findings-table">
+-        {caption && <caption>{caption}</caption>}
+-        <colgroup>
+-          {FINDINGS_COLUMNS.map((_, i) => (
+-            <col key={i} style={{ width: widths[i] }} />
+-          ))}
+-        </colgroup>
+-        <thead>
+-          <tr>
+-            {FINDINGS_COLUMNS.map((col, i) => (
+-              <th key={col} scope="col">
+-                {col}
+-                <span
+-                  className="bok-col-resizer bok-no-print"
+-                  onMouseDown={onResizerDown(i)}
+-                  role="separator"
+-                  aria-orientation="vertical"
+-                  aria-label={`Resize ${col} column`}
+-                />
+-              </th>
++      <div className="bok-table-scroll" ref={scrollRef} style={{ maxHeight: rowHeight * 12 }}>
++        <table className="bok-table" data-testid="findings-table">
++          {caption && <caption>{caption}</caption>}
++          <colgroup>
++            {FINDINGS_COLUMNS.map((_, i) => (
++              <col key={i} style={{ width: widths[i] }} />
+             ))}
+-          </tr>
+-        </thead>
+-        <tbody>
+-          {rows.map((row, rowIndex) => (
+-            <tr key={row.id} data-testid="finding-row">
+-              <td
+-                ref={setCellRef(rowIndex, 0)}
+-                tabIndex={rowIndex === 0 ? 0 : -1}
+-                onKeyDown={onCellKeyDown(rowIndex, 0)}
+-              >
+-                <SeverityBadge severity={row.severity} />
+-              </td>
+-              <td ref={setCellRef(rowIndex, 1)} tabIndex={-1} onKeyDown={onCellKeyDown(rowIndex, 1)}>
+-                {row.title}
+-              </td>
+-              <td
+-                ref={setCellRef(rowIndex, 2)}
+-                tabIndex={-1}
+-                onKeyDown={onCellKeyDown(rowIndex, 2)}
+-                className="bok-numeric"
+-              >
+-                {row.checkId}
+-              </td>
+-              <td
+-                ref={setCellRef(rowIndex, 3)}
+-                tabIndex={-1}
+-                onKeyDown={onCellKeyDown(rowIndex, 3)}
+-                data-testid="provenance-cell"
+-                data-glyph={DERIVATION_META[row.derivation].glyph}
+-              >
+-                <span aria-hidden="true">{DERIVATION_META[row.derivation].glyph}</span>{" "}
+-                {DERIVATION_META[row.derivation].label}
+-              </td>
+-              <td
+-                ref={setCellRef(rowIndex, 4)}
+-                tabIndex={-1}
+-                onKeyDown={onCellKeyDown(rowIndex, 4)}
+-                data-testid="numeric-cell"
+-                className="bok-numeric"
+-              >
+-                {row.confidence != null ? row.confidence.toFixed(2) : "—"}
+-              </td>
++          </colgroup>
++          <thead>
++            <tr>
++              {FINDINGS_COLUMNS.map((col, i) => (
++                <th key={col} scope="col">
++                  {col}
++                  <span
++                    className="bok-col-resizer bok-no-print"
++                    onMouseDown={onResizerDown(i)}
++                    role="separator"
++                    aria-orientation="vertical"
++                    aria-label={`Resize ${col} column`}
++                  />
++                </th>
++              ))}
+             </tr>
+-          ))}
+-        </tbody>
+-      </table>
++          </thead>
++          <tbody>
++            {paddingTop > 0 && (
++              <tr aria-hidden="true">
++                <td colSpan={FINDINGS_COLUMNS.length} style={{ height: paddingTop, padding: 0, border: 0 }} />
++              </tr>
++            )}
++            {virtualRows.map((virtualRow) => {
++              const row = rows[virtualRow.index];
++              if (!row) return null;
++              const rowIndex = virtualRow.index;
++              return (
++                <tr key={row.id} data-testid="finding-row" style={{ height: rowHeight }}>
++                  <td
++                    ref={setCellRef(rowIndex, 0)}
++                    tabIndex={rowIndex === 0 ? 0 : -1}
++                    onKeyDown={onCellKeyDown(rowIndex, 0)}
++                  >
++                    <SeverityBadge severity={row.severity} />
++                  </td>
++                  <td ref={setCellRef(rowIndex, 1)} tabIndex={-1} onKeyDown={onCellKeyDown(rowIndex, 1)}>
++                    {row.title}
++                  </td>
++                  <td
++                    ref={setCellRef(rowIndex, 2)}
++                    tabIndex={-1}
++                    onKeyDown={onCellKeyDown(rowIndex, 2)}
++                    className="bok-numeric"
++                  >
++                    {row.checkId}
++                  </td>
++                  <td
++                    ref={setCellRef(rowIndex, 3)}
++                    tabIndex={-1}
++                    onKeyDown={onCellKeyDown(rowIndex, 3)}
++                    data-testid="provenance-cell"
++                    data-glyph={DERIVATION_META[row.derivation].glyph}
++                  >
++                    <span aria-hidden="true">{DERIVATION_META[row.derivation].glyph}</span>{" "}
++                    {DERIVATION_META[row.derivation].label}
++                  </td>
++                  <td
++                    ref={setCellRef(rowIndex, 4)}
++                    tabIndex={-1}
++                    onKeyDown={onCellKeyDown(rowIndex, 4)}
++                    data-testid="numeric-cell"
++                    className="bok-numeric"
++                  >
++                    {row.confidence != null ? row.confidence.toFixed(2) : "—"}
++                  </td>
++                </tr>
++              );
++            })}
++            {paddingBottom > 0 && (
++              <tr aria-hidden="true">
++                <td colSpan={FINDINGS_COLUMNS.length} style={{ height: paddingBottom, padding: 0, border: 0 }} />
++              </tr>
++            )}
++          </tbody>
++        </table>
++      </div>
+     </div>
+   );
+ }
+ 
+ // ---------------------------------------------------------------------------
+ // EvidencePane
+ // ---------------------------------------------------------------------------
+ 
+ export interface EvidenceHighlight {
+   start: number;
+diff --git a/web/tests/provenance-rail.spec.ts b/web/tests/provenance-rail.spec.ts
+new file mode 100644
+index 0000000..50106c0
+--- /dev/null
++++ b/web/tests/provenance-rail.spec.ts
+@@ -0,0 +1,28 @@
++import { expect, test } from "@playwright/test";
++
++// Covers task-10 review Finding 3: a closed ProvenanceRail must have zero
++// reachable/tabbable descendants (the `inert` DOM property, not just the
++// slide-out transform), and focus must move into the rail on open and back
++// to the trigger on close.
++test("a closed provenance rail has no reachable descendants, and focus moves correctly", async ({ page }) => {
++  await page.goto("/findings?fixture=mixed");
++
++  const rail = page.getByTestId("provenance-rail");
++  const trigger = page.getByTestId("claim");
++  const closeButton = page.getByRole("button", { name: "Close provenance rail" });
++
++  // Closed: inert, and its close button is not part of the tab order.
++  await expect(rail).toHaveJSProperty("inert", true);
++
++  await trigger.click();
++
++  // Open: no longer inert, focus moved to the close button inside it.
++  await expect(rail).toHaveJSProperty("inert", false);
++  await expect(closeButton).toBeFocused();
++
++  await page.keyboard.press("Escape");
++
++  // Closed again: inert restored, focus returned to the element that opened it.
++  await expect(rail).toHaveJSProperty("inert", true);
++  await expect(trigger).toBeFocused();
++});

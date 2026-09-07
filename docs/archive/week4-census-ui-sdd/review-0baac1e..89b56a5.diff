@@ -1,0 +1,1013 @@
+# Review package: 0baac1e05f73f04bedb5c4f884039a671d718324..HEAD
+
+## Commits
+89b56a5 feat: two-stratum census report with defined terms and raw data export
+
+## Files changed
+ agent_perimeter/report/census_report.py         | 296 ++++++++++++++++++++++++
+ agent_perimeter/report/templates/census.html.j2 | 116 ++++++++++
+ analysis/census_analysis.py                     | 164 +++++++++++++
+ docs/census/CHANGELOG.md                        |  41 ++++
+ tests/report/factories.py                       | 180 ++++++++++++++
+ tests/report/test_census_report.py              | 165 +++++++++++++
+ 6 files changed, 962 insertions(+)
+
+## Diff
+diff --git a/agent_perimeter/report/census_report.py b/agent_perimeter/report/census_report.py
+new file mode 100644
+index 0000000..51e7b4f
+--- /dev/null
++++ b/agent_perimeter/report/census_report.py
+@@ -0,0 +1,296 @@
++"""The published census report. Aggregate only. Defines every term it uses.
++
++Two populations, two methods, reported separately and never combined into one
++percentage:
++
++- **Artifact stratum** - npm/PyPI packages downloaded and feature-detected
++  from source (`census/detect.detect_features`, `Derivation.ARTIFACT`).
++  `CensusRecord.feature_set_json["derivation"] == "artifact"`.
++- **Live-discover stratum** - a random sample of remote-only servers that
++  each answered (or didn't) one live `server/discover` call
++  (`census/tier3.py`, `Derivation.PROBE`).
++  `CensusRecord.feature_set_json["derivation"] == "probe"`.
++
++Roughly 70% of registry entries have no fetchable package at all (only a
++`remotes` URL - see docs/methodology.md), so the artifact stratum alone
++cannot answer "what fraction of the public MCP ecosystem supports X". Both
++strata get their own section, their own n, their own method sentence, and
++their own headline claim. Nothing here sums them.
++
++`CensusRecord` instances never reach the template context: `render_census`
++reduces every record to an `Aggregate` (or a plain count) before Jinja ever
++sees it. That is what makes "no third-party name or URL in the report" hold
++structurally rather than by review.
++"""
++
++from __future__ import annotations
++
++import csv
++import hashlib
++import json
++from collections.abc import Sequence
++from dataclasses import asdict, dataclass
++from pathlib import Path
++
++from jinja2 import Environment, FileSystemLoader, select_autoescape
++
++from agent_perimeter.census.sample import SELECTION_METHOD
++from agent_perimeter.db.models import CensusRecord, CensusRun
++from agent_perimeter.model.census import Ecosystem, PackageCoords
++
++TEMPLATES = Path(__file__).parent / "templates"
++
++# The only revision this census currently tracks - see
++# agent_perimeter/transport/features.yaml and TERM_DEFINITIONS below.
++REVISION = "2026-07-28"
++SUPPORT_FEATURE = "server_discover"
++
++ARTIFACT_DERIVATION = "artifact"
++PROBE_DERIVATION = "probe"
++
++TERM_DEFINITIONS: dict[str, str] = {
++    "population": (
++        "Every entry returned by the official MCP registry API between the collection "
++        "window's start and end, including entries whose package coordinates could not "
++        "be resolved."
++    ),
++    "sample": (
++        "Tier 1 is the whole population. Tier 2 is the top n by download count within "
++        "each ecosystem, selected as described under Method."
++    ),
++    "supports 2026-07-28": (
++        "The package's published artifact pins an MCP SDK at or above the version that "
++        "introduced the revision's mandatory methods, and its source contains a handler "
++        "for server/discover. This is a statement about a published artifact, not about "
++        "any running deployment."
++    ),
++    "does not support 2026-07-28": (
++        "The published artifact pins an SDK below that floor, or contains no such "
++        "handler. It does not mean the software is insecure, and it does not mean a "
++        "deployment is exposed."
++    ),
++    "unknown": (
++        "Coordinates could not be resolved, the artifact could not be fetched, or the "
++        "source could not be parsed. Reported separately and never folded into a "
++        "denominator."
++    ),
++    "conformance gap": (
++        "A server that claims a revision and does not exhibit a feature that revision "
++        "requires. Measurable only against a live authorised target, so it appears in "
++        "scan reports and never in this census."
++    ),
++    "live-discover sample": (
++        "A random sample of remote-only registry entries (a remotes URL, no fetchable "
++        "package), each sent exactly one unauthenticated server/discover request. A "
++        "successful response confirms support; a non-response never confirms its "
++        "absence, so this sample never reports a does-not-support count."
++    ),
++}
++
++
++@dataclass(slots=True, frozen=True)
++class Aggregate:
++    supports: int
++    does_not_support: int
++    unknown: int
++
++    @property
++    def n(self) -> int:
++        """Denominator excludes unknowns. Guessing at an unknown is the thing we sell against."""
++        return self.supports + self.does_not_support
++
++    @property
++    def share(self) -> float | None:
++        return None if self.n == 0 else self.supports / self.n
++
++
++def _feature_list(feature_set_json: dict[str, object]) -> list[str]:
++    features = feature_set_json.get("features")
++    return [str(f) for f in features] if isinstance(features, list) else []
++
++
++def _classify(record: CensusRecord) -> tuple[str, str] | None:
++    """(stratum, bucket) for one record, or None if it belongs to neither
++    stratum this report tracks (never attempted, or attempted and never
++    resolved - e.g. a tier-1-only entry, or an artifact fetch that failed
++    before feature detection ever ran).
++    """
++    fs: dict[str, object] = record.feature_set_json
++    derivation = fs.get("derivation")
++    supports_feature = SUPPORT_FEATURE in _feature_list(fs)
++
++    if derivation == ARTIFACT_DERIVATION:
++        if bool(fs.get("is_unknown")):
++            return (ARTIFACT_DERIVATION, "unknown")
++        return (ARTIFACT_DERIVATION, "supports" if supports_feature else "does_not_support")
++
++    if derivation == PROBE_DERIVATION:
++        # One server/discover request, no retry (census/tier3.py). A
++        # non-answer is indistinguishable from an explicit rejection by
++        # that module's own design (its requirement 3), so this stratum can
++        # confirm support but never its absence - does_not_support is
++        # structurally always 0 here, not a rounding artefact.
++        return (PROBE_DERIVATION, "supports" if supports_feature else "unknown")
++
++    return None
++
++
++def aggregate(records: Sequence[CensusRecord]) -> dict[str, Aggregate]:
++    """Per-revision counts for whatever records are passed in.
++
++    Records with neither an artifact- nor probe-derived `feature_set_json`
++    are skipped, not folded into "does not support" - see `_classify`. Pass
++    a stratum- (and, for the artifact stratum, ecosystem-) homogeneous list
++    to get a meaningful per-stratum figure; `render_census` does that
++    filtering before ever calling this.
++    """
++    supports = does_not_support = unknown = 0
++    for record in records:
++        classified = _classify(record)
++        if classified is None:
++            continue
++        _, bucket = classified
++        if bucket == "supports":
++            supports += 1
++        elif bucket == "does_not_support":
++            does_not_support += 1
++        else:
++            unknown += 1
++    return {REVISION: Aggregate(supports, does_not_support, unknown)}
++
++
++def _agg_dict(agg: Aggregate) -> dict[str, object]:
++    """JSON-friendly view of an Aggregate: its three fields plus the two
++    derived properties, so the summary sidecar is self-describing and a
++    reader (or `analysis/census_analysis.py`) can cross-check n/share
++    without re-deriving the property formulas.
++    """
++    return {**asdict(agg), "n": agg.n, "share": agg.share}
++
++
++def _by_derivation(records: Sequence[CensusRecord], derivation: str) -> list[CensusRecord]:
++    return [r for r in records if r.feature_set_json.get("derivation") == derivation]
++
++
++def _digest_for(record: CensusRecord, salt: bytes) -> str:
++    """A durable digest for the raw export, keyed by the export's own salt -
++    never the DB row's own `coords_digest`, which was computed with a
++    per-run salt that `census/run.py` discards immediately after collection
++    (see its `run_census`, which never persists the salt it generates) and
++    so cannot be reproduced later. Mirrors `PackageCoords.digest` / that
++    same module's `_digest_for` fallback for a record with no resolvable
++    package coordinates.
++    """
++    if record.ecosystem is not None and record.package_name is not None:
++        coords = PackageCoords(ecosystem=Ecosystem(record.ecosystem), name=record.package_name)
++        return coords.digest(salt)
++    payload = f"registry:{record.registry_id.lower()}".encode()
++    return hashlib.blake2b(payload, key=salt, digest_size=16).hexdigest()
++
++
++def _ecosystem_breakdown(artifact_records: Sequence[CensusRecord]) -> dict[str, dict[str, object]]:
++    breakdown: dict[str, dict[str, object]] = {}
++    for eco in Ecosystem:
++        eco_records = [r for r in artifact_records if r.ecosystem == eco.value]
++        breakdown[eco.value] = {
++            "n_examined": len(eco_records),
++            "aggregate": aggregate(eco_records)[REVISION],
++        }
++    return breakdown
++
++
++def render_census(run: CensusRun, records: Sequence[CensusRecord]) -> str:
++    env = Environment(
++        loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(["html", "j2"])
++    )
++    template = env.get_template("census.html.j2")
++
++    artifact_records = _by_derivation(records, ARTIFACT_DERIVATION)
++    probe_records = _by_derivation(records, PROBE_DERIVATION)
++
++    artifact_agg = aggregate(artifact_records)[REVISION]
++    probe_agg = aggregate(probe_records)[REVISION] if probe_records else None
++
++    return template.render(
++        css=(TEMPLATES / "report.css").read_text(encoding="utf-8"),
++        run=run,
++        revision=REVISION,
++        term_definitions=TERM_DEFINITIONS,
++        selection_method=SELECTION_METHOD,
++        artifact_agg=artifact_agg,
++        artifact_n_examined=len(artifact_records),
++        by_ecosystem=_ecosystem_breakdown(artifact_records),
++        probe_agg=probe_agg,
++        probe_n=len(probe_records),
++    )
++
++
++def export_raw(run: CensusRun, records: Sequence[CensusRecord], *, salt: bytes, out: Path) -> Path:
++    """Write `records.csv` (one row per record, keyed by digest, no names or
++    URLs) plus a `records.summary.json` sidecar carrying the same aggregate
++    figures the report states. `analysis/census_analysis.py` recomputes the
++    CSV from scratch and checks it against that sidecar - the reproducibility
++    claim in the report's method section.
++    """
++    out.mkdir(parents=True, exist_ok=True)
++    csv_path = out / "records.csv"
++    with csv_path.open("w", newline="", encoding="utf-8") as fh:
++        writer = csv.writer(fh)
++        writer.writerow(
++            [
++                "coords_digest",
++                "stratum",
++                "ecosystem",
++                "sdk_version",
++                "supports_2026_07_28",
++                "fetch_status",
++                "collected_at",
++            ]
++        )
++        for record in records:
++            classified = _classify(record)
++            stratum = classified[0] if classified is not None else "unattempted"
++            support_label = classified[1] if classified is not None else "n/a"
++            writer.writerow(
++                [
++                    _digest_for(record, salt),
++                    stratum,
++                    record.ecosystem or "",
++                    record.sdk_version or "",
++                    support_label,
++                    record.fetch_status,
++                    record.collected_at.isoformat(),
++                ]
++            )
++
++    artifact_records = _by_derivation(records, ARTIFACT_DERIVATION)
++    probe_records = _by_derivation(records, PROBE_DERIVATION)
++    summary = {
++        "tool_version": run.tool_version,
++        "method_hash": run.method_hash,
++        "revision": REVISION,
++        "artifact": {
++            "n_examined": len(artifact_records),
++            "by_ecosystem": {
++                eco.value: {
++                    "n_examined": len([r for r in artifact_records if r.ecosystem == eco.value]),
++                    **_agg_dict(
++                        aggregate([r for r in artifact_records if r.ecosystem == eco.value])[
++                            REVISION
++                        ]
++                    ),
++                }
++                for eco in Ecosystem
++            },
++            "pooled": _agg_dict(aggregate(artifact_records)[REVISION]),
++        },
++        "live_discover": (
++            {"n_sampled": len(probe_records), **_agg_dict(aggregate(probe_records)[REVISION])}
++            if probe_records
++            else None
++        ),
++    }
++    summary_path = out / "records.summary.json"
++    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
++
++    return csv_path
+diff --git a/agent_perimeter/report/templates/census.html.j2 b/agent_perimeter/report/templates/census.html.j2
+new file mode 100644
+index 0000000..b01a873
+--- /dev/null
++++ b/agent_perimeter/report/templates/census.html.j2
+@@ -0,0 +1,116 @@
++<!doctype html>
++<html lang="en">
++<head>
++<meta charset="utf-8">
++<title>Agent Perimeter — MCP ecosystem census</title>
++<style>{{ css }}</style>
++</head>
++<body>
++<h1>MCP ecosystem census</h1>
++<p class="mono">registry endpoint: {{ run.registry_endpoint }}</p>
++
++<h2>Headline</h2>
++<div class="strip">
++<p><strong>Artifact stratum.</strong> Of {{ artifact_n_examined }} npm/PyPI packages examined,
++{{ artifact_agg.supports }} of {{ artifact_agg.n }} show published-artifact evidence of support
++for <span class="mono">{{ revision }}</span> ({{ artifact_agg.does_not_support }} show no such
++evidence, {{ artifact_agg.unknown }} unknown).</p>
++
++{% if probe_agg is none %}
++<p><strong>Live-discover stratum.</strong> Tier 3 remote-stratum sample: not yet run. This
++report does not estimate live, ecosystem-wide support from artifact evidence alone — when Tier
++3 runs, its result will appear here as its own, separately labelled figure.</p>
++{% else %}
++<p><strong>Live-discover stratum.</strong> Of a random sample of {{ probe_n }} remote MCP
++servers, {{ probe_agg.supports }} answered a live discovery request in a way consistent with
++support for <span class="mono">{{ revision }}</span>; {{ probe_agg.unknown }} unknown (no
++answer, or excluded before a request was sent). A single unauthenticated probe can confirm
++support; it can never confirm its absence, so this stratum does not report a does-not-support
++count.</p>
++{% endif %}
++
++<p>These are two different populations, measured by two different methods. Neither figure is
++combined with the other, and neither stands in for "the MCP ecosystem" as a whole.</p>
++</div>
++
++<h2>Collection window</h2>
++<table>
++<tr><th>Started</th><td class="mono">{{ run.started_at.isoformat() }}</td></tr>
++<tr><th>Finished</th><td class="mono">{{ run.finished_at.isoformat() if run.finished_at else "in progress" }}</td></tr>
++<tr><th>Population</th><td class="num">{{ run.population_size }}</td></tr>
++</table>
++<p>Fetch failures: {{ run.fetch_failures }}</p>
++
++<h2>Artifact stratum</h2>
++<p><strong>Method.</strong> {{ selection_method|safe }}</p>
++<table>
++<tr><th>Ecosystem</th><th class="num">Tier-2 target n</th><th class="num">Examined</th>
++    <th class="num">Supports</th><th class="num">Does not support</th><th class="num">Unknown</th>
++    <th class="num">Share</th></tr>
++{% for eco, row in by_ecosystem.items() %}
++<tr>
++  <td class="mono">{{ eco }}</td>
++  <td class="num">{{ run.tier2_n }}</td>
++  <td class="num">{{ row.n_examined }}</td>
++  <td class="num">{{ row.aggregate.supports }}</td>
++  <td class="num">{{ row.aggregate.does_not_support }}</td>
++  <td class="num">{{ row.aggregate.unknown }} unknown</td>
++  <td class="num">{{ "n/a" if row.aggregate.share is none else "%.0f%%"|format(row.aggregate.share * 100) }}</td>
++</tr>
++{% endfor %}
++<tr>
++  <td class="mono"><strong>pooled (both ecosystems)</strong></td>
++  <td class="num">—</td>
++  <td class="num">{{ artifact_n_examined }}</td>
++  <td class="num">{{ artifact_agg.supports }}</td>
++  <td class="num">{{ artifact_agg.does_not_support }}</td>
++  <td class="num">{{ artifact_agg.unknown }} unknown</td>
++  <td class="num">{{ "n/a" if artifact_agg.share is none else "%.0f%%"|format(artifact_agg.share * 100) }}</td>
++</tr>
++</table>
++<p class="deriv">Tier-2 target n is per ecosystem, not pooled: up to {{ run.tier2_n }} npm
++packages and up to {{ run.tier2_n }} PyPI packages are independently selected, by download
++count within each ecosystem, before any artifact is fetched.</p>
++
++<h2>Live-discover stratum</h2>
++{% if probe_agg is none %}
++<p>Tier 3 remote-stratum sample: not yet run. No live-discover records exist in this
++publication.</p>
++{% else %}
++<table>
++<tr><th class="num">Sampled</th><th class="num">Supports</th><th class="num">Unknown</th>
++    <th class="num">Share</th></tr>
++<tr>
++  <td class="num">{{ probe_n }}</td>
++  <td class="num">{{ probe_agg.supports }}</td>
++  <td class="num">{{ probe_agg.unknown }} unknown</td>
++  <td class="num">{{ "n/a" if probe_agg.share is none else "%.0f%%"|format(probe_agg.share * 100) }}</td>
++</tr>
++</table>
++<p class="deriv">does not support: {{ probe_agg.does_not_support }} — structurally always 0 for
++this stratum; see "live-discover sample" below.</p>
++{% endif %}
++
++<h2>Terms</h2>
++<dl>
++{% for term, definition in term_definitions.items() %}
++<dt><strong>{{ term }}</strong></dt>
++<dd>{{ definition|safe }}</dd>
++{% endfor %}
++</dl>
++
++<footer>
++<h2>Methodology</h2>
++<p>Tool version <span class="mono">{{ run.tool_version }}</span>, method hash
++<span class="mono">{{ run.method_hash }}</span>. A changed collection method cannot silently
++reuse this label - see the changelog below.</p>
++<p>Raw data (digest-keyed, no names or URLs): <a href="records.csv">records.csv</a>. Reproduce
++every number above with <a href="../../../analysis/census_analysis.py">analysis/census_analysis.py records.csv</a> -
++no database, no salt, no API key required.</p>
++<p>Secrets or other sensitive findings from this collection are handled per the
++<a href="../../security.md">disclosure policy</a>, never published here.</p>
++<p>Results are versioned, never overwritten: see the
++<a href="../CHANGELOG.md">census changelog</a>.</p>
++</footer>
++</body>
++</html>
+diff --git a/analysis/census_analysis.py b/analysis/census_analysis.py
+new file mode 100644
+index 0000000..e2557e0
+--- /dev/null
++++ b/analysis/census_analysis.py
+@@ -0,0 +1,164 @@
++"""Recompute the published census numbers from the raw CSV alone, and check
++them against the sidecar the report was actually built from.
++
++`agent_perimeter.report.census_report.export_raw` writes two files into a
++publication directory: `records.csv` (one row per record, keyed by a digest -
++no names, no URLs) and `records.summary.json` (the same aggregate figures
++`render_census` puts in the report's prose and tables, computed by the same
++`aggregate()` call). This script reads `records.csv`, recomputes every one of
++those figures from scratch using nothing but the stdlib, and prints each one
++next to the summary's figure with a pass/fail per line.
++
++Deliberately stdlib-only and free of any `agent_perimeter` import: the
++reproducibility claim is that a stranger with the published CSV and its
++summary sidecar - no database, no salt, no API key - can verify the report,
++without even needing to trust this project's own aggregation code was called
++correctly. Two independently-written computations agreeing is the check.
++
++    uv run python analysis/census_analysis.py docs/census/2026-09-01/records.csv
++
++Expected: every line reports `match`. A `MISMATCH` line means the published
++report and the published raw data disagree - report it, don't paper over it.
++"""
++
++from __future__ import annotations
++
++import csv
++import json
++import sys
++from collections import Counter
++from pathlib import Path
++from typing import Any
++
++_ROW = "{label:<45} {published:>10} {computed:>10}  {result}"
++
++
++def _recompute(csv_path: Path) -> dict[str, Any]:
++    """Group `records.csv` rows by stratum (and, for the artifact stratum,
++    ecosystem), and count each group's supports/does_not_support/unknown -
++    exactly what `agent_perimeter.report.census_report.aggregate` does,
++    reimplemented here from the CSV's plain string columns alone.
++    """
++    artifact_by_eco: dict[str, Counter[str]] = {}
++    artifact_total: Counter[str] = Counter()
++    probe_total: Counter[str] = Counter()
++
++    with csv_path.open(newline="", encoding="utf-8") as fh:
++        for row in csv.DictReader(fh):
++            stratum = row["stratum"]
++            label = row["supports_2026_07_28"]
++            if stratum == "artifact":
++                artifact_total[label] += 1
++                artifact_by_eco.setdefault(row["ecosystem"], Counter())[label] += 1
++            elif stratum == "probe":
++                probe_total[label] += 1
++
++    def _agg(counts: Counter[str]) -> dict[str, object]:
++        supports = counts.get("supports", 0)
++        does_not_support = counts.get("does_not_support", 0)
++        unknown = counts.get("unknown", 0)
++        n = supports + does_not_support
++        return {
++            "supports": supports,
++            "does_not_support": does_not_support,
++            "unknown": unknown,
++            "n": n,
++            "share": None if n == 0 else supports / n,
++        }
++
++    return {
++        "artifact": {
++            "n_examined": sum(artifact_total.values()),
++            "by_ecosystem": {eco: _agg(c) for eco, c in artifact_by_eco.items()},
++            "pooled": _agg(artifact_total),
++        },
++        "live_discover": (
++            {"n_sampled": sum(probe_total.values()), **_agg(probe_total)}
++            if probe_total
++            else None
++        ),
++    }
++
++
++def _compare(label: str, published: object, computed: object, *, lines: list[str]) -> bool:
++    ok = published == computed
++    lines.append(
++        _ROW.format(
++            label=label,
++            published=str(published),
++            computed=str(computed),
++            result="match" if ok else "MISMATCH",
++        )
++    )
++    return ok
++
++
++def check(csv_path: Path, summary_path: Path) -> bool:
++    summary: Any = json.loads(summary_path.read_text(encoding="utf-8"))
++    computed = _recompute(csv_path)
++
++    lines: list[str] = []
++    all_ok = True
++
++    all_ok &= _compare(
++        "artifact.n_examined",
++        summary["artifact"]["n_examined"],
++        computed["artifact"]["n_examined"],
++        lines=lines,
++    )
++    for field in ("supports", "does_not_support", "unknown", "n"):
++        all_ok &= _compare(
++            f"artifact.pooled.{field}",
++            summary["artifact"]["pooled"][field],
++            computed["artifact"]["pooled"][field],
++            lines=lines,
++        )
++    for eco, published_row in summary["artifact"]["by_ecosystem"].items():
++        computed_row = computed["artifact"]["by_ecosystem"].get(
++            eco, {"supports": 0, "does_not_support": 0, "unknown": 0, "n": 0}
++        )
++        for field in ("supports", "does_not_support", "unknown", "n"):
++            all_ok &= _compare(
++                f"artifact.by_ecosystem.{eco}.{field}",
++                published_row[field],
++                computed_row[field],
++                lines=lines,
++            )
++
++    published_live = summary["live_discover"]
++    computed_live = computed["live_discover"]
++    if published_live is None or computed_live is None:
++        all_ok &= _compare("live_discover", published_live, computed_live, lines=lines)
++    else:
++        for field in ("n_sampled", "supports", "does_not_support", "unknown", "n"):
++            all_ok &= _compare(
++                f"live_discover.{field}",
++                published_live[field],
++                computed_live[field],
++                lines=lines,
++            )
++
++    for line in lines:
++        print(line)
++    return all_ok
++
++
++def main(argv: list[str]) -> int:
++    if len(argv) < 2:
++        print(f"usage: {argv[0]} <path/to/records.csv>", file=sys.stderr)
++        return 2
++    csv_path = Path(argv[1])
++    summary_path = csv_path.with_name("records.summary.json")
++    if not csv_path.is_file():
++        print(f"no such file: {csv_path}", file=sys.stderr)
++        return 2
++    if not summary_path.is_file():
++        print(f"no summary sidecar next to {csv_path}: expected {summary_path}", file=sys.stderr)
++        return 2
++
++    ok = check(csv_path, summary_path)
++    return 0 if ok else 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main(sys.argv))
+diff --git a/docs/census/CHANGELOG.md b/docs/census/CHANGELOG.md
+new file mode 100644
+index 0000000..e642392
+--- /dev/null
++++ b/docs/census/CHANGELOG.md
+@@ -0,0 +1,41 @@
++# Census changelog
++
++Results are versioned, never overwritten. Each real run gets its own dated
++directory (`docs/census/<date>/`), carrying `records.csv`,
++`records.summary.json`, and the rendered report for that run. A correction is
++a new dated entry, never an edit to an old one.
++
++## Unreleased
++
++No census has been published yet. `agent_perimeter.report.census_report`
++(`render_census`, `export_raw`) and `agent_perimeter.census.run.run_census`
++exist and are tested — see `tests/report/` and `tests/census/` — but no real
++run has been executed against the live registry and published under a dated
++directory below.
++
++Two things block a real publication, independent of this task:
++
++- `agent_perimeter.census.detect.SDK_FLOOR` is explicitly marked
++  placeholder/unverified (`docs/methodology.md` — "## SDK version floors").
++  Every artifact-stratum number this report states moves if those floors are
++  wrong; they must be checked against the real SDK changelogs first.
++- Tier 3 (the live-discover stratum, `agent_perimeter/census/tier3.py`) is
++  not wired into `run_census` yet — it is a self-contained, tested module
++  with no integration that populates a real `CensusRecord` from it. Until
++  that lands, any published report's live-discover section will honestly
++  read "not yet run", per the report's own empty-state copy.
++
++When the first real run publishes, its entry here states, at minimum:
++
++- Population: registry entries observed, and Tier 2's *n* **per ecosystem**
++  — npm and PyPI counted separately, never pooled into one figure (the
++  report's own artifact-stratum table explains why: the registry's real
++  ecosystem split makes a single pooled *n* misstate what was actually
++  sampled from each).
++- Whether the live-discover (Tier 3) stratum ran that day, and its sample
++  size — or, just as plainly, that it did not run, exactly as the report
++  itself states when the stratum is empty.
++- Tool version and method hash, so a changed collection method cannot
++  silently reuse an old report's label.
++- Fetch failures, and every other known limitation carried forward from
++  `docs/methodology.md`.
+diff --git a/tests/report/factories.py b/tests/report/factories.py
+new file mode 100644
+index 0000000..93b71da
+--- /dev/null
++++ b/tests/report/factories.py
+@@ -0,0 +1,180 @@
++"""Test factory for the census report: builds CensusRun/CensusRecord objects
++in memory, never persisted to a session - census_report.py only ever reads
++plain attributes off these, so a DB round-trip buys nothing here.
++
++Two strata, matching the two shapes real code actually produces:
++
++- Artifact stratum (census/run.py's `_record_for` + `detect.detect_features`):
++  `feature_set_json = {"features": [...], "derivation": "artifact",
++  "confidence": 0.6, "caveat": ..., "is_unknown": bool}`.
++- Live-discover stratum (census/tier3.py's `Tier3Fingerprint`, not wired into
++  any real CensusRecord yet): `feature_set_json = {"features": [...],
++  "derivation": "probe", "confidence": 0.95, "caveat": ...}`.
++
++`census_fixture()` defaults to zero live-discover records, matching this
++project's actual current state - Tier 3 has never been run. Pass
++`probe_supports`/`probe_unknown` to build synthetic Tier-3 data for tests
++that exercise the two-stratum render path.
++"""
++
++from __future__ import annotations
++
++from collections.abc import Sequence
++from datetime import UTC, datetime
++
++from agent_perimeter.db.models import CensusRecord, CensusRun
++from agent_perimeter.model.census import Ecosystem, FetchStatus
++
++SUPPORT_FEATURE = "server_discover"
++_NOW = datetime(2026, 9, 1, tzinfo=UTC)
++_ECOSYSTEMS = (Ecosystem.NPM, Ecosystem.PYPI)
++
++
++def _artifact_record(
++    *, run_id: int, idx: int, name: str, ecosystem: Ecosystem, is_unknown: bool, supports: bool
++) -> CensusRecord:
++    features = [SUPPORT_FEATURE] if supports and not is_unknown else []
++    return CensusRecord(
++        census_run_id=run_id,
++        registry_id=f"registry/{name}",
++        coords_digest=f"artifact-digest-{idx:04d}",
++        ecosystem=ecosystem.value,
++        package_name=name,
++        distribution=f"package_{ecosystem.value}",
++        sdk_version=None if is_unknown else "2.0.0",
++        feature_set_json={
++            "features": features,
++            "derivation": "artifact",
++            "confidence": 0.6,
++            "caveat": None,
++            "is_unknown": is_unknown,
++        },
++        fetch_status=FetchStatus.OK.value,
++        fetch_detail="",
++        rank_metric=1000 - idx,
++        rank_metric_source=(
++            "npm_last_month_downloads"
++            if ecosystem is Ecosystem.NPM
++            else "pypi_recent_downloads"
++        ),
++        collected_at=_NOW,
++    )
++
++
++def _probe_record(*, run_id: int, idx: int, supports: bool) -> CensusRecord:
++    features = [SUPPORT_FEATURE] if supports else []
++    return CensusRecord(
++        census_run_id=run_id,
++        registry_id=f"registry/remote-{idx}",
++        coords_digest=f"probe-digest-{idx:04d}",
++        ecosystem=None,
++        package_name=None,
++        distribution="remote_only",
++        sdk_version=None,
++        feature_set_json={
++            "features": features,
++            "derivation": "probe",
++            "confidence": 0.95,
++            "caveat": None,
++        },
++        fetch_status=(FetchStatus.OK if supports else FetchStatus.UNREACHABLE).value,
++        fetch_detail="",
++        rank_metric=None,
++        rank_metric_source=None,
++        collected_at=_NOW,
++    )
++
++
++def census_fixture(
++    *,
++    names: Sequence[str] | None = None,
++    supports: int = 2,
++    does_not_support: int = 2,
++    unknown: int = 1,
++    fetch_failures: int = 3,
++    tier2_n: int = 200,
++    probe_supports: int = 0,
++    probe_unknown: int = 0,
++) -> tuple[CensusRun, list[CensusRecord]]:
++    """A CensusRun plus artifact-stratum (and, optionally, live-discover-
++    stratum) CensusRecord rows, split evenly across npm/pypi.
++
++    `names`, when given, drives the record count directly: each name becomes
++    one "supports" artifact record (used by the tests that check a
++    third-party name never reaches the rendered report or the raw export).
++    """
++    run = CensusRun(
++        id=1,
++        started_at=_NOW,
++        finished_at=_NOW,
++        population_size=500,
++        fetch_failures=fetch_failures,
++        tool_version="0.1.0",
++        method_hash="deadbeefcafef00d",
++        tier2_n=tier2_n,
++        registry_endpoint="https://registry.modelcontextprotocol.io/v0/servers",
++    )
++    assert run.id is not None
++
++    records: list[CensusRecord] = []
++
++    if names is not None:
++        for i, name in enumerate(names):
++            records.append(
++                _artifact_record(
++                    run_id=run.id,
++                    idx=i,
++                    name=name,
++                    ecosystem=_ECOSYSTEMS[i % 2],
++                    is_unknown=False,
++                    supports=True,
++                )
++            )
++    else:
++        idx = 0
++        for _ in range(supports):
++            records.append(
++                _artifact_record(
++                    run_id=run.id,
++                    idx=idx,
++                    name=f"pkg-{idx}",
++                    ecosystem=_ECOSYSTEMS[idx % 2],
++                    is_unknown=False,
++                    supports=True,
++                )
++            )
++            idx += 1
++        for _ in range(does_not_support):
++            records.append(
++                _artifact_record(
++                    run_id=run.id,
++                    idx=idx,
++                    name=f"pkg-{idx}",
++                    ecosystem=_ECOSYSTEMS[idx % 2],
++                    is_unknown=False,
++                    supports=False,
++                )
++            )
++            idx += 1
++        for _ in range(unknown):
++            records.append(
++                _artifact_record(
++                    run_id=run.id,
++                    idx=idx,
++                    name=f"pkg-{idx}",
++                    ecosystem=_ECOSYSTEMS[idx % 2],
++                    is_unknown=True,
++                    supports=False,
++                )
++            )
++            idx += 1
++
++    probe_idx = 0
++    for _ in range(probe_supports):
++        records.append(_probe_record(run_id=run.id, idx=probe_idx, supports=True))
++        probe_idx += 1
++    for _ in range(probe_unknown):
++        records.append(_probe_record(run_id=run.id, idx=probe_idx, supports=False))
++        probe_idx += 1
++
++    return run, records
+diff --git a/tests/report/test_census_report.py b/tests/report/test_census_report.py
+new file mode 100644
+index 0000000..f0f0cca
+--- /dev/null
++++ b/tests/report/test_census_report.py
+@@ -0,0 +1,165 @@
++from datetime import UTC, datetime
++
++from agent_perimeter.db.models import CensusRecord
++from agent_perimeter.report.census_report import (
++    TERM_DEFINITIONS,
++    aggregate,
++    export_raw,
++    render_census,
++)
++from tests.report.factories import census_fixture
++
++# --- Brief's original 7 tests, adapted for the two-stratum shape ---------
++
++
++def test_no_third_party_name_or_url_appears_in_the_report() -> None:
++    run, records = census_fixture(names=["acme-mcp-server", "widget-tools"])
++    html = render_census(run, records)
++    for record in records:
++        assert record.package_name is None or record.package_name not in html
++        assert record.registry_id not in html
++
++
++def test_the_word_vulnerable_is_never_used() -> None:
++    run, records = census_fixture(probe_supports=3, probe_unknown=2)
++    assert "vulnerable" not in render_census(run, records).lower()
++
++
++def test_every_reported_term_is_defined() -> None:
++    run, records = census_fixture()
++    html = render_census(run, records)
++    for term in ("population", "sample", "supports 2026-07-28", "unknown", "conformance gap"):
++        assert term in TERM_DEFINITIONS
++        assert TERM_DEFINITIONS[term] in html
++
++
++def test_fetch_failures_appear_even_when_zero() -> None:
++    run, records = census_fixture(fetch_failures=0)
++    assert "Fetch failures: 0" in render_census(run, records)
++
++
++def test_unknown_is_reported_separately_and_never_folded_into_a_denominator() -> None:
++    run, records = census_fixture(unknown=12)
++    agg = aggregate(records)["2026-07-28"]
++    assert agg.unknown == 12
++    assert agg.n == agg.supports + agg.does_not_support
++    assert "12 unknown" in render_census(run, records)
++
++
++def test_raw_export_is_keyed_by_digest_and_carries_no_names(tmp_path) -> None:  # type: ignore[no-untyped-def]
++    run, records = census_fixture(names=["acme-mcp-server"])
++    path = export_raw(run, records, salt=b"test-salt", out=tmp_path)
++    body = path.read_text()
++    assert "acme-mcp-server" not in body
++    assert "coords_digest" in body
++
++
++def test_the_report_states_the_tool_version_and_method_hash() -> None:
++    run, records = census_fixture()
++    html = render_census(run, records)
++    assert run.method_hash in html and run.tool_version in html
++
++
++# --- Two-stratum design: never pooled, honest empty state, per-ecosystem n --
++
++
++def test_two_strata_render_as_separate_never_pooled_sections() -> None:
++    """Artifact and live-discover are different populations measured by
++    different methods. Neither headline number may combine them."""
++    run, records = census_fixture(
++        supports=3, does_not_support=1, unknown=0, probe_supports=4, probe_unknown=1
++    )
++    html = render_census(run, records)
++
++    artifact_only = [r for r in records if r.feature_set_json.get("derivation") == "artifact"]
++    probe_only = [r for r in records if r.feature_set_json.get("derivation") == "probe"]
++    artifact_agg = aggregate(artifact_only)["2026-07-28"]
++    probe_agg = aggregate(probe_only)["2026-07-28"]
++
++    assert artifact_agg.supports == 3
++    assert probe_agg.supports == 4
++
++    # Both strata's own n appear, individually labelled.
++    assert str(artifact_agg.n) in html
++    assert str(probe_agg.n) in html
++
++    # A blended total (pooling supports across both strata) is never stated.
++    pooled_supports = artifact_agg.supports + probe_agg.supports
++    assert f"{pooled_supports} of" not in html
++
++
++def test_live_discover_stratum_honest_empty_state() -> None:
++    """No Tier 3 data exists anywhere in this codebase yet - the report must
++    say so plainly rather than rendering a broken '0 of 0' percentage."""
++    run, records = census_fixture(probe_supports=0, probe_unknown=0)
++    html = render_census(run, records)
++    assert "not yet run" in html.lower()
++    assert "0 of 0" not in html
++
++
++def test_probe_stratum_never_reports_a_does_not_support_count() -> None:
++    """A single unauthenticated server/discover request (census/tier3.py)
++    can confirm support; it structurally cannot confirm absence - a
++    non-answer is indistinguishable from a rejection by tier3's own design.
++    """
++    run, records = census_fixture(probe_supports=2, probe_unknown=5)
++    probe_records = [r for r in records if r.feature_set_json.get("derivation") == "probe"]
++    agg = aggregate(probe_records)["2026-07-28"]
++    assert agg.does_not_support == 0
++    assert agg.unknown == 5
++    assert agg.supports == 2
++
++
++def test_tier2_n_is_reported_per_ecosystem_not_pooled() -> None:
++    """Task 5's correction: the registry's real ~29:1 npm:PyPI split means a
++    single pooled tier-2 n misrepresents what was sampled from each
++    ecosystem. Both ecosystem counts must appear, separately."""
++    run, records = census_fixture(supports=4, does_not_support=2, unknown=0)
++    html = render_census(run, records)
++    assert "npm" in html
++    assert "pypi" in html
++    npm_n = sum(1 for r in records if r.ecosystem == "npm")
++    pypi_n = sum(1 for r in records if r.ecosystem == "pypi")
++    assert str(npm_n) in html
++    assert str(pypi_n) in html
++
++
++def test_the_word_vulnerable_never_appears_in_the_two_stratum_additions() -> None:
++    run, records = census_fixture(probe_supports=0, probe_unknown=0)
++    assert "vulnerable" not in render_census(run, records).lower()
++
++
++def test_a_record_outside_both_strata_is_skipped_not_miscounted() -> None:
++    """A tier-1-only entry, or an artifact fetch that failed before feature
++    detection ever ran, carries no recognisable "derivation" tag. It must
++    never be silently counted as "does not support" - it was never measured
++    at all."""
++    run, records = census_fixture(supports=1, does_not_support=0, unknown=0)
++    stray = CensusRecord(
++        census_run_id=run.id,
++        registry_id="registry/never-attempted",
++        coords_digest="stray-digest",
++        ecosystem=None,
++        package_name=None,
++        distribution="none",
++        sdk_version=None,
++        feature_set_json={},
++        fetch_status="not_attempted",
++        fetch_detail=None,
++        rank_metric=None,
++        rank_metric_source=None,
++        collected_at=datetime(2026, 9, 1, tzinfo=UTC),
++    )
++    agg = aggregate([*records, stray])["2026-07-28"]
++    assert agg.supports == 1
++    assert agg.does_not_support == 0
++    assert agg.unknown == 0
++
++
++def test_raw_export_carries_a_stratum_column_and_still_no_names(tmp_path) -> None:  # type: ignore[no-untyped-def]
++    run, records = census_fixture(names=["acme-mcp-server"], probe_supports=1)
++    path = export_raw(run, records, salt=b"test-salt", out=tmp_path)
++    body = path.read_text()
++    assert "stratum" in body
++    assert "acme-mcp-server" not in body
++    assert "registry/acme-mcp-server" not in body

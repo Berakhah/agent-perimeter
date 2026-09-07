@@ -1,0 +1,440 @@
+# Review package: 7d285cc..HEAD
+
+## Commits
+a4c7ad8 feat: drift screen rendering real diffs, honest about being a v1 stub
+
+## Files changed
+ web/app/globals.css                  | 24 ++++++++++
+ web/app/scans/[id]/drift/fixtures.ts | 85 +++++++++++++++++++++++++++++++++++
+ web/app/scans/[id]/drift/page.tsx    | 87 ++++++++++++++++++++++++++++++++++++
+ web/src/lib/_bok-ui.tsx              | 74 +++++++++++++++++++++++++++++-
+ web/tests/drift.spec.ts              | 29 ++++++++++++
+ 5 files changed, 297 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/web/app/globals.css b/web/app/globals.css
+index dda155c..2b7c149 100644
+--- a/web/app/globals.css
++++ b/web/app/globals.css
+@@ -468,20 +468,36 @@ body {
+ }
+ .bok-diff-line {
+   white-space: pre-wrap;
+ }
+ .bok-diff-add {
+   background: color-mix(in oklch, var(--provenance-verified) 18%, transparent);
+ }
+ .bok-diff-remove {
+   background: color-mix(in oklch, var(--severity-critical) 18%, transparent);
+ }
++.bok-diff-word {
++  display: block;
++}
++.bok-diff-word p {
++  margin: 0;
++  line-height: 1.6;
++}
++.bok-diff-word-removed {
++  color: var(--severity-critical);
++  text-decoration: line-through;
++  background: color-mix(in oklch, var(--severity-critical) 12%, transparent);
++}
++.bok-diff-word-added {
++  color: var(--provenance-verified);
++  background: color-mix(in oklch, var(--provenance-verified) 12%, transparent);
++}
+ 
+ /* EmptyState / ErrorState. */
+ .bok-empty-state,
+ .bok-error-state {
+   border: 1px dashed var(--neutral-200);
+   border-radius: var(--radius-control);
+   padding: calc(var(--density-gap) * 2);
+   text-align: center;
+   color: var(--neutral-600);
+ }
+@@ -770,10 +786,18 @@ body {
+ .bok-finding-reproduction pre {
+   flex: 1;
+   margin: 0;
+   padding: var(--density-cell-y) var(--density-cell-x);
+   background: var(--neutral-50);
+   border: 1px solid var(--neutral-150);
+   border-radius: var(--radius-cell);
+   overflow-x: auto;
+   font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+ }
++
++/* Description drift screen -- Screen 5 (task 15). */
++.bok-drift {
++  display: flex;
++  flex-direction: column;
++  gap: calc(var(--density-gap) * 2);
++  max-width: 48rem;
++}
+diff --git a/web/app/scans/[id]/drift/fixtures.ts b/web/app/scans/[id]/drift/fixtures.ts
+new file mode 100644
+index 0000000..7c7e057
+--- /dev/null
++++ b/web/app/scans/[id]/drift/fixtures.ts
+@@ -0,0 +1,85 @@
++/**
++ * Canned scan-history + description-drift data for `?fixture=single-
++ * scan|changed-description`.
++ *
++ * Unlike every prior screen's fixtures, this isn't standing in for a real
++ * fetch that's merely untested by this task's RED suite -- there is no live
++ * backend for this screen at all (task-15 pre-flight ruling 1). Task 9's
++ * complete, final route list has no scan-history or drift-listing route,
++ * and none of this project's later tasks add one, so this fixture data is
++ * the only thing this screen can ever render until a real endpoint is built
++ * (a separate, bigger decision than this task, per the ruling).
++ *
++ * Shapes mirror the real DB columns 1:1, not an arbitrary shape invented
++ * for this screen alone: `Tool.description_hash` (sha256 hex, computed at
++ * scan time, `agent_perimeter/api/scans.py:214`) and `DriftEvent
++ * {tool_id, field, old_hash, new_hash, detected_at, severity}`
++ * (`agent_perimeter/db/models.py:150-159`). `old_hash`/`new_hash` below are
++ * the real sha256 of `descriptionBefore`/`descriptionAfter`, not
++ * placeholder hex.
++ */
++
++export interface DriftScan {
++  id: string;
++  /** ISO 8601 timestamp -- absolute dates only, this is an audit artifact. */
++  startedAt: string;
++}
++
++export interface DriftedTool {
++  id: string;
++  name: string;
++  descriptionBefore: string;
++  descriptionAfter: string;
++  driftEvent: {
++    id: string;
++    tool_id: string;
++    field: string;
++    old_hash: string;
++    new_hash: string;
++    detected_at: string;
++    severity: string;
++  };
++}
++
++export interface DriftFixture {
++  target: string;
++  scans: DriftScan[];
++  driftedTools: DriftedTool[];
++}
++
++// A read tool whose description silently widened from one config file to
++// any file on disk -- the exact supply-chain pattern this screen exists to
++// surface (CLAUDE.md pitch: "exactly what an attacker can make it do").
++const READ_TOOL_ID = "b3e6c1e2-6f2a-4b7e-8b8a-2f6c1a9d4e10";
++
++export const FIXTURES: Record<string, DriftFixture> = {
++  "single-scan": {
++    target: "demo-mcp-server",
++    scans: [{ id: "scan-1", startedAt: "2026-08-20T09:00:00Z" }],
++    driftedTools: [],
++  },
++  "changed-description": {
++    target: "demo-mcp-server",
++    scans: [
++      { id: "scan-1", startedAt: "2026-08-20T09:00:00Z" },
++      { id: "scan-2", startedAt: "2026-09-03T14:30:00Z" },
++    ],
++    driftedTools: [
++      {
++        id: READ_TOOL_ID,
++        name: "read_config",
++        descriptionBefore: "This tool can read the config file.",
++        descriptionAfter: "This tool can now read any file.",
++        driftEvent: {
++          id: "drift-1",
++          tool_id: READ_TOOL_ID,
++          field: "description",
++          old_hash: "aa36a6a7fc1cb5a6f9278beece8f6667e08aa7940d31ec7714238ab39b631a00",
++          new_hash: "9f1008e75430b18dfd4a22a21e1a2a99e947b33f9a03cbbe82042ed0a62c3d69",
++          detected_at: "2026-09-03T14:30:00Z",
++          severity: "high",
++        },
++      },
++    ],
++  },
++};
+diff --git a/web/app/scans/[id]/drift/page.tsx b/web/app/scans/[id]/drift/page.tsx
+new file mode 100644
+index 0000000..6bb80fb
+--- /dev/null
++++ b/web/app/scans/[id]/drift/page.tsx
+@@ -0,0 +1,87 @@
++"use client";
++
++/**
++ * Screen 5 -- description-drift stub (brief §7 "v2 surface stubbed in v1";
++ * task-15 pre-flight ruling). "Stubbed" means honest about being a stub: a
++ * real word-level red-lined diff when two scans of the same target exist,
++ * and an empty state naming exactly what's missing when they don't. Never
++ * fake data, never "coming soon" (ruling 4, CLAUDE.md copy rules).
++ *
++ * Ruling 1 -- the one genuine difference from every prior screen's ruling:
++ * there is no live backend for this screen at all. `Tool.description_hash`
++ * and `DriftEvent` are real DB columns, but no route in this project's
++ * final API surface (Task 9's route list) ever reads scan history or drift
++ * events back over HTTP, and no later task adds one. So unlike Screens 1-4
++ * ("wired for real, just untested by this task's RED suite"), the
++ * `!fixture` branch below isn't a forward reference to a real fetch -- it's
++ * the same honest "not enough scan history" empty state, unconditionally,
++ * because there's no backend capability yet to determine otherwise. A real
++ * scan-history/drift endpoint is a bigger, separate decision for the human
++ * partner (ruling 1) and is explicitly out of scope for this task.
++ *
++ * `?fixture=single-scan|changed-description` replays canned data
++ * (`./fixtures.ts`). `params`/`searchParams` are both Promises in Next 15,
++ * unwrapped with `use()` (ruling 6), matching every other `[id]` route in
++ * this project.
++ */
++import { use } from "react";
++
++import { DiffView, EmptyState, RunTimeline, type RunTimelineEvent } from "@/src/lib/_bok-ui";
++import { FIXTURES } from "./fixtures";
++
++export default function DriftPage({
++  params,
++  searchParams,
++}: {
++  params: Promise<{ id: string }>;
++  searchParams: Promise<{ fixture?: string }>;
++}) {
++  const { id } = use(params);
++  const { fixture } = use(searchParams);
++
++  const data = fixture ? FIXTURES[fixture] : undefined;
++  const scans = data?.scans ?? [];
++  const driftedTools = data?.driftedTools ?? [];
++
++  if (scans.length < 2) {
++    return (
++      <main className="bok-drift">
++        <h1>Description drift — scan {id}</h1>
++        <EmptyState
++          title="Not enough scan history yet"
++          description={`This target has ${scans.length} scan${scans.length === 1 ? "" : "s"} on record — needs at least two scans of the same target before a description change can be detected.`}
++        />
++      </main>
++    );
++  }
++
++  const timelineEvents: RunTimelineEvent[] = scans
++    .slice()
++    .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
++    .map((scan) => ({ id: scan.id, label: `Scan of ${data!.target}`, at: scan.startedAt }));
++
++  return (
++    <main className="bok-drift">
++      <h1>Description drift — scan {id}</h1>
++      <RunTimeline events={timelineEvents} />
++
++      {driftedTools.length === 0 ? (
++        <EmptyState
++          title="No description drift detected"
++          description={`${scans.length} scans compared — no tool description changed between them.`}
++        />
++      ) : (
++        driftedTools.map((tool) => (
++          <section key={tool.id} aria-labelledby={`drift-${tool.id}`}>
++            <h2 id={`drift-${tool.id}`}>{tool.name}</h2>
++            <p>
++              {tool.driftEvent.field} changed, severity {tool.driftEvent.severity}, detected{" "}
++              {tool.driftEvent.detected_at}
++            </p>
++            <DiffView before={tool.descriptionBefore} after={tool.descriptionAfter} granularity="word" />
++          </section>
++        ))
++      )}
++    </main>
++  );
++}
+diff --git a/web/src/lib/_bok-ui.tsx b/web/src/lib/_bok-ui.tsx
+index c3ff8f0..dac0e0d 100644
+--- a/web/src/lib/_bok-ui.tsx
++++ b/web/src/lib/_bok-ui.tsx
+@@ -760,49 +760,60 @@ export interface RunTimelineEvent {
+ 
+ export interface RunTimelineProps {
+   events: RunTimelineEvent[];
+ }
+ 
+ export function RunTimeline({ events }: RunTimelineProps) {
+   return (
+     <ol className="bok-timeline" data-testid="run-timeline">
+       {events.map((e) => (
+         <li key={e.id} className={cx("bok-timeline-item", e.status && `bok-timeline-${e.status}`)}>
+-          <time className="bok-numeric" dateTime={e.at}>
++          {/* task-15 ruling 3: no prior consumer of RunTimeline exists, so a
++              second testid on the same element is zero-regression-risk. */}
++          <time className="bok-numeric" data-testid="drift-timestamp" dateTime={e.at}>
+             {e.at}
+           </time>
+           <span>{e.label}</span>
+         </li>
+       ))}
+     </ol>
+   );
+ }
+ 
+ // ---------------------------------------------------------------------------
+ // DiffView
+ // ---------------------------------------------------------------------------
+ 
+ export interface DiffViewProps {
+   before: string;
+   after: string;
+   beforeLabel?: string;
+   afterLabel?: string;
++  /**
++   * `"line"` (default) is the original two-column stacked diff below --
++   * unchanged for any existing/future line-mode caller. `"word"` renders a
++   * single inline red-lined paragraph instead (task-15 ruling 2): a tool
++   * description silently changing a word or two is the drift screen's
++   * signature artifact, and a line-level diff would just show the whole
++   * one-line description swapped wholesale, not the actual words that moved.
++   */
++  granularity?: "line" | "word";
+ }
+ 
+ /**
+  * ponytail: naive line-set diff (added = in `after` not `before`, removed =
+  * the reverse), not a real LCS/Myers alignment -- fine for a stand-in that
+  * only needs to show "something changed" at a glance. Swap in the `diff`
+  * npm package (MIT) for a real aligned diff if drift detection (v2) needs
+  * precise line pairing.
+  */
+-export function DiffView({ before, after, beforeLabel = "Before", afterLabel = "After" }: DiffViewProps) {
++function LineDiff({ before, after, beforeLabel, afterLabel }: Required<Pick<DiffViewProps, "before" | "after" | "beforeLabel" | "afterLabel">>) {
+   const beforeLines = before.split("\n");
+   const afterLines = after.split("\n");
+   const beforeSet = new Set(beforeLines);
+   const afterSet = new Set(afterLines);
+ 
+   return (
+     <div className="bok-diff" data-testid="diff-view">
+       <div>
+         <h3>{beforeLabel}</h3>
+         {beforeLines.map((line, i) => (
+@@ -818,20 +829,79 @@ export function DiffView({ before, after, beforeLabel = "Before", afterLabel = "
+           <div key={i} className={cx("bok-diff-line", !beforeSet.has(line) && "bok-diff-add")}>
+             {!beforeSet.has(line) ? "+ " : "  "}
+             {line}
+           </div>
+         ))}
+       </div>
+     </div>
+   );
+ }
+ 
++/**
++ * ponytail: naive too, but a different simplification than `LineDiff` --
++ * finds the first word where `before`/`after` diverge (a straight positional
++ * scan, no LCS realignment) and treats everything from there to the end of
++ * each side as one changed run. Precise for the common case this stand-in
++ * exists for (one clause of a sentence swapped for another) and cheap to
++ * read; it won't re-sync on a shared tail after the divergence point (e.g.
++ * a single word inserted near the start makes the rest of the sentence read
++ * as "changed" even where it word-for-word matches) -- upgrade to the `diff`
++ * npm package's word-diff mode if drift descriptions get long enough for
++ * that to read as noisy.
++ */
++function WordDiff({ before, after }: { before: string; after: string }) {
++  const beforeWords = before.split(/\s+/).filter(Boolean);
++  const afterWords = after.split(/\s+/).filter(Boolean);
++
++  let split = 0;
++  while (split < beforeWords.length && split < afterWords.length && beforeWords[split] === afterWords[split]) {
++    split++;
++  }
++  const unchanged = beforeWords.slice(0, split).join(" ");
++  const removed = beforeWords.slice(split).join(" ");
++  const added = afterWords.slice(split).join(" ");
++
++  return (
++    <div className="bok-diff bok-diff-word" data-testid="diff-view">
++      <p>
++        {unchanged && <span>{unchanged} </span>}
++        {removed && (
++          <span data-testid="removed" data-glyph="−" className="bok-diff-word-removed">
++            {"− "}
++            {removed}
++          </span>
++        )}
++        {removed && added && " "}
++        {added && (
++          <span data-testid="added" data-glyph="+" className="bok-diff-word-added">
++            {"+ "}
++            {added}
++          </span>
++        )}
++      </p>
++    </div>
++  );
++}
++
++export function DiffView({
++  before,
++  after,
++  beforeLabel = "Before",
++  afterLabel = "After",
++  granularity = "line",
++}: DiffViewProps) {
++  if (granularity === "word") {
++    return <WordDiff before={before} after={after} />;
++  }
++  return <LineDiff before={before} after={after} beforeLabel={beforeLabel} afterLabel={afterLabel} />;
++}
++
+ // ---------------------------------------------------------------------------
+ // EmptyState / ErrorState / Skeleton
+ // ---------------------------------------------------------------------------
+ 
+ export interface EmptyStateProps {
+   title: string;
+   description?: string;
+ }
+ 
+ /** Copy rules: never "You're secure!" -- callers supply the honest copy. */
+diff --git a/web/tests/drift.spec.ts b/web/tests/drift.spec.ts
+new file mode 100644
+index 0000000..0b702e2
+--- /dev/null
++++ b/web/tests/drift.spec.ts
+@@ -0,0 +1,29 @@
++import { expect, test } from "@playwright/test";
++
++test("with a single scan the screen explains what it needs", async ({ page }) => {
++  await page.goto("/scans/1/drift?fixture=single-scan");
++  await expect(page.getByTestId("empty-state")).toContainText(
++    /needs at least two scans of the same target/i,
++  );
++  await expect(page.getByTestId("empty-state")).not.toContainText(/coming soon/i);
++});
++
++test("with two scans the description diff renders word-level", async ({ page }) => {
++  await page.goto("/scans/2/drift?fixture=changed-description");
++  const diff = page.getByTestId("diff-view");
++  await expect(diff.getByTestId("removed")).toContainText("read the config file");
++  await expect(diff.getByTestId("added")).toContainText("read any file");
++});
++
++test("added and removed carry a glyph, not just colour", async ({ page }) => {
++  await page.goto("/scans/2/drift?fixture=changed-description");
++  await expect(page.getByTestId("added").first()).toHaveAttribute("data-glyph", "+");
++  await expect(page.getByTestId("removed").first()).toHaveAttribute("data-glyph", "−");
++});
++
++test("the timeline is ordered oldest to newest with absolute dates", async ({ page }) => {
++  await page.goto("/scans/2/drift?fixture=changed-description");
++  const stamps = await page.getByTestId("drift-timestamp").allInnerTexts();
++  expect(stamps).toEqual([...stamps].sort());
++  expect(stamps[0]).toMatch(/\d{4}-\d{2}-\d{2}/);
++});

@@ -1,0 +1,823 @@
+# Review package: 5586e99080639ce8af55e2b93916e9e324a0042c..HEAD
+
+## Commits
+929fe70 feat: artifact feature detection bounded by the pinned SDK version
+
+## Files changed
+ agent_perimeter/census/detect.py                   | 290 +++++++++++++++++++++
+ agent_perimeter/transport/revision.py              |   5 +
+ analysis/sdk_ground_truth.py                       | 113 ++++++++
+ docs/methodology.md                                |  33 +++
+ pyproject.toml                                     |   1 +
+ tests/census/test_detect.py                        |  76 ++++++
+ tests/fixtures/artifacts/empty/README.md           |   9 +
+ tests/fixtures/artifacts/js_new/index.js           |  11 +
+ tests/fixtures/artifacts/js_new/package.json       |   8 +
+ .../artifacts/py_new/demo_mcp_server/server.py     |  19 ++
+ tests/fixtures/artifacts/py_new/pyproject.toml     |   8 +
+ .../artifacts/py_old/legacy_mcp_server/server.py   |  16 ++
+ tests/fixtures/artifacts/py_old/pyproject.toml     |   7 +
+ uv.lock                                            |   2 +
+ 14 files changed, 598 insertions(+)
+
+## Diff
+diff --git a/agent_perimeter/census/detect.py b/agent_perimeter/census/detect.py
+new file mode 100644
+index 0000000..845a84a
+--- /dev/null
++++ b/agent_perimeter/census/detect.py
+@@ -0,0 +1,290 @@
++"""Derive a FeatureSet from a published artifact's source. Never run it.
++
++Two independent signals must agree before a feature is asserted: the pinned
++MCP SDK version (a package pinned to an SDK release predating the 2026-07-28
++revision cannot serve it, regardless of what its own source says) and a scan
++of the source for the handlers that revision requires. Where the two
++disagree, the lower wins and a caveat is attached - a claim that hedges is
++worth more than a claim that is wrong.
++
++Detection reads text only: an `ast` parse for Python (parse, never compile or
++run) and a plain token scan for JavaScript. Nothing here imports, compiles,
++or runs a line of the artifact - see test_detection_never_imports_the_artifact
++for the grep-verifiable half of that promise.
++"""
++
++from __future__ import annotations
++
++import ast
++import json
++import re
++import tomllib
++from collections.abc import Iterator
++from dataclasses import dataclass
++from datetime import UTC, datetime
++from pathlib import Path
++
++from packaging.version import InvalidVersion, Version
++
++from agent_perimeter._contracts import Claim, Derivation, Method
++from agent_perimeter.model.census import Ecosystem
++from agent_perimeter.model.feature import Feature, FeatureSet
++
++# Strictly below transport.revision.LIVE_PROBE_CONFIDENCE. An artifact tells you
++# what a package could do, not what a deployment does.
++ARTIFACT_CONFIDENCE = 0.6
++
++# Lowest SDK release that can serve each feature, per ecosystem. Below the
++# floor, source evidence is discarded: a package cannot serve what its pinned
++# dependency cannot express.
++#
++# PLACEHOLDER, NOT VERIFIED. This task ran without access to the real MCP SDK
++# changelogs, so these version numbers are illustrative stand-ins, not
++# confirmed facts - see docs/methodology.md "## SDK version floors" for the
++# explicit TBD markers. Every artifact-derived feature this module reports
++# moves if these are wrong, so verify against the real changelogs and update
++# both this dict and that table together before any number derived from it is
++# published. PARAM_HEADERS deliberately has no entry: it is a JSON Schema
++# annotation convention, not an API the SDK itself gates by version, so
++# source evidence for it stands on its own (see SOURCE_SIGNALS below).
++SDK_FLOOR: dict[Feature, dict[Ecosystem, str]] = {
++    Feature.SERVER_DISCOVER: {Ecosystem.PYPI: "2.0.0", Ecosystem.NPM: "2.0.0"},
++    Feature.RESULT_TYPE: {Ecosystem.PYPI: "2.0.0", Ecosystem.NPM: "2.0.0"},
++    Feature.CACHEABLE_RESULT: {Ecosystem.PYPI: "2.0.0", Ecosystem.NPM: "2.0.0"},
++    Feature.MRTR: {Ecosystem.PYPI: "2.0.0", Ecosystem.NPM: "2.0.0"},
++}
++
++# Text signals a feature's handler leaves in source. Matched against raw file
++# text - a hit is evidence, not proof, which is exactly why SDK_FLOOR exists
++# to bound it.
++SOURCE_SIGNALS: dict[Feature, re.Pattern[str]] = {
++    Feature.SERVER_DISCOVER: re.compile(r"""["']server/discover["']"""),
++    Feature.RESULT_TYPE: re.compile(r"\bresultType\b|\bresult_type\b"),
++    Feature.CACHEABLE_RESULT: re.compile(r"\bttlMs\b|\bcacheScope\b|\bcache_scope\b"),
++    Feature.MRTR: re.compile(r"\bInputRequiredResult\b|\binputResponses\b"),
++    Feature.PARAM_HEADERS: re.compile(r"\bx-mcp-header\b", re.I),
++}
++
++_PY_SDK_NAMES = {"mcp", "modelcontextprotocol"}
++_JS_SDK_NAMES = {"@modelcontextprotocol/sdk"}
++
++_PY_SUFFIXES = {".py"}
++_JS_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"}
++
++_REQ_NAME_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)")
++_VERSION_RE = re.compile(r"\d+(?:\.\d+){1,2}")
++
++
++@dataclass(slots=True, frozen=True)
++class ArtifactFingerprint:
++    """Mirrors transport.revision.Fingerprint: same features type, weaker claim."""
++
++    features: FeatureSet
++    sdk_version: str | None
++    claim: Claim
++
++    @property
++    def is_unknown(self) -> bool:
++        return not self.features and self.sdk_version is None
++
++
++def _bare_version(spec: str) -> str | None:
++    match = _VERSION_RE.search(spec)
++    return match.group(0) if match else None
++
++
++def _pin_from_requirement(requirement: str, names: set[str]) -> str | None:
++    match = _REQ_NAME_RE.match(requirement.strip())
++    if match is None:
++        return None
++    normalized = match.group(1).lower().replace("_", "-")
++    if normalized not in {n.lower().replace("_", "-") for n in names}:
++        return None
++    return _bare_version(requirement[match.end() :])
++
++
++def _pin_from_pyproject(pyproject: Path) -> str | None:
++    try:
++        data = tomllib.loads(pyproject.read_text(encoding="utf-8", errors="replace"))
++    except (tomllib.TOMLDecodeError, OSError):
++        return None
++    project = data.get("project")
++    deps = project.get("dependencies") if isinstance(project, dict) else None
++    if not isinstance(deps, list):
++        return None
++    for dep in deps:
++        pin = _pin_from_requirement(str(dep), _PY_SDK_NAMES)
++        if pin is not None:
++            return pin
++    return None
++
++
++def _pin_from_requirements_txt(requirements: Path) -> str | None:
++    try:
++        text = requirements.read_text(encoding="utf-8", errors="replace")
++    except OSError:
++        return None
++    for line in text.splitlines():
++        line = line.strip()
++        if not line or line.startswith("#"):
++            continue
++        pin = _pin_from_requirement(line, _PY_SDK_NAMES)
++        if pin is not None:
++            return pin
++    return None
++
++
++def _pin_from_package_json(package_json: Path) -> str | None:
++    try:
++        data = json.loads(package_json.read_text(encoding="utf-8", errors="replace"))
++    except (ValueError, OSError):
++        return None
++    if not isinstance(data, dict):
++        return None
++    for section in ("dependencies", "devDependencies"):
++        deps = data.get(section)
++        if not isinstance(deps, dict):
++            continue
++        for name in _JS_SDK_NAMES:
++            spec = deps.get(name)
++            if isinstance(spec, str):
++                pin = _bare_version(spec)
++                if pin is not None:
++                    return pin
++    return None
++
++
++def detect_sdk_pin(root: Path) -> str | None:
++    """Pinned MCP SDK version, from pyproject.toml / requirements.txt / package.json.
++
++    Returns the bare version string (e.g. "2.1.0"), never the full requirement
++    specifier - callers compare it against SDK_FLOOR, which is keyed the same way.
++    """
++    pyproject = root / "pyproject.toml"
++    if pyproject.is_file():
++        pin = _pin_from_pyproject(pyproject)
++        if pin is not None:
++            return pin
++
++    requirements = root / "requirements.txt"
++    if requirements.is_file():
++        pin = _pin_from_requirements_txt(requirements)
++        if pin is not None:
++            return pin
++
++    package_json = root / "package.json"
++    if package_json.is_file():
++        pin = _pin_from_package_json(package_json)
++        if pin is not None:
++            return pin
++
++    return None
++
++
++def _ecosystem_of(root: Path) -> Ecosystem | None:
++    if (root / "pyproject.toml").is_file() or (root / "requirements.txt").is_file():
++        return Ecosystem.PYPI
++    if (root / "package.json").is_file():
++        return Ecosystem.NPM
++    return None
++
++
++def _source_files(root: Path) -> Iterator[Path]:
++    if not root.is_dir():
++        return
++    suffixes = _PY_SUFFIXES | _JS_SUFFIXES
++    for path in root.rglob("*"):
++        if path.is_file() and path.suffix in suffixes:
++            yield path
++
++
++def _source_features(root: Path) -> set[Feature]:
++    found: set[Feature] = set()
++    for path in _source_files(root):
++        text = path.read_text(encoding="utf-8", errors="replace")
++        if path.suffix in _PY_SUFFIXES:
++            try:
++                ast.parse(text)  # parse-only: proves it is source, never runs it
++            except SyntaxError:
++                continue
++        for feature, pattern in SOURCE_SIGNALS.items():
++            if pattern.search(text):
++                found.add(feature)
++    return found
++
++
++def _apply_sdk_floor(
++    observed: set[Feature], pin: str | None, root: Path
++) -> tuple[set[Feature], set[Feature]]:
++    """Split `observed` into (kept, dropped) against SDK_FLOOR.
++
++    A feature is dropped only when there is a floor to compare against and the
++    pin is both parseable and strictly below it. No pin, no floor entry, or an
++    unparseable version all mean "cannot rule it out" - the source evidence
++    stands.
++    """
++    if pin is None:
++        return set(observed), set()
++    try:
++        pin_version = Version(pin)
++    except InvalidVersion:
++        return set(observed), set()
++
++    ecosystem = _ecosystem_of(root)
++    kept: set[Feature] = set()
++    dropped: set[Feature] = set()
++    for feature in observed:
++        floor = SDK_FLOOR.get(feature, {}).get(ecosystem) if ecosystem is not None else None
++        if floor is None:
++            kept.add(feature)
++            continue
++        try:
++            floor_version = Version(floor)
++        except InvalidVersion:
++            kept.add(feature)
++            continue
++        if pin_version < floor_version:
++            dropped.add(feature)
++        else:
++            kept.add(feature)
++    return kept, dropped
++
++
++def _claim(value: object, caveat: str | None) -> Claim:
++    return Claim(
++        value=value,
++        method=Method.DETERMINISTIC,
++        derivation=Derivation.ARTIFACT,
++        confidence=ARTIFACT_CONFIDENCE,
++        observed_at=datetime.now(UTC),
++        caveat=caveat,
++    )
++
++
++def detect_features(root: Path) -> ArtifactFingerprint:
++    """Derive an ArtifactFingerprint from an extracted package tree at `root`.
++
++    `root` is expected to be the output of census.artifacts.fetch_artifact -
++    already downloaded, size-capped and safely extracted. This function only
++    reads text from it; it never imports, compiles, or runs anything found there.
++    """
++    pin = detect_sdk_pin(root)
++    observed = _source_features(root)
++    if pin is None and not observed:
++        return ArtifactFingerprint(
++            features=frozenset(),
++            sdk_version=None,
++            claim=_claim(None, "no SDK pin and no parseable source in the published artifact"),
++        )
++
++    kept, dropped = _apply_sdk_floor(observed, pin, root)
++    caveat = None
++    if dropped:
++        names = ", ".join(sorted(f.value for f in dropped))
++        caveat = f"source mentions {names} but the sdk pin ({pin}) predates it; sdk pin wins"
++    features = frozenset(kept)
++    return ArtifactFingerprint(
++        features=features,
++        sdk_version=pin,
++        claim=_claim(sorted(f.value for f in features), caveat),
++    )
+diff --git a/agent_perimeter/transport/revision.py b/agent_perimeter/transport/revision.py
+index 55cb9d7..a571876 100644
+--- a/agent_perimeter/transport/revision.py
++++ b/agent_perimeter/transport/revision.py
+@@ -23,20 +23,24 @@ from datetime import UTC, datetime
+ 
+ from agent_perimeter._contracts import Claim, Derivation, Method
+ from agent_perimeter.model.feature import Feature, FeatureSet, Revision
+ from agent_perimeter.transport.base import Transport, TransportError
+ 
+ # Widely-deployed revisions this scanner has no Revision member for. Naming
+ # them lets an unparseable claim carry an honest, specific caveat instead of
+ # the generic "no response at all" one (revision §2.2).
+ KNOWN_OLDER_REVISIONS = ("2025-06-18", "2025-03-26")
+ 
++# A live probe observed the running server answer. It is the strongest evidence
++# this tool produces, and every other derivation is calibrated below it.
++LIVE_PROBE_CONFIDENCE = 0.95
++
+ # The only features fingerprint() can ever add to a Fingerprint's features set
+ # -- everything _claimed_revision and _observed_features actually grant below.
+ # MRTR and SUBSCRIPTIONS_LISTEN need an active multi-step probe or an open
+ # stream; SESSION_HEADER, SSE_RESUMABILITY and SUBSCRIBE_UNSUBSCRIBE have no
+ # passive channel through the generic Transport protocol used here. A check
+ # that diffs a revision's full bundle against real fingerprint() output must
+ # restrict itself to this set, or it reports every server as permanently
+ # non-conformant in five features nothing can ever observe.
+ PASSIVELY_OBSERVABLE_FEATURES: frozenset[Feature] = frozenset(
+     {
+@@ -194,20 +198,21 @@ def fingerprint(transport: Transport) -> Fingerprint:
+         caveat = _revision_caveat(
+             versions,
+             discover_answered=Feature.SERVER_DISCOVER in features,
+             initialize_answered=Feature.INITIALIZE_HANDSHAKE in features,
+         )
+ 
+     claim = Claim(
+         value=claimed.value if claimed is not None else None,
+         method=Method.DETERMINISTIC,
+         derivation=Derivation.PROBE,
++        confidence=LIVE_PROBE_CONFIDENCE,
+         observed_at=datetime.now(UTC),
+         caveat=caveat,
+     )
+     return Fingerprint(
+         revision_claimed=claimed,
+         features=frozenset(features),
+         claim=claim,
+         protocol_versions_advertised=versions,
+         discover_error_code=discover_error_code,
+     )
+diff --git a/analysis/sdk_ground_truth.py b/analysis/sdk_ground_truth.py
+new file mode 100644
+index 0000000..930d31b
+--- /dev/null
++++ b/analysis/sdk_ground_truth.py
+@@ -0,0 +1,113 @@
++"""Artifact-derived feature detection over real packages, printed for a human
++to compare against a live-probe result by hand.
++
++What this script does NOT do: the "live-fingerprint" half of the ground-truth
++exercise (running this project's own live scanner against each package's
++running server, inside the Week 1 sandboxed stdio container - see
++agent_perimeter/transport/stdio.py) is separate, heavier infrastructure this
++script does not attempt. A human has to actually stand each server up and run
++that scanner themselves.
++
++What this script DOES do: for each (ecosystem, name) pair, call
++census.artifacts.fetch_artifact() to download and safely extract the published
++artifact (never executed), then census.detect.detect_features() to derive its
++FeatureSet from source alone, and print sdk_version / is_unknown / features -
++plus a blank column for the human to fill in with what the live probe actually
++saw. Comparing the two columns, across a real sample, is the empirical basis
++for agent_perimeter.census.detect.ARTIFACT_CONFIDENCE, which today is a stated
++placeholder (0.6) - see docs/methodology.md "## SDK version floors" for the
++same caveat about the SDK_FLOOR versions this module's detection depends on.
++
++Not part of the test suite - nothing here is imported or run by pytest. It is
++a tool for a human to run against the real internet:
++
++    uv run python analysis/sdk_ground_truth.py
++    uv run python analysis/sdk_ground_truth.py path/to/pairs.txt
++
++where a pairs file has one "ecosystem,name" pair per line, e.g.:
++
++    pypi,some-real-mcp-server
++    npm,@some-scope/some-real-mcp-server
++"""
++
++from __future__ import annotations
++
++import shutil
++import sys
++from pathlib import Path
++
++import httpx
++
++from agent_perimeter.census.artifacts import fetch_artifact
++from agent_perimeter.census.detect import detect_features
++from agent_perimeter.model.census import Ecosystem, FetchStatus, PackageCoords
++
++# Placeholder sample only - not confirmed to exist on the live registry today.
++# For the real ~30-package exercise, replace this with coordinates pulled from
++# an actual agent_perimeter.census.fetch.paginate() run against the registry.
++DEFAULT_SAMPLE: list[tuple[str, str]] = [
++    ("pypi", "mcp"),
++    ("npm", "@modelcontextprotocol/sdk"),
++]
++
++_ROW = "{package:<42} {sdk_version:<14} {is_unknown:<11} {features:<45} {live}"
++
++
++def _load_pairs(path: Path | None) -> list[tuple[str, str]]:
++    if path is None:
++        return DEFAULT_SAMPLE
++    pairs: list[tuple[str, str]] = []
++    for raw_line in path.read_text(encoding="utf-8").splitlines():
++        line = raw_line.strip()
++        if not line or line.startswith("#"):
++            continue
++        ecosystem, _, name = line.partition(",")
++        pairs.append((ecosystem.strip(), name.strip()))
++    return pairs
++
++
++def main(argv: list[str]) -> None:
++    path = Path(argv[1]) if len(argv) > 1 else None
++    pairs = _load_pairs(path)
++
++    print(
++        _ROW.format(
++            package="package",
++            sdk_version="sdk_version",
++            is_unknown="is_unknown",
++            features="artifact-derived features",
++            live="live_observed (fill in by hand)",
++        )
++    )
++    with httpx.Client() as client:
++        for eco_name, name in pairs:
++            try:
++                ecosystem = Ecosystem(eco_name)
++            except ValueError:
++                print(f"{name}: skipped, unrecognised ecosystem {eco_name!r}")
++                continue
++
++            result = fetch_artifact(client, PackageCoords(ecosystem=ecosystem, name=name))
++            if result.status is not FetchStatus.OK or result.root is None:
++                print(f"{name}: fetch failed - {result.status.value}: {result.detail}")
++                continue
++
++            fingerprint = detect_features(result.root)
++            features = ",".join(sorted(f.value for f in fingerprint.features)) or "-"
++            print(
++                _ROW.format(
++                    package=f"{name}@{result.version}",
++                    sdk_version=str(fingerprint.sdk_version),
++                    is_unknown=str(fingerprint.is_unknown),
++                    features=features,
++                    live="<fill in>",
++                )
++            )
++            # Courtesy cleanup for a real multi-package run - fetch_artifact's
++            # own docstring makes root caller-owned; nothing else here reads it
++            # again once printed.
++            shutil.rmtree(result.root.parent, ignore_errors=True)
++
++
++if __name__ == "__main__":
++    main(sys.argv)
+diff --git a/docs/methodology.md b/docs/methodology.md
+index ffd84c8..2ef0d0f 100644
+--- a/docs/methodology.md
++++ b/docs/methodology.md
+@@ -64,20 +64,53 @@ duplicate despite the filter.
+ **Packages vs. remotes.** Roughly 70% of registry entries carry a `remotes`
+ array (`[{"type": "streamable-http", "url": "..."}, ...]`) and no `packages`
+ field at all - they are remote-hosted servers with no fetchable artifact.
+ `RegistryEntry.remotes` captures the URLs from that array so those servers
+ are not invisible to the census. The remaining entries carry a `packages`
+ array; `registryType` values seen include `npm`, `pypi`, `oci`, `nuget`, and
+ `mcpb` - `oci`/`nuget`/`mcpb` are recognised as known-but-unmodeled ecosystem
+ types (Task 1's `Ecosystem` enum models only `pypi`/`npm`) and are counted
+ distinctly from a genuinely unrecognised or missing `registryType`.
+ 
++## SDK version floors
++
++`agent_perimeter/census/detect.py`'s `SDK_FLOOR` bounds artifact-derived
++feature claims: a package pinned to an SDK release below a feature's floor
++cannot be credited with that feature, whatever its source mentions. Every
++number the artifact census reports moves if a floor below is wrong.
++
++**Status: TBD - none of the rows below are verified.** They were written
++during Task 4's implementation without live access to the real MCP SDK
++changelogs (sandboxed environment, no network egress). The version numbers
++are illustrative placeholders chosen only so the comparison logic in
++`detect.py` has something parseable to run against in tests - they are not
++claims about the real `mcp` or `@modelcontextprotocol/sdk` release history.
++**Do not cite these numbers, and do not run the registry scan for
++publication, until every row is verified against the live changelog and this
++table is updated with real dates and URLs.**
++
++| Feature | Ecosystem | Floor version | Release date | Changelog URL | Date checked |
++|---|---|---|---|---|---|
++| `server_discover` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
++| `server_discover` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
++| `result_type` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
++| `result_type` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
++| `cacheable_result` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
++| `cacheable_result` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
++| `mrtr` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
++| `mrtr` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
++
++`param_headers` has no floor row: it is a JSON Schema annotation convention
++(`x-mcp-header`) that any source can carry regardless of which SDK version is
++pinned, not an API the SDK gates by release - see the comment above
++`SDK_FLOOR` in `detect.py`.
++
+ ## Measured precision and recall
+ 
+ Regenerated on every commit by `agent_perimeter.eval.run`. If this table is
+ stale, CI is broken.
+ 
+ <!-- EVAL:START -->
+ 
+ Local corpus: `tests/fixtures/corpus.yaml` version 1.0.0, 19 cases.
+ 
+ MCPTox: not run (dataset not present; set AP_MCPTOX_PATH to include it).
+diff --git a/pyproject.toml b/pyproject.toml
+index 9489dfd..050cbf1 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -6,20 +6,21 @@ requires-python = ">=3.12"
+ license = { text = "Apache-2.0" }
+ dependencies = [
+     "pydantic>=2.7",
+     "pyyaml>=6.0",
+     "httpx>=0.27",
+     "typer>=0.12",
+     "sqlalchemy>=2.0",
+     "alembic>=1.13",
+     "psycopg[binary]>=3.1",
+     "jinja2>=3.1",
++    "packaging>=24.0",
+ ]
+ 
+ [project.scripts]
+ agent-perimeter = "agent_perimeter.cli:app"
+ 
+ [dependency-groups]
+ dev = [
+     "pytest>=8.2",
+     "pytest-cov>=5.0",
+     "mypy>=1.10",
+diff --git a/tests/census/test_detect.py b/tests/census/test_detect.py
+new file mode 100644
+index 0000000..eb1f263
+--- /dev/null
++++ b/tests/census/test_detect.py
+@@ -0,0 +1,76 @@
++from pathlib import Path
++
++from agent_perimeter._contracts import Derivation
++from agent_perimeter.census.detect import (
++    ARTIFACT_CONFIDENCE,
++    detect_features,
++    detect_sdk_pin,
++)
++from agent_perimeter.model.feature import Feature
++from agent_perimeter.transport.revision import LIVE_PROBE_CONFIDENCE
++
++FIXTURES = Path("tests/fixtures/artifacts")
++
++
++def test_artifact_confidence_is_strictly_below_a_live_probe() -> None:
++    """An artifact says what a package could do, not what a deployment does."""
++    assert ARTIFACT_CONFIDENCE < LIVE_PROBE_CONFIDENCE
++
++
++def test_a_modern_sdk_pin_is_read_from_pyproject() -> None:
++    assert detect_sdk_pin(FIXTURES / "py_new") == "2.1.0"
++
++
++def test_an_old_sdk_pin_bounds_the_feature_set_regardless_of_source() -> None:
++    """Source mentioning server/discover cannot raise a package pinned below it."""
++    fp = detect_features(FIXTURES / "py_old")
++    assert Feature.SERVER_DISCOVER not in fp.features
++    assert "sdk pin" in (fp.claim.caveat or "")
++
++
++def test_every_artifact_derived_claim_is_marked_as_such() -> None:
++    fp = detect_features(FIXTURES / "py_new")
++    assert fp.claim.derivation is Derivation.ARTIFACT
++    assert fp.claim.confidence == ARTIFACT_CONFIDENCE
++
++
++def test_unresolvable_coordinates_yield_unknown_not_absent() -> None:
++    """No SDK pin and no parseable source is UNKNOWN, never 'does not support'."""
++    fp = detect_features(FIXTURES / "empty")
++    assert fp.is_unknown
++    assert fp.features == frozenset()
++    assert fp.claim.caveat
++
++
++def test_the_features_type_matches_the_live_path() -> None:
++    """Same type as transport.revision.Fingerprint.features, so they compare directly."""
++    fp = detect_features(FIXTURES / "py_new")
++    assert isinstance(fp.features, frozenset)
++
++
++def test_detection_never_imports_the_artifact() -> None:
++    src = Path("agent_perimeter/census/detect.py").read_text()
++    for forbidden in ("importlib", "exec(", "eval(", "subprocess", "__import__"):
++        assert forbidden not in src
++
++
++# --- Beyond the brief's 7: exercise both branches of the disagreement rule and
++# the JS token-scan path, so py_new/js_new are not fixtures nothing runs against.
++
++
++def test_a_modern_sdk_pin_does_not_drop_the_features_it_supports() -> None:
++    """The mirror of the py_old case: source evidence that the pin *does* clear
++    is kept, not just dropped evidence being the only thing under test."""
++    fp = detect_features(FIXTURES / "py_new")
++    assert Feature.SERVER_DISCOVER in fp.features
++    assert Feature.RESULT_TYPE in fp.features
++    assert "sdk pin" not in (fp.claim.caveat or "")
++
++
++def test_a_javascript_artifact_is_detected_via_token_scan() -> None:
++    """Detection is by ast parse for Python and a token scan for JavaScript -
++    this exercises the JS half, which none of the brief's 7 tests touch."""
++    fp = detect_features(FIXTURES / "js_new")
++    assert fp.sdk_version == "2.1.0"
++    assert Feature.RESULT_TYPE in fp.features
++    assert Feature.CACHEABLE_RESULT in fp.features
+diff --git a/tests/fixtures/artifacts/empty/README.md b/tests/fixtures/artifacts/empty/README.md
+new file mode 100644
+index 0000000..d964389
+--- /dev/null
++++ b/tests/fixtures/artifacts/empty/README.md
+@@ -0,0 +1,9 @@
++# Empty artifact fixture
++
++Deliberately empty of any manifest (pyproject.toml, requirements.txt,
++package.json) or source file (.py/.js/.ts). Stands in for a package with no
++SDK pin and no parseable source - the unresolvable case detect.py must report
++as UNKNOWN, not as "does not support".
++
++This file exists only so git tracks the directory; it is not a source file
++and carries none of detect.py's source signals.
+diff --git a/tests/fixtures/artifacts/js_new/index.js b/tests/fixtures/artifacts/js_new/index.js
+new file mode 100644
+index 0000000..cfd0002
+--- /dev/null
++++ b/tests/fixtures/artifacts/js_new/index.js
+@@ -0,0 +1,11 @@
++// Synthetic MCP server source for detect.py's tests. Not a real package -
++// just enough JavaScript for the token scan to match, standing in for a
++// server whose pinned SDK (@modelcontextprotocol/sdk ^2.1.0, see
++// ../package.json) is new enough to actually ship the 2026-07-28 result
++// envelope.
++
++function handleToolCall(input) {
++  return { resultType: "text", ttlMs: 60000 };
++}
++
++module.exports = { handleToolCall };
+diff --git a/tests/fixtures/artifacts/js_new/package.json b/tests/fixtures/artifacts/js_new/package.json
+new file mode 100644
+index 0000000..c3cdc3c
+--- /dev/null
++++ b/tests/fixtures/artifacts/js_new/package.json
+@@ -0,0 +1,8 @@
++{
++  "name": "demo-js-mcp-server",
++  "version": "0.1.0",
++  "description": "Synthetic fixture package for detect.py's tests, not a real package.",
++  "dependencies": {
++    "@modelcontextprotocol/sdk": "^2.1.0"
++  }
++}
+diff --git a/tests/fixtures/artifacts/py_new/demo_mcp_server/server.py b/tests/fixtures/artifacts/py_new/demo_mcp_server/server.py
+new file mode 100644
+index 0000000..d20a0a6
+--- /dev/null
++++ b/tests/fixtures/artifacts/py_new/demo_mcp_server/server.py
+@@ -0,0 +1,19 @@
++"""Synthetic MCP server source for detect.py's tests.
++
++Not a real package - just enough Python for the ast parser to accept and for
++the source-signal regexes to match, standing in for a server whose pinned SDK
++(mcp>=2.1.0, see ../pyproject.toml) is new enough to actually ship these
++handlers.
++"""
++
++from __future__ import annotations
++
++
++def handle_discover() -> dict[str, object]:
++    """Registered at the "server/discover" RPC method."""
++    return {"capabilities": {}}
++
++
++def handle_tool_result() -> dict[str, object]:
++    """Returns the 2026-07-28 result envelope shape."""
++    return {"resultType": "text", "ttlMs": 60000}
+diff --git a/tests/fixtures/artifacts/py_new/pyproject.toml b/tests/fixtures/artifacts/py_new/pyproject.toml
+new file mode 100644
+index 0000000..8471e37
+--- /dev/null
++++ b/tests/fixtures/artifacts/py_new/pyproject.toml
+@@ -0,0 +1,8 @@
++[project]
++name = "demo-mcp-server"
++version = "0.1.0"
++description = "Synthetic fixture package for detect.py's tests, not a real package."
++dependencies = [
++    "mcp>=2.1.0",
++    "httpx>=0.27",
++]
+diff --git a/tests/fixtures/artifacts/py_old/legacy_mcp_server/server.py b/tests/fixtures/artifacts/py_old/legacy_mcp_server/server.py
+new file mode 100644
+index 0000000..dc8ad32
+--- /dev/null
++++ b/tests/fixtures/artifacts/py_old/legacy_mcp_server/server.py
+@@ -0,0 +1,16 @@
++"""Synthetic MCP server source for detect.py's tests.
++
++Not a real package. The pinned SDK (mcp>=1.4.0, see ../pyproject.toml)
++predates the 2026-07-28 revision, but this source string-matches the newer
++"server/discover" method name anyway - the disagreement detect.py's
++SDK-floor rule exists to catch: a package cannot serve what its pinned
++dependency cannot express, no matter what its own source mentions.
++"""
++
++from __future__ import annotations
++
++
++def route(method: str) -> str | None:
++    if method == "server/discover":
++        return "not implemented in this old build"
++    return None
+diff --git a/tests/fixtures/artifacts/py_old/pyproject.toml b/tests/fixtures/artifacts/py_old/pyproject.toml
+new file mode 100644
+index 0000000..e4423b0
+--- /dev/null
++++ b/tests/fixtures/artifacts/py_old/pyproject.toml
+@@ -0,0 +1,7 @@
++[project]
++name = "legacy-mcp-server"
++version = "0.1.0"
++description = "Synthetic fixture package for detect.py's tests, not a real package."
++dependencies = [
++    "mcp>=1.4.0",
++]
+diff --git a/uv.lock b/uv.lock
+index af65b7a..9dafb06 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -7,20 +7,21 @@ resolution-markers = [
+ ]
+ 
+ [[package]]
+ name = "agent-perimeter"
+ version = "0.1.0"
+ source = { editable = "." }
+ dependencies = [
+     { name = "alembic" },
+     { name = "httpx" },
+     { name = "jinja2" },
++    { name = "packaging" },
+     { name = "psycopg", extra = ["binary"] },
+     { name = "pydantic" },
+     { name = "pyyaml" },
+     { name = "sqlalchemy" },
+     { name = "typer" },
+ ]
+ 
+ [package.dev-dependencies]
+ dev = [
+     { name = "hypothesis" },
+@@ -30,20 +31,21 @@ dev = [
+     { name = "pytest-cov" },
+     { name = "ruff" },
+     { name = "types-pyyaml" },
+ ]
+ 
+ [package.metadata]
+ requires-dist = [
+     { name = "alembic", specifier = ">=1.13" },
+     { name = "httpx", specifier = ">=0.27" },
+     { name = "jinja2", specifier = ">=3.1" },
++    { name = "packaging", specifier = ">=24.0" },
+     { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
+     { name = "pydantic", specifier = ">=2.7" },
+     { name = "pyyaml", specifier = ">=6.0" },
+     { name = "sqlalchemy", specifier = ">=2.0" },
+     { name = "typer", specifier = ">=0.12" },
+ ]
+ 
+ [package.metadata.requires-dev]
+ dev = [
+     { name = "hypothesis", specifier = ">=6.167.1" },

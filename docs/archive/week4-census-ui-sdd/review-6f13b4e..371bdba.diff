@@ -1,0 +1,507 @@
+# Review package: 6f13b4e..HEAD
+
+## Commits
+371bdba feat: live scan screen with skeletons and visible skipped checks
+
+## Files changed
+ web/app/components/PhaseGroup.tsx |  59 ++++++++++++
+ web/app/globals.css               |  48 ++++++++++
+ web/app/scans/[id]/fixtures.ts    | 101 ++++++++++++++++++++
+ web/app/scans/[id]/page.tsx       | 195 ++++++++++++++++++++++++++++++++++++++
+ web/tests/live-scan.spec.ts       |  41 ++++++++
+ 5 files changed, 444 insertions(+)
+
+## Diff
+diff --git a/web/app/components/PhaseGroup.tsx b/web/app/components/PhaseGroup.tsx
+new file mode 100644
+index 0000000..bc887de
+--- /dev/null
++++ b/web/app/components/PhaseGroup.tsx
+@@ -0,0 +1,59 @@
++/**
++ * One phase's section of the live-scan check list (task-12 ruling 3):
++ * `RunTimeline` is a flat chronological `<ol>` with no per-item testid, so
++ * it can't be the vehicle for "checks grouped by phase, each row
++ * inspectable" -- this component is. `role="group"` + `aria-labelledby`
++ * pointing at the phase heading gives the section an accessible name equal
++ * to the phase string (e.g. "revision"), which is what
++ * `getByRole("group", { name: /revision/i })` resolves against.
++ *
++ * A skipped check never came through as a `ScanCheckEvent` (the backend
++ * only reports skips in the terminal frame's `skipped` array -- see
++ * `scan_runner.py`), but it still gets a row here with its reason spelled
++ * out, never silently dropped from the list (brief: "skipped checks are
++ * shown with a reason, not omitted").
++ */
++export interface PhaseGroupCheck {
++  checkId: string;
++  status: "passed" | "errored" | "skipped";
++  /** Only set for a check that actually ran. */
++  elapsedMs?: number;
++  /** Only set for a skipped check -- the terminal frame's `skipped[].detail`. */
++  detail?: string;
++}
++
++export interface PhaseGroupProps {
++  phase: string;
++  checks: PhaseGroupCheck[];
++}
++
++export function PhaseGroup({ phase, checks }: PhaseGroupProps) {
++  const headingId = `phase-group-${phase}`;
++  return (
++    <section className="bok-phase-group" role="group" aria-labelledby={headingId}>
++      <h2 id={headingId} className="bok-phase-group-heading">
++        {phase}
++      </h2>
++      <ul className="bok-phase-group-list">
++        {checks.map((check) => (
++          <li
++            key={check.checkId}
++            data-testid="check-row"
++            data-status={check.status}
++            className={`bok-check-row bok-check-${check.status}`}
++          >
++            <span className="bok-numeric bok-check-id">{check.checkId}</span>
++            {check.status === "skipped" ? (
++              <span className="bok-check-detail">Skipped — {check.detail}</span>
++            ) : (
++              <span className="bok-check-detail">
++                {check.status === "passed" ? "Passed" : "Errored"}
++                {check.elapsedMs != null ? ` · ${check.elapsedMs}ms` : ""}
++              </span>
++            )}
++          </li>
++        ))}
++      </ul>
++    </section>
++  );
++}
+diff --git a/web/app/globals.css b/web/app/globals.css
+index 059c1f0..259c25e 100644
+--- a/web/app/globals.css
++++ b/web/app/globals.css
+@@ -532,20 +532,68 @@ body {
+ }
+ .bok-hint {
+   color: var(--neutral-600);
+   font-size: 0.9em;
+ }
+ .bok-scope-file-name {
+   font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+   font-size: 0.9em;
+ }
+ 
++/* Live scan screen (task 12). */
++.bok-live-scan {
++  display: flex;
++  flex-direction: column;
++  gap: calc(var(--density-gap) * 2);
++  max-width: 48rem;
++}
++.bok-scan-progress {
++  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
++  color: var(--neutral-700);
++}
++.bok-phase-group {
++  border: 1px solid var(--neutral-200);
++  border-radius: var(--radius-control);
++  padding: var(--density-gap);
++}
++.bok-phase-group-heading {
++  text-transform: capitalize;
++  font-family: var(--font-newsreader), serif;
++  margin: 0 0 var(--density-cell-y);
++}
++.bok-phase-group-list {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++  display: flex;
++  flex-direction: column;
++  gap: var(--density-cell-y);
++}
++.bok-check-row {
++  display: flex;
++  justify-content: space-between;
++  gap: var(--density-gap);
++  padding: var(--density-cell-y) var(--density-cell-x);
++  border-radius: var(--radius-cell);
++  border-left: 2px solid var(--neutral-200);
++}
++.bok-check-row.bok-check-passed {
++  border-left-color: var(--provenance-verified);
++}
++.bok-check-row.bok-check-errored {
++  border-left-color: var(--severity-critical);
++}
++.bok-check-row.bok-check-skipped {
++  border-left-color: var(--severity-medium);
++  color: var(--neutral-600);
++}
++
+ /* Skeleton -- loading is a skeleton, never a spinner (00 §5.5). */
+ .bok-skeleton {
+   display: flex;
+   flex-direction: column;
+   gap: var(--density-cell-y);
+ }
+ .bok-skeleton-line {
+   height: 1em;
+   border-radius: var(--radius-cell);
+   background: linear-gradient(90deg, var(--neutral-100), var(--neutral-150), var(--neutral-100));
+diff --git a/web/app/scans/[id]/fixtures.ts b/web/app/scans/[id]/fixtures.ts
+new file mode 100644
+index 0000000..8dc7aa4
+--- /dev/null
++++ b/web/app/scans/[id]/fixtures.ts
+@@ -0,0 +1,101 @@
++/**
++ * Canned `ScanEvent[]` sequences for `?fixture=streaming|degraded|deterministic`
++ * (task-10's `?fixture=` precedent, `findings/page.tsx`). Check ids are real
++ * namespaces verified against the Python modules under `agent_perimeter/checks`
++ * (task-12 brief); `phase` on each event is the id's namespace prefix, matching
++ * `scan_runner.py:258` (`check.id.split(".", 1)[0]`).
++ *
++ * `descriptions.llm_judge` is the one check the determinism budget lets call
++ * a model (CLAUDE.md) -- it never appears as a running check in any of
++ * these three fixtures, only as the single skipped entry in `degraded`'s
++ * terminal frame. That is deliberate: it is this module's only lever for
++ * "a model lane engaged" (`page.tsx` watches for its check id in the
++ * arrived-event stream), and the determinism budget makes that the
++ * exception, not the rule -- `deterministic` shows the common case,
++ * `degraded` shows the one check the model-unavailable path actually skips.
++ */
++import type { ScanCheckEvent, ScanEvent, ScanTerminalEvent } from "@/src/lib/api";
++
++// 30 real, non-model check ids spanning every phase in the namespace list
++// the brief hands us (`active`, `descriptions`, `injection`, `revision`,
++// `secrets`, `static`) -- `revision` alone contributes 11, so any 29-slice
++// below keeps at least one `revision` row (RED test 1's requirement).
++const NON_MODEL_CHECK_IDS = [
++  "active.command_injection",
++  "active.confused_deputy",
++  "active.path_traversal",
++  "active.ssrf",
++  "descriptions.imperative_injection",
++  "descriptions.name_schema_mismatch",
++  "descriptions.shadowing",
++  "descriptions.unicode_anomaly",
++  "injection.agent_adapter",
++  "injection.path_proof",
++  "revision.cache_scope",
++  "revision.conformance_mismatch",
++  "revision.deprecated_features",
++  "revision.header_annotation_invalid",
++  "revision.header_annotation_type",
++  "revision.header_annotation_unreachable",
++  "revision.header_body_mismatch",
++  "revision.issuer_validation",
++  "revision.registration_mode",
++  "revision.request_state_binding",
++  "revision.schema_composition",
++  "revision.state_handle_exposure",
++  "secrets.config_scan",
++  "secrets.env_scan",
++  "secrets.history_scan",
++  "static.auth_mode",
++  "static.cleartext_target",
++  "static.scope_breadth",
++  "static.session_state",
++  "static.token_passthrough",
++] as const;
++
++const MODEL_CHECK_ID = "descriptions.llm_judge";
++
++function phaseOf(checkId: string): string {
++  const dot = checkId.indexOf(".");
++  return dot === -1 ? checkId : checkId.slice(0, dot);
++}
++
++function buildCheckEvents(ids: readonly string[], total: number): ScanCheckEvent[] {
++  return ids.map((checkId, index) => ({
++    check_id: checkId,
++    status: "passed",
++    elapsed_ms: 30 + ((index * 17) % 90),
++    phase: phaseOf(checkId),
++    completed: index + 1,
++    total,
++  }));
++}
++
++const STREAMING_IDS = NON_MODEL_CHECK_IDS.slice(0, 29);
++const streamingTerminal: ScanTerminalEvent = { terminal: true, completed: 29, total: 29, skipped: [] };
++const STREAMING: ScanEvent[] = [...buildCheckEvents(STREAMING_IDS, 29), streamingTerminal];
++
++const DEGRADED_RUNNABLE_IDS = NON_MODEL_CHECK_IDS.slice(0, 28);
++const degradedTerminal: ScanTerminalEvent = {
++  terminal: true,
++  completed: 28,
++  total: 29,
++  skipped: [
++    {
++      check_id: MODEL_CHECK_ID,
++      reason: "model_unavailable",
++      detail: "Skipped — no model provider is configured for this scan.",
++    },
++  ],
++};
++const DEGRADED: ScanEvent[] = [...buildCheckEvents(DEGRADED_RUNNABLE_IDS, 29), degradedTerminal];
++
++const DETERMINISTIC_IDS = NON_MODEL_CHECK_IDS.slice(0, 29);
++const deterministicTerminal: ScanTerminalEvent = { terminal: true, completed: 29, total: 29, skipped: [] };
++const DETERMINISTIC: ScanEvent[] = [...buildCheckEvents(DETERMINISTIC_IDS, 29), deterministicTerminal];
++
++export const FIXTURES: Record<string, ScanEvent[]> = {
++  streaming: STREAMING,
++  degraded: DEGRADED,
++  deterministic: DETERMINISTIC,
++};
+diff --git a/web/app/scans/[id]/page.tsx b/web/app/scans/[id]/page.tsx
+new file mode 100644
+index 0000000..8b58170
+--- /dev/null
++++ b/web/app/scans/[id]/page.tsx
+@@ -0,0 +1,195 @@
++"use client";
++
++/**
++ * Screen 2 -- live scan (brief §7). Subscribes to the check-event stream
++ * and renders checks grouped by phase (`PhaseGroup`) as they arrive, a
++ * single `Skeleton` standing in for "more checks incoming" (never a
++ * spinner, 00 §5.5), and one `aria-live="polite"` `role="status"` region
++ * that carries the running "n of total" announcement while the scan is in
++ * flight.
++ *
++ * That status region and the terminal summary (`EmptyState`, task-12
++ * ruling 4) are rendered by the same ternary, never both at once:
++ * `EmptyState` itself renders `role="status"` (`_bok-ui.tsx`), so running
++ * the two together would leave two `role="status"` elements on the page
++ * simultaneously -- a Playwright strict-mode violation, the same class of
++ * problem Task 11 hit independently with Next's own route announcer. The
++ * pending-check `Skeleton` is the other `role="status"` source (ruling 2);
++ * it is gated on `hasPending`, which goes false the instant the last
++ * *runnable* check's event arrives (not on the terminal frame, and not
++ * simply "completed === total", since a run with a skip -- `degraded` --
++ * never reaches completed === total on its own) so it clears well before
++ * the terminal frame's extra pause below gives the status region a clean,
++ * single-match window a Playwright poll can actually observe.
++ *
++ * `params`/`searchParams` are both Promises in Next 15; this page is a
++ * Client Component (it does real client-side subscription work, ruling 1),
++ * so they're unwrapped with React's `use()` rather than `await` --
++ * `findings/page.tsx`'s `await searchParams` pattern is for an async
++ * Server Component, which this can't be and still subscribe to anything.
++ *
++ * `?fixture=streaming|degraded|deterministic` replays a canned
++ * `ScanEvent[]` (`./fixtures.ts`) through `replayScanEvents`, which shares
++ * `subscribeToScanEvents`'s exact `(id, onEvent, onError?) => unsubscribe`
++ * signature and dispatches on a real `setTimeout` cadence -- not one
++ * synchronous dump. No live backend is reachable from this project's
++ * Playwright runs (no CORS/rewrite wired), so the real `subscribeToScanEvents`
++ * branch below is wired for production but isn't exercised by any test here
++ * -- the same forward-reference pattern `app/page.tsx`'s real `createScan`
++ * call already uses.
++ */
++import { use, useEffect, useMemo, useState } from "react";
++
++import { PhaseGroup, type PhaseGroupCheck } from "@/app/components/PhaseGroup";
++import { EmptyState, QuotaStrip, Skeleton, type ProviderQuota } from "@/src/lib/_bok-ui";
++import { isTerminalEvent, subscribeToScanEvents, type ScanEvent, type ScanTerminalEvent } from "@/src/lib/api";
++import { FIXTURES } from "./fixtures";
++
++// 29 checks at 30ms apart (~870ms) plus a 500ms pause before the terminal
++// frame -- comfortably under the ~2s ruling-2 pacing budget, and the pause
++// is what gives the status region's un-collided "n of total" text a window
++// wide enough for Playwright's poll interval to land inside, before it's
++// swapped for the terminal summary.
++const FRAME_DELAY_MS = 30;
++const TERMINAL_PAUSE_MS = 500;
++
++function replayScanEvents(
++  id: string,
++  events: ScanEvent[],
++  onEvent: (event: ScanEvent) => void,
++  _onError?: (error: Event) => void,
++): () => void {
++  // Kept only to match `subscribeToScanEvents`'s exact call signature
++  // (ruling 1) -- a canned replay never errors, so there's nothing to call
++  // it with.
++  void _onError;
++  let cancelled = false;
++  let delay = 0;
++  const timers = events.map((event) => {
++    delay += isTerminalEvent(event) ? TERMINAL_PAUSE_MS : FRAME_DELAY_MS;
++    return setTimeout(() => {
++      if (!cancelled) onEvent(event);
++    }, delay);
++  });
++  return () => {
++    cancelled = true;
++    timers.forEach(clearTimeout);
++  };
++}
++
++function phaseOf(checkId: string): string {
++  const dot = checkId.indexOf(".");
++  return dot === -1 ? checkId : checkId.slice(0, dot);
++}
++
++interface CheckRow extends PhaseGroupCheck {
++  phase: string;
++}
++
++// The only check the determinism budget lets call a model (CLAUDE.md) --
++// its presence in the arrived-event stream is this screen's one signal
++// that a model lane engaged at all.
++const MODEL_CHECK_ID = "descriptions.llm_judge";
++
++// ponytail: `ScanEvent` carries no real provider-quota numbers on the wire
++// today -- this acknowledges the model lane engaged, it isn't live quota
++// telemetry. Swap for real numbers once the backend streams them.
++const PLACEHOLDER_PROVIDERS: ProviderQuota[] = [{ name: "model provider", status: "ok", used: 1, limit: 1 }];
++
++export default function LiveScanPage({
++  params,
++  searchParams,
++}: {
++  params: Promise<{ id: string }>;
++  searchParams: Promise<{ fixture?: string }>;
++}) {
++  const { id } = use(params);
++  const { fixture } = use(searchParams);
++
++  const [rows, setRows] = useState<CheckRow[]>([]);
++  const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
++  const [terminalEvent, setTerminalEvent] = useState<ScanTerminalEvent | null>(null);
++  const [modelEngaged, setModelEngaged] = useState(false);
++
++  useEffect(() => {
++    setRows([]);
++    setProgress(null);
++    setTerminalEvent(null);
++    setModelEngaged(false);
++
++    function handleEvent(event: ScanEvent) {
++      if (isTerminalEvent(event)) {
++        setProgress({ completed: event.completed, total: event.total });
++        setTerminalEvent(event);
++        if (event.skipped.length > 0) {
++          setRows((prev) => [
++            ...prev,
++            ...event.skipped.map((s) => ({
++              checkId: s.check_id,
++              phase: phaseOf(s.check_id),
++              status: "skipped" as const,
++              detail: s.detail,
++            })),
++          ]);
++        }
++        return;
++      }
++      setProgress({ completed: event.completed, total: event.total });
++      if (event.check_id === MODEL_CHECK_ID) setModelEngaged(true);
++      setRows((prev) => [
++        ...prev,
++        { checkId: event.check_id, phase: event.phase, status: event.status, elapsedMs: event.elapsed_ms },
++      ]);
++    }
++
++    if (fixture) {
++      return replayScanEvents(id, FIXTURES[fixture] ?? [], handleEvent);
++    }
++    return subscribeToScanEvents(id, handleEvent);
++  }, [id, fixture]);
++
++  const phases = useMemo(() => {
++    const grouped = new Map<string, PhaseGroupCheck[]>();
++    for (const row of rows) {
++      const list = grouped.get(row.phase) ?? [];
++      list.push(row);
++      grouped.set(row.phase, list);
++    }
++    return grouped;
++  }, [rows]);
++
++  // False once terminal fires, whatever `completed`/`total` say -- a run
++  // with a skip (`degraded`) never reaches completed === total on its own,
++  // and the terminal frame is the actual "nothing more is coming" signal.
++  const hasPending = terminalEvent === null && (progress === null || progress.completed < progress.total);
++  const skippedCount = terminalEvent?.skipped.length ?? 0;
++
++  return (
++    <main className="bok-live-scan">
++      <h1>Scan {id}</h1>
++
++      {terminalEvent === null ? (
++        <p role="status" aria-live="polite" className="bok-scan-progress">
++          {progress ? `${progress.completed} of ${progress.total} checks complete` : "Starting scan…"}
++        </p>
++      ) : (
++        <EmptyState
++          title="No findings for the checks that ran"
++          description={
++            skippedCount === 0
++              ? "0 checks skipped."
++              : `${skippedCount} check${skippedCount === 1 ? "" : "s"} skipped — see the skipped rows below for why.`
++          }
++        />
++      )}
++
++      {modelEngaged && <QuotaStrip providers={PLACEHOLDER_PROVIDERS} />}
++
++      {[...phases.entries()].map(([phase, checks]) => (
++        <PhaseGroup key={phase} phase={phase} checks={checks} />
++      ))}
++
++      {hasPending && <Skeleton lines={4} />}
++    </main>
++  );
++}
+diff --git a/web/tests/live-scan.spec.ts b/web/tests/live-scan.spec.ts
+new file mode 100644
+index 0000000..b7a0138
+--- /dev/null
++++ b/web/tests/live-scan.spec.ts
+@@ -0,0 +1,41 @@
++import { expect, test } from "@playwright/test";
++
++test("checks stream in grouped by phase", async ({ page }) => {
++  await page.goto("/scans/1?fixture=streaming");
++  await expect(page.getByRole("group", { name: /revision/i })).toBeVisible();
++  await expect(page.getByTestId("check-row")).toHaveCount(29, { timeout: 10_000 });
++});
++
++test("no spinner is ever rendered", async ({ page }) => {
++  await page.goto("/scans/1?fixture=streaming");
++  await expect(page.locator("[data-loading='spinner']")).toHaveCount(0);
++  await expect(page.getByTestId("skeleton").first()).toBeVisible();
++});
++
++test("skipped checks are shown with a reason, not omitted", async ({ page }) => {
++  await page.goto("/scans/1?fixture=degraded");
++  const skipped = page.getByTestId("check-row").filter({ hasText: /skipped/i });
++  await expect(skipped).toHaveCount(1);
++  await expect(skipped).toContainText(/no model provider/i);
++});
++
++test("the quota strip is absent when no model lane engages", async ({ page }) => {
++  await page.goto("/scans/1?fixture=deterministic");
++  await expect(page.getByTestId("quota-strip")).toHaveCount(0);
++});
++
++test("progress is announced to assistive technology", async ({ page }) => {
++  await page.goto("/scans/1?fixture=streaming");
++  // `Skeleton` (bok-ui) also carries role="status" (`_bok-ui.tsx`) and is
++  // legitimately visible from the very first render, before any check has
++  // streamed in -- a real, permanent (not merely racy) collision with the
++  // progress announcer's own role="status", since Playwright's `toContainText`
++  // fails immediately on a strict-mode violation rather than retrying through
++  // it (verified directly: both 5-worker and --workers=1 runs failed in
++  // under 700ms, not at the 5s timeout). `Skeleton` renders no text at all,
++  // so `.filter({ hasText: /of/ })` -- the same disambiguation-by-filter
++  // pattern `scan-setup.spec.ts` uses for Next's own route announcer --
++  // narrows to the progress announcer without touching either component's
++  // real accessibility semantics.
++  await expect(page.getByRole("status").filter({ hasText: /of/ })).toContainText(/\d+ of 29/);
++});

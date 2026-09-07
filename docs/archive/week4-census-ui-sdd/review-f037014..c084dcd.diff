@@ -1,0 +1,413 @@
+# Review package: f037014..HEAD
+
+## Commits
+c084dcd fix: close 2 review findings from task 6a
+
+## Files changed
+ agent_perimeter/cli.py            |  26 ++++++---
+ tests/census/test_passive_only.py | 112 ++++++++++++++++++++++++++++++++------
+ tests/test_cli.py                 |  87 ++++++++++++++++++++++++++++-
+ 3 files changed, 200 insertions(+), 25 deletions(-)
+
+## Diff
+diff --git a/agent_perimeter/cli.py b/agent_perimeter/cli.py
+index 3ed6845..cdaa182 100644
+--- a/agent_perimeter/cli.py
++++ b/agent_perimeter/cli.py
+@@ -21,20 +21,28 @@ from agent_perimeter._contracts import Severity
+ from agent_perimeter.checks.registry import applicable, summarise_skips
+ from agent_perimeter.discover.enumerate import ToolRecord
+ from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile, require_scope
+ from agent_perimeter.transport.base import Transport, TransportError
+ from agent_perimeter.transport.revision import Fingerprint, fingerprint
+ from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
+ from agent_perimeter.transport.streamable_http import StreamableHttpTransport
+ 
+ DEFAULT_CONTACT_URL = "https://github.com/USER/agent-perimeter"
+ DEFAULT_REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
++# Same DSN alembic.ini's `sqlalchemy.url` uses (migrations/env.py expands
++# ${POSTGRES_PASSWORD} the same way, at read time, since configparser/typer
++# don't do it on their own) - one Postgres instance for migrations, the CLI
++# and, later, the API to share. Keep these two in sync by hand; there's no
++# app-wide config module yet for either to read from.
++DEFAULT_DATABASE_URL = (
++    "postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@localhost:5432/agent_perimeter"
++)
+ 
+ # The plain `Severity` StrEnum sorts alphabetically (critical, high, info, low,
+ # medium) — wrong order. This is the actual severity ranking (revision §2.7).
+ SEVERITY_RANK: dict[Severity, int] = {
+     Severity.CRITICAL: 0,
+     Severity.HIGH: 1,
+     Severity.MEDIUM: 2,
+     Severity.LOW: 3,
+     Severity.INFO: 4,
+ }
+@@ -387,42 +395,46 @@ def scan(
+         typer.echo(f"Report written to {html}")
+ 
+ 
+ @app.command()
+ def census(
+     endpoint: Annotated[str, typer.Option(help="Registry API base URL.")] = DEFAULT_REGISTRY,
+     tier2_n: Annotated[int, typer.Option(help="Tier-2 packages per ecosystem.")] = 200,
+     out: Annotated[Path, typer.Option(help="Directory for the report and raw data.")] = Path(
+         "docs/census"
+     ),
++    database_url: Annotated[
++        str,
++        typer.Option(
++            help="SQLAlchemy DSN. Defaults to this project's Postgres (see alembic.ini)."
++        ),
++    ] = DEFAULT_DATABASE_URL,
+ ) -> None:
+     """Collect a passive census of the public MCP registry.
+ 
+     Reads the registry API and published package artifacts. Never connects to a
+     third-party MCP server.
+     """
+     import httpx
+     from sqlalchemy import create_engine
+     from sqlalchemy.orm import Session
+ 
+     from agent_perimeter.census.run import run_census
+     from agent_perimeter.db.models import Base
+ 
+     out.mkdir(parents=True, exist_ok=True)
+ 
+-    # ponytail: a run-local SQLite file under `out`, not the project's shared
+-    # Postgres (alembic.ini's connection is host-only, and nothing in the
+-    # codebase yet bootstraps an app-level Postgres session to reuse). Every
+-    # CensusRun/CensusRecord row this command writes is real and queryable -
+-    # swap for the shared Postgres engine once an app-wide session helper
+-    # exists for the CLI to share with the API.
+-    engine = create_engine(f"sqlite:///{out / 'census.db'}")
++    # Every CensusRun/CensusRecord row this command writes lands in the same
++    # Postgres alembic/docker-compose.yml already stand up - not a throwaway
++    # file invisible to alembic, psql or a future API. --database-url exists
++    # so a different deployment (or a test) can point elsewhere.
++    engine = create_engine(os.path.expandvars(database_url))
+     Base.metadata.create_all(engine)
+ 
+     with httpx.Client() as client, Session(engine) as session:
+         run = run_census(session, client, endpoint=endpoint, tier2_n=tier2_n)
+         # Read while the session is still open - CensusRun's attributes are
+         # expired by the commit inside run_census, and refreshing them after
+         # the session closes below would raise DetachedInstanceError.
+         typer.echo(f"Population size: {run.population_size}")
+         typer.echo(f"Tier-2 n:        {run.tier2_n}")
+         # Printed unconditionally, zero included - B10: a number that only
+diff --git a/tests/census/test_passive_only.py b/tests/census/test_passive_only.py
+index 8cc959f..f33d88e 100644
+--- a/tests/census/test_passive_only.py
++++ b/tests/census/test_passive_only.py
+@@ -6,27 +6,47 @@ import pytest
+ 
+ FORBIDDEN_PREFIXES = (
+     "agent_perimeter.transport",
+     "agent_perimeter.checks.active",
+     "agent_perimeter.checks.injection",
+     "agent_perimeter.discover",
+ )
+ 
+ 
+ def _imports(path: Path) -> set[str]:
++    """Every `agent_perimeter.*`-shaped name this file's imports touch.
++
++    `ast.ImportFrom.module` alone misses `from agent_perimeter import
++    transport`: that records only "agent_perimeter" (the package), never
++    "agent_perimeter.transport" (the submodule bound to the name `transport`)
++    - the exact idiom `agent_perimeter/census/run.py` itself already uses for
++    its own siblings (`from agent_perimeter.census import artifacts, detect,
++    fetch, sample`). A chain that reaches a forbidden module only through
++    this import style would resolve to a bare "agent_perimeter", which the
++    transitive walk already treats as harmless, and the real submodule would
++    never surface at all. So each imported alias is additionally checked
++    against the filesystem: if `module.alias` resolves to a real file under
++    `agent_perimeter`, it is recorded too, alongside `module` itself - a
++    plain symbol import (`from agent_perimeter import __version__`) resolves
++    to no file and is correctly left alone.
++    """
+     tree = ast.parse(path.read_text(encoding="utf-8"))
+     names: set[str] = set()
+     for node in ast.walk(tree):
+         if isinstance(node, ast.Import):
+             names.update(a.name for a in node.names)
+         elif isinstance(node, ast.ImportFrom) and node.module:
+             names.add(node.module)
++            for alias in node.names:
++                candidate = f"{node.module}.{alias.name}"
++                if _module_file(candidate) is not None:
++                    names.add(candidate)
+     return names
+ 
+ 
+ def _module_file(module_name: str) -> Path | None:
+     """Best-effort source file for an `agent_perimeter.*` dotted module name.
+ 
+     Returns None for anything not under `agent_perimeter` (third-party and
+     stdlib modules are out of scope - see the module docstring on the
+     transitive test below) and for a name that resolves to no file on disk
+     (e.g. an attribute pulled off a module, not a submodule itself).
+@@ -36,64 +56,122 @@ def _module_file(module_name: str) -> Path | None:
+     rel = Path(*module_name.split("."))
+     as_module = rel.with_suffix(".py")
+     if as_module.is_file():
+         return as_module
+     as_package = rel / "__init__.py"
+     if as_package.is_file():
+         return as_package
+     return None
+ 
+ 
+-def test_census_can_never_reach_a_transport_or_an_active_check() -> None:
+-    """The census must be structurally incapable of touching a third-party server.
+-
+-    This has to be a *transitive* module-reachability check, not a one-hop
+-    scan of each census file's own direct imports. A one-hop version catches
+-    a forbidden import written directly in census code, but misses a chain
+-    that leaves the census package through another agent_perimeter module -
+-    e.g. agent_perimeter.census.run importing agent_perimeter.report.foo,
+-    where foo itself (not anything under agent_perimeter/census) imports
+-    agent_perimeter.transport.bar. The one-hop test never looks at what foo
+-    imports, so that chain would sail through claiming "can never reach"
+-    while doing exactly that. This walks the whole agent_perimeter.* import
+-    graph reachable from census - direct or transitive - and stops expanding
+-    only at a forbidden module (already an offence, no need to go further)
+-    or a module outside agent_perimeter entirely (third-party libraries are
+-    not this project's graph to police).
++def _reachable_forbidden_modules(census_dir: Path) -> list[str]:
++    """Walk the whole `agent_perimeter.*` import graph reachable from
++    `census_dir` - direct or transitive - and return one entry per forbidden
++    module reached. Empty means the passive-only guarantee holds.
++
++    Parameterized on `census_dir` (rather than hardcoding
++    "agent_perimeter/census" inline) so a regression test can point it at a
++    synthetic tree instead of the real repo, the same way the real test
++    points it at the real one.
++
++    This is a *transitive* check, not a one-hop scan of each census file's
++    own direct imports. A one-hop version catches a forbidden import written
++    directly in census code, but misses a chain that leaves the census
++    package through another agent_perimeter module - e.g.
++    agent_perimeter.census.run importing agent_perimeter.report.foo, where
++    foo itself (not anything under agent_perimeter/census) imports
++    agent_perimeter.transport.bar. The one-hop version never looks at what
++    foo imports, so that chain would sail through claiming "can never reach"
++    while doing exactly that. This stops expanding only at a forbidden
++    module (already an offence, no need to go further) or a module outside
++    agent_perimeter entirely (third-party libraries are not this project's
++    graph to police).
+     """
+     offences: list[str] = []
+     seen: set[str] = set()
+     worklist: list[tuple[str, Path]] = []
+ 
+-    for path in Path("agent_perimeter/census").rglob("*.py"):
++    for path in census_dir.rglob("*.py"):
+         for name in _imports(path):
+             if name.startswith(FORBIDDEN_PREFIXES):
+                 offences.append(f"{path}: {name}")
+             elif name.startswith("agent_perimeter") and name not in seen:
+                 seen.add(name)
+                 worklist.append((name, path))
+ 
+     while worklist:
+         module_name, origin = worklist.pop()
+         module_file = _module_file(module_name)
+         if module_file is None:
+             continue
+         for name in _imports(module_file):
+             if name.startswith(FORBIDDEN_PREFIXES):
+                 offences.append(f"{module_file}: {name} (reached from {origin} via {module_name})")
+             elif name.startswith("agent_perimeter") and name not in seen:
+                 seen.add(name)
+                 worklist.append((name, module_file))
+ 
++    return offences
++
++
++def test_census_can_never_reach_a_transport_or_an_active_check() -> None:
++    """The census must be structurally incapable of touching a third-party server.
++
++    See `_reachable_forbidden_modules` for why this has to be transitive, not
++    a one-hop scan of each census file's own direct imports.
++    """
++    offences = _reachable_forbidden_modules(Path("agent_perimeter/census"))
+     assert offences == [], f"census reached a live-traffic module: {offences}"
+ 
+ 
++def test_from_agent_perimeter_import_subpackage_is_caught_transitively(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """Regression: `from agent_perimeter import transport` binds the name
++    `transport` to the submodule, but `_imports()` used to record only the
++    package name "agent_perimeter" for it - never "agent_perimeter.transport"
++    - so a chain reaching a forbidden module *only* through this import style
++    (already used by `run.py` itself, for its own siblings - see
++    `from agent_perimeter.census import artifacts, detect, fetch, sample`)
++    was invisible to the transitive walk even after it was made transitive.
++
++    Reproduces the exact chain a reviewer found uncaught: a census file
++    imports a sibling agent_perimeter module by name
++    (`from agent_perimeter import other_module`), and that sibling reaches a
++    forbidden module the same way (`from agent_perimeter import transport`).
++    Built as a synthetic tree under `tmp_path` (not the real repo) so this
++    never touches the actual `agent_perimeter` package on disk.
++    """
++    root = tmp_path / "agent_perimeter"
++    census_dir = root / "census"
++    census_dir.mkdir(parents=True)
++    transport_pkg = root / "transport"
++    transport_pkg.mkdir()
++    (transport_pkg / "__init__.py").write_text(
++        "def do_live_request():\n    ...\n", encoding="utf-8"
++    )
++    (root / "other_module.py").write_text(
++        "from agent_perimeter import transport\n\n\n"
++        "def do_live_request():\n    return transport.do_live_request()\n",
++        encoding="utf-8",
++    )
++    (census_dir / "run.py").write_text(
++        "from agent_perimeter import other_module\n\n\n"
++        "def run():\n    return other_module.do_live_request()\n",
++        encoding="utf-8",
++    )
++
++    monkeypatch.chdir(tmp_path)
++    offences = _reachable_forbidden_modules(Path("agent_perimeter/census"))
++    assert any("agent_perimeter.transport" in offence for offence in offences), offences
++
++
+ TIER3 = Path("agent_perimeter/census/tier3.py")
+ _METHOD_RE = re.compile(r"^[a-z]+/[a-zA-Z]+$")
+ 
+ 
+ def test_every_module_but_tier3_talks_only_to_the_allowed_hosts() -> None:
+     """Tiers 1-2 are artifact-only: the host list is closed and literal.
+ 
+     `github.com` is allowed alongside the five hosts tiers 1-2 actually send
+     requests to: it never appears as a request target in this package, only
+     as the contact URL baked into every `USER_AGENT` constant (fetch.py,
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 896e02b..84db92c 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -1,20 +1,22 @@
+ import json
+ import shlex
+ from datetime import UTC, datetime
+ from pathlib import Path
++from types import SimpleNamespace
+ 
+ import pytest
++import sqlalchemy
+ from typer.testing import CliRunner
+ 
+ from agent_perimeter._contracts import Claim, Derivation, Method
+-from agent_perimeter.cli import app
++from agent_perimeter.cli import DEFAULT_DATABASE_URL, app
+ from agent_perimeter.model.feature import Feature, Revision
+ from agent_perimeter.transport.revision import Fingerprint
+ 
+ runner = CliRunner()
+ 
+ MODERN = Fingerprint(
+     revision_claimed=Revision.R2026_07_28,
+     features=frozenset({Feature.SERVER_DISCOVER, Feature.RESULT_TYPE}),
+     claim=Claim(
+         value="2026-07-28",
+@@ -206,10 +208,93 @@ def test_reproduction_command_replays_the_config_flag_that_produced_it(
+             str(sarif),
+         ],
+     )
+     assert result.exit_code == 0, result.stdout
+     document = json.loads(sarif.read_text())
+     (emitted,) = document["runs"][0]["results"]
+     assert f"--config {shlex.quote(str(config))}" in emitted["message"]["text"]
+     assert "--only secrets.config_scan" in emitted["message"]["text"]
+     uri = emitted["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+     assert uri == "mcp.json", uri
++
++
++def _stub_census_run(**overrides: object) -> SimpleNamespace:
++    """Stand-in for census.run.CensusRun - only the attributes the `census`
++    CLI command reads to print its summary."""
++    fields: dict[str, object] = {
++        "population_size": 0,
++        "tier2_n": 200,
++        "fetch_failures": 0,
++        "method_hash": "deadbeef00000000",
++    }
++    fields.update(overrides)
++    return SimpleNamespace(**fields)
++
++
++def test_census_defaults_to_the_project_postgres_not_sqlite(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
++) -> None:
++    """Finding 2 regression: `agent-perimeter census` must default to this
++    project's real Postgres (the same DSN alembic.ini/migrations/env.py
++    already use), not a throwaway SQLite file invisible to alembic, psql or
++    a future API - and this has to prove the *wiring*, not just the constant,
++    or a future edit could leave DEFAULT_DATABASE_URL correct while the
++    command body still hardcodes something else.
++    """
++    assert DEFAULT_DATABASE_URL.startswith("postgresql+psycopg://")
++    assert "sqlite" not in DEFAULT_DATABASE_URL
++
++    captured_urls: list[str] = []
++    real_create_engine = sqlalchemy.create_engine
++
++    def fake_create_engine(url: str, *args: object, **kwargs: object) -> object:
++        captured_urls.append(url)
++        # cli.py's `from sqlalchemy import create_engine` is a lazy import
++        # evaluated at call time, so patching the attribute it reads from is
++        # enough. The engine actually returned is a real in-memory SQLite one
++        # so the rest of the command (Base.metadata.create_all, Session)
++        # still runs - this test is about which DSN reaches create_engine,
++        # not about running the pipeline against a live Postgres.
++        return real_create_engine("sqlite://")
++
++    monkeypatch.setattr("sqlalchemy.create_engine", fake_create_engine)
++    monkeypatch.setattr(
++        "agent_perimeter.census.run.run_census",
++        lambda session, client, *, endpoint, tier2_n: _stub_census_run(),
++    )
++
++    result = runner.invoke(app, ["census", "--out", str(tmp_path / "out")])
++
++    assert result.exit_code == 0, result.stdout
++    assert captured_urls == [DEFAULT_DATABASE_URL]
++
++
++def test_census_database_url_can_be_overridden_without_a_live_postgres(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
++) -> None:
++    """`--database-url` exists for exactly this: a deployment (or a test)
++    that isn't the project's default Postgres. Verified end to end through
++    the real `create_engine`/`Base.metadata.create_all` (no mocking of
++    SQLAlchemy itself, unlike the default-DSN test above), so this also
++    proves the override actually reaches the engine, not just the option
++    parser.
++    """
++    monkeypatch.setattr(
++        "agent_perimeter.census.run.run_census",
++        lambda session, client, *, endpoint, tier2_n: _stub_census_run(population_size=3),
++    )
++    db_path = tmp_path / "override.db"
++
++    result = runner.invoke(
++        app,
++        [
++            "census",
++            "--out",
++            str(tmp_path / "out"),
++            "--database-url",
++            f"sqlite:///{db_path}",
++        ],
++    )
++
++    assert result.exit_code == 0, result.stdout
++    assert db_path.exists()
++    assert "Population size: 3" in result.stdout

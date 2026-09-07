@@ -1,0 +1,82 @@
+# Review package: a8f6c25..HEAD
+
+## Commits
+6f13b4e fix: make scan-setup error copy actionable per code review
+
+## Files changed
+ web/app/components/ScopeFileField.tsx | 6 +++---
+ web/app/page.tsx                      | 4 ++--
+ 2 files changed, 5 insertions(+), 5 deletions(-)
+
+## Diff
+diff --git a/web/app/components/ScopeFileField.tsx b/web/app/components/ScopeFileField.tsx
+index 0f59a0a..285fd56 100644
+--- a/web/app/components/ScopeFileField.tsx
++++ b/web/app/components/ScopeFileField.tsx
+@@ -34,34 +34,34 @@ export function ScopeFileField({ onScopeFile, onError }: ScopeFileFieldProps) {
+   const [fileName, setFileName] = useState<string | null>(null);
+ 
+   async function processFile(file: File) {
+     setFileName(file.name);
+ 
+     let parsed: unknown;
+     try {
+       parsed = JSON.parse(await file.text());
+     } catch {
+       onScopeFile(null);
+-      onError(`${file.name} is not valid JSON.`);
++      onError(`${file.name} is not valid JSON — attach a valid JSON scope file.`);
+       return;
+     }
+     if (typeof parsed !== "object" || parsed === null) {
+       onScopeFile(null);
+-      onError(`${file.name} must contain a JSON object.`);
++      onError(`${file.name} must contain a JSON object — attach a valid JSON scope file.`);
+       return;
+     }
+ 
+     const record = parsed as Record<string, unknown>;
+     const missing = REQUIRED_FIELDS.find(({ key }) => isBlank(record[key]));
+     if (missing) {
+       onScopeFile(null);
+-      onError(`Scope file is missing ${missing.label}.`);
++      onError(`Scope file is missing ${missing.label} — add it and reattach the file.`);
+       return;
+     }
+ 
+     onScopeFile(record as unknown as ScopeFileInput);
+     onError(null);
+   }
+ 
+   function handleInputChange(event: ChangeEvent<HTMLInputElement>) {
+     const file = event.target.files?.[0];
+     if (file) void processFile(file);
+diff --git a/web/app/page.tsx b/web/app/page.tsx
+index 0f5f3b8..c273ef5 100644
+--- a/web/app/page.tsx
++++ b/web/app/page.tsx
+@@ -44,22 +44,22 @@ export default function Home() {
+     try {
+       const accepted = await createScan({
+         target,
+         mode,
+         scope_file: mode === "active" && scopeFile ? scopeFile : undefined,
+       });
+       router.push(`/scans/${accepted.id}`);
+     } catch (err) {
+       const message =
+         err instanceof ApiError
+-          ? `The scan API returned ${err.status}.`
+-          : "Could not reach the scan API.";
++          ? `The scan API returned ${err.status} — check the target and try again.`
++          : "Could not reach the scan API — confirm it is running and retry.";
+       setSubmitError(message);
+     } finally {
+       setSubmitting(false);
+     }
+   }
+ 
+   return (
+     <main className="bok-scan-setup">
+       <h1>Agent Perimeter</h1>
+       <p>Security posture scanner for MCP servers and tool-using agents.</p>

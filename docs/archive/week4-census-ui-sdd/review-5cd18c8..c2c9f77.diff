@@ -1,0 +1,150 @@
+# Review package: 5cd18c89660a18a194fd41fe00d25d5c8bfb3c29..HEAD
+
+## Commits
+c2c9f77 docs: coordinated disclosure policy with enforced structure (DoD 8)
+
+## Files changed
+ .github/workflows/ci.yml           |  2 ++
+ SECURITY.md                        |  5 ++++
+ docs/security.md                   | 49 ++++++++++++++++++++++++++++++++++++++
+ tests/docs/__init__.py             |  0
+ tests/docs/test_security_policy.py | 34 ++++++++++++++++++++++++++
+ 5 files changed, 90 insertions(+)
+
+## Diff
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index a58fbd3..b2c6781 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -12,20 +12,22 @@ jobs:
+   test:
+     runs-on: ubuntu-latest
+     steps:
+       - uses: actions/checkout@v4
+       - uses: astral-sh/setup-uv@v3
+       - run: uv sync --all-groups
+       - run: uv run ruff check .
+       - run: uv run ruff format --check .
+       - run: uv run mypy --strict agent_perimeter
+       - run: uv run pytest
++      - name: Validate security policy structure
++        run: uv run pytest tests/docs/ --no-cov
+       - name: Validate SARIF golden against 2.1.0 schema
+         run: uv run pytest tests/report/test_sarif.py -v --no-cov
+       - name: Upload SARIF sample to code scanning
+         if: github.event_name == 'push'
+         uses: github/codeql-action/upload-sarif@v3
+         with:
+           sarif_file: tests/report/golden/basic_scan.sarif.json
+       - name: Regenerate the precision/recall table
+         run: uv run python -m agent_perimeter.eval.run --write docs/methodology.md
+       - name: Fail if the published table is stale
+diff --git a/SECURITY.md b/SECURITY.md
+new file mode 100644
+index 0000000..bb28842
+--- /dev/null
++++ b/SECURITY.md
+@@ -0,0 +1,5 @@
++# Security Policy
++
++Agent Perimeter is a security posture scanner for MCP servers. If you discover a vulnerability in Agent Perimeter itself, please report it to <77killuazoldic@gmail.com> rather than opening a public issue. We will acknowledge receipt within 24 hours and provide a clear timeline for remediation.
++
++For our coordinated disclosure policy for findings discovered *in scanned servers*, see [docs/security.md](docs/security.md).
+diff --git a/docs/security.md b/docs/security.md
+new file mode 100644
+index 0000000..6a36c9f
+--- /dev/null
++++ b/docs/security.md
+@@ -0,0 +1,49 @@
++# Agent Perimeter Security Policy
++
++## Reporting a vulnerability in Agent Perimeter
++
++If you discover a security vulnerability in Agent Perimeter, please report it directly to <77killuazoldic@gmail.com>. We acknowledge receipt within 24 hours and will provide a clear timeline for remediation or a detailed explanation of why we assess it as not a vulnerability. Please do not disclose the issue publicly until we have released a fix or made a public statement.
++
++## What we do when we find something in your server
++
++Agent Perimeter sends passive scanning traffic to public MCP servers listed in the official registry. When we identify a finding—a capability edge, configuration exposure, or known vulnerable pattern—we contact the maintainer at the address published in that registry entry or repository. We provide the finding, a reproduction command, and the date by which we intend to publish aggregate statistics on the scanning results.
++
++Our Tier 3 scanning activity (the only live-probe tier) sends exactly one unauthenticated `server/discover` JSON-RPC request to a random sample of public MCP servers found in the remote-only stratum of the registry (servers with remotes URLs but no downloadable package artifacts). Before any request:
++
++- We check a maintainer-editable opt-out list; any hostname on it is never contacted.
++- We fetch and honour `robots.txt` from the target host; if `robots.txt` disallows our scanner, we skip that host.
++- We rate-limit ourselves to one request every 1.0 second.
++- We identify ourselves in the User-Agent header with the tool version and a contact URL pointing to this policy.
++
++We send no other methods, no initialize requests, no tools/list, no tool invocations, no retries. A host that does not answer is recorded unreachable and never probed again.
++
++## Embargo
++
++Findings are held in embargo for **90 days** from first contact, giving maintainers time to address issues and release patches. Aggregate statistics—summary counts, pattern frequency, ecosystem distribution—may be published during this period because they identify no specific server. Once the embargo expires:
++
++- Aggregated findings and statistics are published with a digest (salted hash) mapping, so readers can verify the arithmetic without being handed a target list.
++- Individual findings remain confidential unless the maintainer consents to attribution.
++- No raw data identifying a server is published at any point, before or after the embargo.
++
++## Right of reply
++
++Maintainers may dispute a finding, provide context, or request that we re-run a check against a corrected release. We re-run the check and record the outcome in the changelog regardless of the result. Disputed findings are not published under the maintainer's name unless they explicitly consent to attribution for the historical record.
++
++## Secrets
++
++A credential discovered in a public artifact (registry metadata, package manifest, repository file) is reported to the owner and hosting platform immediately and bypasses embargo entirely. We never publish a raw secret, never include it in raw data, never validate it against a live service, and never expose it in logs, screenshots, or SARIF output. We store only the fingerprint: SHA-256 hash, entropy estimate, prefix, last 4 characters, and source file/line.
++
++## What we publish
++
++We publish aggregate statistics only:
++
++- Ecosystem and distribution summaries (e.g., % of remote-only servers that respond, protocol version adoption).
++- Pattern frequency and severity trends across the sampled population.
++- Anonymized case studies with digests so reproduction is auditable without target leakage.
++- Sample metadata: collection window, method, population size, exclusions (opt-outs, failures), and the salt used for digest generation.
++
++We name no third-party server by registry ID, domain, or maintainer, whether the maintainer replied or not. Raw data is keyed by digest only.
++
++## Digest salt release
++
++The per-run salt used to generate server digests is withheld until the embargo expires. Until then, digests are stable pseudonyms—any reader with the same registry snapshot can verify the arithmetic and confirm that a digest was derived correctly from a server's name—without being handed a target list to probe. Once the embargo expires, the salt is published so historical transparency is complete.
+diff --git a/tests/docs/__init__.py b/tests/docs/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/docs/test_security_policy.py b/tests/docs/test_security_policy.py
+new file mode 100644
+index 0000000..7366a82
+--- /dev/null
++++ b/tests/docs/test_security_policy.py
+@@ -0,0 +1,34 @@
++import re
++from pathlib import Path
++
++POLICY = Path("docs/security.md")
++REQUIRED_SECTIONS = [
++    "## Reporting a vulnerability in Agent Perimeter",
++    "## What we do when we find something in your server",
++    "## Embargo",
++    "## Right of reply",
++    "## Secrets",
++    "## What we publish",
++    "## Digest salt release",
++]
++
++
++def test_every_required_section_is_present() -> None:
++    body = POLICY.read_text(encoding="utf-8")
++    for section in REQUIRED_SECTIONS:
++        assert section in body, f"missing: {section}"
++
++
++def test_the_embargo_length_matches_the_decision() -> None:
++    assert "90 days" in POLICY.read_text(encoding="utf-8")
++
++
++def test_secrets_bypass_the_embargo_clock() -> None:
++    body = POLICY.read_text(encoding="utf-8").lower()
++    assert "never publish" in body and "never validate" in body
++
++
++def test_root_pointer_carries_the_same_contact() -> None:
++    contact = re.search(r"<([^>]+@[^>]+)>", POLICY.read_text(encoding="utf-8"))
++    assert contact is not None
++    assert contact.group(1) in Path("SECURITY.md").read_text(encoding="utf-8")

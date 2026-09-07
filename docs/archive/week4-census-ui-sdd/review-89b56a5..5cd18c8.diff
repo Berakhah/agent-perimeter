@@ -1,0 +1,422 @@
+# Review package: 89b56a5..HEAD
+
+## Commits
+5cd18c8 fix: close 3 review findings on the census report (commit 89b56a5)
+
+## Files changed
+ agent_perimeter/report/templates/census.html.j2 |  14 ++-
+ analysis/census_analysis.py                     | 145 ++++++++++++++----------
+ tests/report/test_census_analysis.py            |  81 +++++++++++++
+ tests/report/test_census_report.py              |  33 ++++++
+ 4 files changed, 207 insertions(+), 66 deletions(-)
+
+## Diff
+diff --git a/agent_perimeter/report/templates/census.html.j2 b/agent_perimeter/report/templates/census.html.j2
+index b01a873..1721192 100644
+--- a/agent_perimeter/report/templates/census.html.j2
++++ b/agent_perimeter/report/templates/census.html.j2
+@@ -1,16 +1,16 @@
+ <!doctype html>
+ <html lang="en">
+ <head>
+ <meta charset="utf-8">
+ <title>Agent Perimeter — MCP ecosystem census</title>
+-<style>{{ css }}</style>
++<style>{{ css|safe }}</style>
+ </head>
+ <body>
+ <h1>MCP ecosystem census</h1>
+ <p class="mono">registry endpoint: {{ run.registry_endpoint }}</p>
+ 
+ <h2>Headline</h2>
+ <div class="strip">
+ <p><strong>Artifact stratum.</strong> Of {{ artifact_n_examined }} npm/PyPI packages examined,
+ {{ artifact_agg.supports }} of {{ artifact_agg.n }} show published-artifact evidence of support
+ for <span class="mono">{{ revision }}</span> ({{ artifact_agg.does_not_support }} show no such
+@@ -71,31 +71,33 @@ combined with the other, and neither stands in for "the MCP ecosystem" as a whol
+ <p class="deriv">Tier-2 target n is per ecosystem, not pooled: up to {{ run.tier2_n }} npm
+ packages and up to {{ run.tier2_n }} PyPI packages are independently selected, by download
+ count within each ecosystem, before any artifact is fetched.</p>
+ 
+ <h2>Live-discover stratum</h2>
+ {% if probe_agg is none %}
+ <p>Tier 3 remote-stratum sample: not yet run. No live-discover records exist in this
+ publication.</p>
+ {% else %}
+ <table>
+-<tr><th class="num">Sampled</th><th class="num">Supports</th><th class="num">Unknown</th>
+-    <th class="num">Share</th></tr>
++<tr><th class="num">Sampled</th><th class="num">Supports</th><th class="num">Unknown</th></tr>
+ <tr>
+   <td class="num">{{ probe_n }}</td>
+   <td class="num">{{ probe_agg.supports }}</td>
+   <td class="num">{{ probe_agg.unknown }} unknown</td>
+-  <td class="num">{{ "n/a" if probe_agg.share is none else "%.0f%%"|format(probe_agg.share * 100) }}</td>
+ </tr>
+ </table>
+-<p class="deriv">does not support: {{ probe_agg.does_not_support }} — structurally always 0 for
+-this stratum; see "live-discover sample" below.</p>
++<p class="deriv">No share/percentage is reported for this stratum. "Does not support" is
++structurally always 0 here — a single probe can confirm support, never its absence (see
++"live-discover sample" below) — so a supports-over-n ratio would look fully positive even when
++most of the sample never answered at all. {{ probe_agg.unknown }} of the {{ probe_n }} sampled
++hosts never answered a request, or were excluded before one was sent: that non-response count
++is the number that matters here, not a derived percentage.</p>
+ {% endif %}
+ 
+ <h2>Terms</h2>
+ <dl>
+ {% for term, definition in term_definitions.items() %}
+ <dt><strong>{{ term }}</strong></dt>
+ <dd>{{ definition|safe }}</dd>
+ {% endfor %}
+ </dl>
+ 
+diff --git a/analysis/census_analysis.py b/analysis/census_analysis.py
+index e2557e0..506af48 100644
+--- a/analysis/census_analysis.py
++++ b/analysis/census_analysis.py
+@@ -1,43 +1,52 @@
+-"""Recompute the published census numbers from the raw CSV alone, and check
+-them against the sidecar the report was actually built from.
+-
+-`agent_perimeter.report.census_report.export_raw` writes two files into a
+-publication directory: `records.csv` (one row per record, keyed by a digest -
+-no names, no URLs) and `records.summary.json` (the same aggregate figures
+-`render_census` puts in the report's prose and tables, computed by the same
+-`aggregate()` call). This script reads `records.csv`, recomputes every one of
+-those figures from scratch using nothing but the stdlib, and prints each one
+-next to the summary's figure with a pass/fail per line.
+-
+-Deliberately stdlib-only and free of any `agent_perimeter` import: the
+-reproducibility claim is that a stranger with the published CSV and its
+-summary sidecar - no database, no salt, no API key - can verify the report,
+-without even needing to trust this project's own aggregation code was called
+-correctly. Two independently-written computations agreeing is the check.
++"""Recompute every published census figure from `records.csv` alone.
++
++`records.csv` (written by `agent_perimeter.report.census_report.export_raw`,
++one row per record, keyed by a digest - no names, no URLs) carries everything
++needed to recompute per-stratum, per-ecosystem supports/does_not_support/
++unknown counts: group by its `stratum`/`ecosystem` columns and count its
++`supports_2026_07_28` column. That is the whole reproducibility claim - the
++CSV alone, no database, no salt, no API key - and this script's success does
++not depend on anything else existing.
++
++`export_raw` also writes an optional `records.summary.json` sidecar next to
++the CSV, carrying the same figures `render_census` put in the report's prose
++and tables. When that sidecar is present, this script additionally checks its
++own from-scratch recomputation against it and prints a pass/fail per line -
++useful for catching drift between a specific publication and its own raw
++data. When it is absent, the script still runs to completion and simply
++prints the recomputed figures for a human to compare against the report by
++eye.
++
++Deliberately stdlib-only and free of any `agent_perimeter` import: two
++independently-written computations agreeing (or a human eyeballing one
++against the report) is the check, not this project's own aggregation code
++vouching for itself.
+ 
+     uv run python analysis/census_analysis.py docs/census/2026-09-01/records.csv
+ 
+-Expected: every line reports `match`. A `MISMATCH` line means the published
+-report and the published raw data disagree - report it, don't paper over it.
++Expected, when a summary sidecar is present: every line reports `match`. A
++`MISMATCH` line means the published report and the published raw data
++disagree - report it, don't paper over it.
+ """
+ 
+ from __future__ import annotations
+ 
+ import csv
+ import json
+ import sys
+ from collections import Counter
+ from pathlib import Path
+ from typing import Any
+ 
+ _ROW = "{label:<45} {published:>10} {computed:>10}  {result}"
++SUMMARY_NAME = "records.summary.json"
+ 
+ 
+ def _recompute(csv_path: Path) -> dict[str, Any]:
+     """Group `records.csv` rows by stratum (and, for the artifact stratum,
+     ecosystem), and count each group's supports/does_not_support/unknown -
+     exactly what `agent_perimeter.report.census_report.aggregate` does,
+     reimplemented here from the CSV's plain string columns alone.
+     """
+     artifact_by_eco: dict[str, Counter[str]] = {}
+     artifact_total: Counter[str] = Counter()
+@@ -86,79 +95,95 @@ def _compare(label: str, published: object, computed: object, *, lines: list[str
+         _ROW.format(
+             label=label,
+             published=str(published),
+             computed=str(computed),
+             result="match" if ok else "MISMATCH",
+         )
+     )
+     return ok
+ 
+ 
+-def check(csv_path: Path, summary_path: Path) -> bool:
+-    summary: Any = json.loads(summary_path.read_text(encoding="utf-8"))
+-    computed = _recompute(csv_path)
+-
+-    lines: list[str] = []
+-    all_ok = True
+-
+-    all_ok &= _compare(
+-        "artifact.n_examined",
+-        summary["artifact"]["n_examined"],
+-        computed["artifact"]["n_examined"],
+-        lines=lines,
+-    )
++def _figures(computed: dict[str, Any]) -> list[tuple[str, object]]:
++    """Flatten `_recompute`'s output into (label, value) pairs, in the order
++    the report states them: population->artifact figures, then live-discover.
++    The single source of truth for "every number in the report" - both the
++    summary-comparison path and the summary-less print-only path walk this
++    same list, so they can never drift apart from each other.
++    """
++    out: list[tuple[str, object]] = [
++        ("artifact.n_examined", computed["artifact"]["n_examined"]),
++    ]
+     for field in ("supports", "does_not_support", "unknown", "n"):
+-        all_ok &= _compare(
+-            f"artifact.pooled.{field}",
+-            summary["artifact"]["pooled"][field],
+-            computed["artifact"]["pooled"][field],
+-            lines=lines,
+-        )
+-    for eco, published_row in summary["artifact"]["by_ecosystem"].items():
+-        computed_row = computed["artifact"]["by_ecosystem"].get(
+-            eco, {"supports": 0, "does_not_support": 0, "unknown": 0, "n": 0}
+-        )
++        out.append((f"artifact.pooled.{field}", computed["artifact"]["pooled"][field]))
++    for eco, row in computed["artifact"]["by_ecosystem"].items():
+         for field in ("supports", "does_not_support", "unknown", "n"):
+-            all_ok &= _compare(
+-                f"artifact.by_ecosystem.{eco}.{field}",
+-                published_row[field],
+-                computed_row[field],
+-                lines=lines,
+-            )
++            out.append((f"artifact.by_ecosystem.{eco}.{field}", row[field]))
+ 
+-    published_live = summary["live_discover"]
+-    computed_live = computed["live_discover"]
+-    if published_live is None or computed_live is None:
+-        all_ok &= _compare("live_discover", published_live, computed_live, lines=lines)
++    live = computed["live_discover"]
++    if live is None:
++        out.append(("live_discover", None))
+     else:
+         for field in ("n_sampled", "supports", "does_not_support", "unknown", "n"):
+-            all_ok &= _compare(
+-                f"live_discover.{field}",
+-                published_live[field],
+-                computed_live[field],
+-                lines=lines,
++            out.append((f"live_discover.{field}", live[field]))
++    return out
++
++
++def _lookup(summary: dict[str, Any], label: str) -> object:
++    """The summary's value for one dotted `_figures` label, or a sentinel
++    string when the summary has nothing at that path (e.g. an ecosystem this
++    CSV has rows for but the summary never recorded) - a genuine MISMATCH,
++    not a KeyError.
++    """
++    node: Any = summary
++    for part in label.split("."):
++        if not isinstance(node, dict) or part not in node:
++            return "<absent from summary>"
++        node = node[part]
++    return node
++
++
++def check(csv_path: Path, summary_path: Path | None) -> bool:
++    """Recompute every figure from `csv_path` alone, and - when
++    `summary_path` is given and exists - check it against that sidecar.
++    Always succeeds (returns True) when there is no sidecar to check
++    against; only a real published-vs-recomputed disagreement fails.
++    """
++    computed = _recompute(csv_path)
++    summary: dict[str, Any] | None = (
++        json.loads(summary_path.read_text(encoding="utf-8"))
++        if summary_path is not None and summary_path.is_file()
++        else None
++    )
++
++    lines: list[str] = []
++    all_ok = True
++    if summary is None:
++        print(f"(no {SUMMARY_NAME} next to {csv_path.name} - printing recomputed figures only)")
++        for label, value in _figures(computed):
++            lines.append(
++                _ROW.format(label=label, published="-", computed=str(value), result="(no summary)")
+             )
++    else:
++        for label, value in _figures(computed):
++            all_ok = _compare(label, _lookup(summary, label), value, lines=lines) and all_ok
+ 
+     for line in lines:
+         print(line)
+     return all_ok
+ 
+ 
+ def main(argv: list[str]) -> int:
+     if len(argv) < 2:
+         print(f"usage: {argv[0]} <path/to/records.csv>", file=sys.stderr)
+         return 2
+     csv_path = Path(argv[1])
+-    summary_path = csv_path.with_name("records.summary.json")
+     if not csv_path.is_file():
+         print(f"no such file: {csv_path}", file=sys.stderr)
+         return 2
+-    if not summary_path.is_file():
+-        print(f"no summary sidecar next to {csv_path}: expected {summary_path}", file=sys.stderr)
+-        return 2
++    summary_path = csv_path.with_name(SUMMARY_NAME)
+ 
+     ok = check(csv_path, summary_path)
+     return 0 if ok else 1
+ 
+ 
+ if __name__ == "__main__":
+     raise SystemExit(main(sys.argv))
+diff --git a/tests/report/test_census_analysis.py b/tests/report/test_census_analysis.py
+new file mode 100644
+index 0000000..0a425ab
+--- /dev/null
++++ b/tests/report/test_census_analysis.py
+@@ -0,0 +1,81 @@
++"""Tests for analysis/census_analysis.py - a loose top-level script, not part
++of the `agent_perimeter` package (deliberately: it must never import it, see
++that module's own docstring), so it's loaded here from its file path rather
++than a normal package import.
++"""
++
++from __future__ import annotations
++
++import importlib.util
++import json
++from pathlib import Path
++from types import ModuleType
++
++from agent_perimeter.report.census_report import export_raw
++from tests.report.factories import census_fixture
++
++_SCRIPT = Path(__file__).parents[2] / "analysis" / "census_analysis.py"
++
++
++def _load_script() -> ModuleType:
++    spec = importlib.util.spec_from_file_location("census_analysis", _SCRIPT)
++    assert spec is not None and spec.loader is not None
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++census_analysis = _load_script()
++
++
++def test_check_succeeds_from_the_csv_alone_with_no_summary_sidecar(tmp_path) -> None:  # type: ignore[no-untyped-def]
++    """The completion gate's wording is 'from the published CSV alone' - the
++    script must run to completion (and report success) with nothing else
++    present, not require a sidecar it was never handed."""
++    run, records = census_fixture(
++        supports=2, does_not_support=1, unknown=1, probe_supports=1, probe_unknown=1
++    )
++    csv_path = export_raw(run, records, salt=b"test-salt", out=tmp_path)
++    summary_path = csv_path.with_name(census_analysis.SUMMARY_NAME)
++    assert summary_path.is_file()
++    summary_path.unlink()
++
++    ok = census_analysis.check(csv_path, summary_path)
++    assert ok is True
++
++
++def test_main_exits_zero_from_the_csv_alone(tmp_path, capsys) -> None:  # type: ignore[no-untyped-def]
++    run, records = census_fixture(supports=3, does_not_support=0, unknown=0)
++    csv_path = export_raw(run, records, salt=b"test-salt", out=tmp_path)
++    csv_path.with_name(census_analysis.SUMMARY_NAME).unlink()
++
++    exit_code = census_analysis.main(["census_analysis.py", str(csv_path)])
++    assert exit_code == 0
++    out = capsys.readouterr().out
++    assert "artifact.pooled.supports" in out
++
++
++def test_check_matches_the_summary_sidecar_when_present(tmp_path) -> None:  # type: ignore[no-untyped-def]
++    run, records = census_fixture(
++        supports=2, does_not_support=1, unknown=1, probe_supports=2, probe_unknown=3
++    )
++    csv_path = export_raw(run, records, salt=b"test-salt", out=tmp_path)
++    summary_path = csv_path.with_name(census_analysis.SUMMARY_NAME)
++    assert summary_path.is_file()
++
++    assert census_analysis.check(csv_path, summary_path) is True
++
++
++def test_check_reports_a_real_mismatch_instead_of_papering_over_it(tmp_path) -> None:  # type: ignore[no-untyped-def]
++    """A published report and its raw data disagreeing is exactly the
++    failure this script exists to catch - it must fail loudly, not quietly
++    report success."""
++    run, records = census_fixture(supports=2, does_not_support=1, unknown=0)
++    csv_path = export_raw(run, records, salt=b"test-salt", out=tmp_path)
++    summary_path = csv_path.with_name(census_analysis.SUMMARY_NAME)
++
++    summary = json.loads(summary_path.read_text(encoding="utf-8"))
++    summary["artifact"]["pooled"]["supports"] = 999
++    summary_path.write_text(json.dumps(summary), encoding="utf-8")
++
++    assert census_analysis.check(csv_path, summary_path) is False
+diff --git a/tests/report/test_census_report.py b/tests/report/test_census_report.py
+index f0f0cca..fda6b80 100644
+--- a/tests/report/test_census_report.py
++++ b/tests/report/test_census_report.py
+@@ -156,10 +156,43 @@ def test_a_record_outside_both_strata_is_skipped_not_miscounted() -> None:
+     assert agg.unknown == 0
+ 
+ 
+ def test_raw_export_carries_a_stratum_column_and_still_no_names(tmp_path) -> None:  # type: ignore[no-untyped-def]
+     run, records = census_fixture(names=["acme-mcp-server"], probe_supports=1)
+     path = export_raw(run, records, salt=b"test-salt", out=tmp_path)
+     body = path.read_text()
+     assert "stratum" in body
+     assert "acme-mcp-server" not in body
+     assert "registry/acme-mcp-server" not in body
++
++
++# --- Review fixes ----------------------------------------------------------
++
++
++def test_embedded_stylesheet_is_not_html_escaped() -> None:
++    """report.css's `font-family: "IBM Plex Mono", ...` and the print-mode
++    `content: attr(data-glyph) " ";` rules are the no-colour-only-encoding
++    mechanism this task was required to reuse from Week 3. Jinja's default
++    autoescape turns every `"` into `&#34;`, which is invalid inside a
++    <style> block and would silently break both rules. The stylesheet must
++    reach the page unescaped."""
++    run, records = census_fixture()
++    html = render_census(run, records)
++    assert '"IBM Plex Mono"' in html
++    style_block = html.split("<style>", 1)[1].split("</style>", 1)[0]
++    assert "&#34;" not in style_block
++    assert "&quot;" not in style_block
++
++
++def test_probe_stratum_never_renders_a_bare_percentage() -> None:
++    """does_not_support is structurally always 0 for this stratum, so a
++    naive supports/n share would read 100% even when most of the sample
++    never answered at all - e.g. 2 supports against 5 non-responses. The
++    live-discover section must never state a percentage; it must state the
++    non-response count instead."""
++    run, records = census_fixture(probe_supports=2, probe_unknown=5)
++    html = render_census(run, records)
++
++    section = html.split("<h2>Live-discover stratum</h2>", 1)[1].split("<h2>", 1)[0]
++    assert "%" not in section
++    assert "5" in section and "7" in section  # unknown / sampled counts, stated as raw numbers
++    assert "non-response" in section.lower()

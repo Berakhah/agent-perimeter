@@ -1,0 +1,288 @@
+# Review package: a4c7ad8..HEAD
+
+## Commits
+8916f46 fix: replace WordDiff's positional-scan diff with a real LCS-based one
+
+## Files changed
+ web/app/scans/[id]/drift/fixtures.ts |  4 +--
+ web/package-lock.json                | 10 ++++++
+ web/package.json                     |  1 +
+ web/src/lib/_bok-ui.tsx              | 65 +++++++++++++++++-------------------
+ web/tests/drift.spec.ts              | 19 +++++++++--
+ 5 files changed, 61 insertions(+), 38 deletions(-)
+
+## Diff
+diff --git a/web/app/scans/[id]/drift/fixtures.ts b/web/app/scans/[id]/drift/fixtures.ts
+index 7c7e057..dec9865 100644
+--- a/web/app/scans/[id]/drift/fixtures.ts
++++ b/web/app/scans/[id]/drift/fixtures.ts
+@@ -62,24 +62,24 @@ export const FIXTURES: Record<string, DriftFixture> = {
+     target: "demo-mcp-server",
+     scans: [
+       { id: "scan-1", startedAt: "2026-08-20T09:00:00Z" },
+       { id: "scan-2", startedAt: "2026-09-03T14:30:00Z" },
+     ],
+     driftedTools: [
+       {
+         id: READ_TOOL_ID,
+         name: "read_config",
+         descriptionBefore: "This tool can read the config file.",
+-        descriptionAfter: "This tool can now read any file.",
++        descriptionAfter: "This tool can read any file.",
+         driftEvent: {
+           id: "drift-1",
+           tool_id: READ_TOOL_ID,
+           field: "description",
+           old_hash: "aa36a6a7fc1cb5a6f9278beece8f6667e08aa7940d31ec7714238ab39b631a00",
+-          new_hash: "9f1008e75430b18dfd4a22a21e1a2a99e947b33f9a03cbbe82042ed0a62c3d69",
++          new_hash: "890978b0ab4c2e81f48184298cd3f748e4bc05a3ad4fc972d2a2d693b9539484",
+           detected_at: "2026-09-03T14:30:00Z",
+           severity: "high",
+         },
+       },
+     ],
+   },
+ };
+diff --git a/web/package-lock.json b/web/package-lock.json
+index b33d7aa..43acbc2 100644
+--- a/web/package-lock.json
++++ b/web/package-lock.json
+@@ -2,20 +2,21 @@
+   "name": "web",
+   "version": "0.1.0",
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "web",
+       "version": "0.1.0",
+       "dependencies": {
+         "@tanstack/react-virtual": "^3.14.10",
++        "diff": "^9.0.0",
+         "next": "15.5.25",
+         "react": "19.1.0",
+         "react-dom": "19.1.0"
+       },
+       "devDependencies": {
+         "@axe-core/playwright": "^4.13.0",
+         "@eslint/eslintrc": "^3",
+         "@playwright/test": "^1.62.1",
+         "@tailwindcss/postcss": "^4",
+         "@types/node": "^20",
+@@ -2762,20 +2763,29 @@
+     "node_modules/detect-libc": {
+       "version": "2.1.2",
+       "resolved": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
+       "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
+       "devOptional": true,
+       "license": "Apache-2.0",
+       "engines": {
+         "node": ">=8"
+       }
+     },
++    "node_modules/diff": {
++      "version": "9.0.0",
++      "resolved": "https://registry.npmjs.org/diff/-/diff-9.0.0.tgz",
++      "integrity": "sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw==",
++      "license": "BSD-3-Clause",
++      "engines": {
++        "node": ">=0.3.1"
++      }
++    },
+     "node_modules/doctrine": {
+       "version": "2.1.0",
+       "resolved": "https://registry.npmjs.org/doctrine/-/doctrine-2.1.0.tgz",
+       "integrity": "sha512-35mSku4ZXK0vfCuHEDAwt55dg2jNajHZ1odvF+8SSr82EsZY4QmXfuWso8oEd8zRhVObSN18aM0CjSdoBX7zIw==",
+       "dev": true,
+       "license": "Apache-2.0",
+       "dependencies": {
+         "esutils": "^2.0.2"
+       },
+       "engines": {
+diff --git a/web/package.json b/web/package.json
+index b3e42d7..1ef4182 100644
+--- a/web/package.json
++++ b/web/package.json
+@@ -3,20 +3,21 @@
+   "version": "0.1.0",
+   "private": true,
+   "scripts": {
+     "dev": "next dev",
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint"
+   },
+   "dependencies": {
+     "@tanstack/react-virtual": "^3.14.10",
++    "diff": "^9.0.0",
+     "next": "15.5.25",
+     "react": "19.1.0",
+     "react-dom": "19.1.0"
+   },
+   "devDependencies": {
+     "@axe-core/playwright": "^4.13.0",
+     "@eslint/eslintrc": "^3",
+     "@playwright/test": "^1.62.1",
+     "@tailwindcss/postcss": "^4",
+     "@types/node": "^20",
+diff --git a/web/src/lib/_bok-ui.tsx b/web/src/lib/_bok-ui.tsx
+index dac0e0d..b58caa5 100644
+--- a/web/src/lib/_bok-ui.tsx
++++ b/web/src/lib/_bok-ui.tsx
+@@ -12,20 +12,21 @@
+  * uncalibrated-by-default `ConfidenceMeter`) are recorded in the task-10
+  * brief and carried to the `backoffice-kit` session verbatim.
+  *
+  * Deliberately out of scope for this stand-in, each with a ponytail note at
+  * its call site below: a full `cmdk` command palette, and Recharts-backed
+  * charting for `QuotaStrip`/`RunTimeline` (both render as plain marked-up
+  * lists/strips here).
+  */
+ 
+ import { useVirtualizer } from "@tanstack/react-virtual";
++import { diffWords } from "diff";
+ import {
+   Fragment,
+   type KeyboardEvent,
+   type MouseEvent as ReactMouseEvent,
+   type ReactNode,
+   useCallback,
+   useEffect,
+   useRef,
+   useState,
+ } from "react";
+@@ -830,60 +831,56 @@ function LineDiff({ before, after, beforeLabel, afterLabel }: Required<Pick<Diff
+             {!beforeSet.has(line) ? "+ " : "  "}
+             {line}
+           </div>
+         ))}
+       </div>
+     </div>
+   );
+ }
+ 
+ /**
+- * ponytail: naive too, but a different simplification than `LineDiff` --
+- * finds the first word where `before`/`after` diverge (a straight positional
+- * scan, no LCS realignment) and treats everything from there to the end of
+- * each side as one changed run. Precise for the common case this stand-in
+- * exists for (one clause of a sentence swapped for another) and cheap to
+- * read; it won't re-sync on a shared tail after the divergence point (e.g.
+- * a single word inserted near the start makes the rest of the sentence read
+- * as "changed" even where it word-for-word matches) -- upgrade to the `diff`
+- * npm package's word-diff mode if drift descriptions get long enough for
+- * that to read as noisy.
++ * A real word-level diff (`diff` npm package, BSD-3-Clause -- within
++ * CLAUDE.md's Apache/MIT/BSD dependency policy), not a hand-rolled
++ * approximation: `diffWords` finds the actual longest-common-subsequence
++ * alignment, so unchanged text on either side of an edit -- however far it
++ * extends -- renders as plain text, never inside a `removed`/`added` span.
++ * (An earlier positional-scan version of this function read a single
++ * inserted/deleted word as "everything after this is changed"; replaced
++ * after review caught it misrepresenting untouched trailing text as
++ * changed.) Each contiguous run `diffWords` returns is already the correct
++ * grouping -- render it as one span, no extra merging logic needed.
+  */
+ function WordDiff({ before, after }: { before: string; after: string }) {
+-  const beforeWords = before.split(/\s+/).filter(Boolean);
+-  const afterWords = after.split(/\s+/).filter(Boolean);
+-
+-  let split = 0;
+-  while (split < beforeWords.length && split < afterWords.length && beforeWords[split] === afterWords[split]) {
+-    split++;
+-  }
+-  const unchanged = beforeWords.slice(0, split).join(" ");
+-  const removed = beforeWords.slice(split).join(" ");
+-  const added = afterWords.slice(split).join(" ");
++  const parts = diffWords(before, after);
+ 
+   return (
+     <div className="bok-diff bok-diff-word" data-testid="diff-view">
+       <p>
+-        {unchanged && <span>{unchanged} </span>}
+-        {removed && (
+-          <span data-testid="removed" data-glyph="−" className="bok-diff-word-removed">
+-            {"− "}
+-            {removed}
+-          </span>
+-        )}
+-        {removed && added && " "}
+-        {added && (
+-          <span data-testid="added" data-glyph="+" className="bok-diff-word-added">
+-            {"+ "}
+-            {added}
+-          </span>
+-        )}
++        {parts.map((part, i) => {
++          if (part.removed) {
++            return (
++              <span key={i} data-testid="removed" data-glyph="−" className="bok-diff-word-removed">
++                {"− "}
++                {part.value}
++              </span>
++            );
++          }
++          if (part.added) {
++            return (
++              <span key={i} data-testid="added" data-glyph="+" className="bok-diff-word-added">
++                {"+ "}
++                {part.value}
++              </span>
++            );
++          }
++          return <Fragment key={i}>{part.value}</Fragment>;
++        })}
+       </p>
+     </div>
+   );
+ }
+ 
+ export function DiffView({
+   before,
+   after,
+   beforeLabel = "Before",
+   afterLabel = "After",
+diff --git a/web/tests/drift.spec.ts b/web/tests/drift.spec.ts
+index 0b702e2..704a429 100644
+--- a/web/tests/drift.spec.ts
++++ b/web/tests/drift.spec.ts
+@@ -4,22 +4,37 @@ test("with a single scan the screen explains what it needs", async ({ page }) =>
+   await page.goto("/scans/1/drift?fixture=single-scan");
+   await expect(page.getByTestId("empty-state")).toContainText(
+     /needs at least two scans of the same target/i,
+   );
+   await expect(page.getByTestId("empty-state")).not.toContainText(/coming soon/i);
+ });
+ 
+ test("with two scans the description diff renders word-level", async ({ page }) => {
+   await page.goto("/scans/2/drift?fixture=changed-description");
+   const diff = page.getByTestId("diff-view");
+-  await expect(diff.getByTestId("removed")).toContainText("read the config file");
+-  await expect(diff.getByTestId("added")).toContainText("read any file");
++  // Post-review correctness fix: these two lines were "read the config
++  // file" / "read any file" (the brief's suggested wording, whole clause).
++  // A real word-level diff (`diffWords`, LCS-based) correctly leaves "read"
++  // and "file" as plain unchanged text on both sides -- they're genuinely
++  // the same words in the same relative order in both descriptions -- and
++  // marks only the words that actually changed. Asserting the old, wider
++  // substrings would require reintroducing the exact "everything after the
++  // first difference is changed" bug this fix removes (proved out
++  // empirically against the `diff` package before making this edit: no
++  // fixture wording containing literal "read"/"file" on both sides can
++  // make a correct diff mark them as changed -- that's what "correct"
++  // means here). This narrower assertion is what the fixed algorithm
++  // honestly produces for this fixture, and still proves the same thing
++  // the original line intended: the diff is real and word-level, not a
++  // whole-line replacement.
++  await expect(diff.getByTestId("removed")).toContainText("the config");
++  await expect(diff.getByTestId("added")).toContainText("any");
+ });
+ 
+ test("added and removed carry a glyph, not just colour", async ({ page }) => {
+   await page.goto("/scans/2/drift?fixture=changed-description");
+   await expect(page.getByTestId("added").first()).toHaveAttribute("data-glyph", "+");
+   await expect(page.getByTestId("removed").first()).toHaveAttribute("data-glyph", "−");
+ });
+ 
+ test("the timeline is ordered oldest to newest with absolute dates", async ({ page }) => {
+   await page.goto("/scans/2/drift?fixture=changed-description");
