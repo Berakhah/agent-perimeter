@@ -4,6 +4,6 @@ Copyright 2026 Agent Perimeter contributors
 This product is licensed under the Apache License, Version 2.0. See the
 LICENSE file for the full license text.
 
-This product includes third-party software; see docs/licences.md (Python
-dependencies, via `pip-licenses`) and `web/` (npm dependencies, via
-`npx license-checker`) for the full list of dependencies and their licenses.
+This product includes third-party software; see docs/licences.md for the
+full Python dependency list (via `pip-licenses`) and an npm dependency
+licence-type summary (via `npx license-checker --summary`).

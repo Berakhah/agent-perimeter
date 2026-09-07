@@ -171,6 +171,12 @@ class CensusRun(Base):
     method_hash: Mapped[str]
     tier2_n: Mapped[int | None] = mapped_column(nullable=True)
     registry_endpoint: Mapped[str]
+    # Persists the per-run pseudonymisation salt `census/run.py::run_census`
+    # generates so `export_raw`'s digests can be recomputed against this
+    # run's own `CensusRecord.coords_digest` values later -- nullable because
+    # this is pre-release data with no backfill story, not because a salt is
+    # ever optional for a run going forward.
+    salt: Mapped[bytes | None] = mapped_column(nullable=True)
 
 
 class CensusRecord(Base):

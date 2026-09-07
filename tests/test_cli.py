@@ -221,13 +221,23 @@ def test_reproduction_command_replays_the_config_flag_that_produced_it(
 
 
 def _stub_census_run(**overrides: object) -> SimpleNamespace:
-    """Stand-in for census.run.CensusRun - only the attributes the `census`
-    CLI command reads to print its summary."""
+    """Stand-in for census.run.CensusRun - every attribute the `census` CLI
+    command reads, both to print its summary and (final-review fix wave,
+    Important #4/#5) to render the report and raw export it now writes to
+    `--out`. `id` is a real, matchable value so the command's own
+    `CensusRecord` query runs against a real (if empty) session rather than
+    crashing on a stub with no primary key."""
     fields: dict[str, object] = {
+        "id": 1,
+        "started_at": datetime(2026, 9, 1, tzinfo=UTC),
+        "finished_at": datetime(2026, 9, 1, tzinfo=UTC),
         "population_size": 0,
         "tier2_n": 200,
         "fetch_failures": 0,
+        "tool_version": "0.1.0",
         "method_hash": "deadbeef00000000",
+        "registry_endpoint": "https://registry.modelcontextprotocol.io/v0/servers",
+        "salt": b"test-salt-0000000000000000000000",
     }
     fields.update(overrides)
     return SimpleNamespace(**fields)
@@ -301,3 +311,37 @@ def test_census_database_url_can_be_overridden_without_a_live_postgres(
     assert result.exit_code == 0, result.stdout
     assert db_path.exists()
     assert "Population size: 3" in result.stdout
+
+
+def test_census_out_writes_the_html_report_and_raw_export(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Finding 4a: `census --out` created the directory and printed four
+    summary lines, then did nothing else - `render_census`/`export_raw`
+    (both pure functions with no CLI dependency) were never called, so the
+    command could not produce the published census report end to end. The
+    report is the actual deliverable of this command, not a byproduct of
+    running it.
+    """
+    monkeypatch.setattr(
+        "agent_perimeter.census.run.run_census",
+        lambda session, client, *, endpoint, tier2_n: _stub_census_run(),
+    )
+    out_dir = tmp_path / "out"
+
+    result = runner.invoke(
+        app,
+        [
+            "census",
+            "--out",
+            str(out_dir),
+            "--database-url",
+            f"sqlite:///{tmp_path / 'census.db'}",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert (out_dir / "census.html").exists()
+    assert (out_dir / "records.csv").exists()
+    assert f"Report written to {out_dir / 'census.html'}" in result.stdout
+    assert f"Raw data written to {out_dir / 'records.csv'}" in result.stdout

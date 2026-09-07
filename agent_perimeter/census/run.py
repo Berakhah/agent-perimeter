@@ -105,10 +105,11 @@ def run_census(session: Session, client: httpx.Client, *, endpoint: str, tier2_n
     session.add(run)
     session.flush()
 
-    # ponytail: salt generated per run and not persisted anywhere outside this
-    # call. Task 7's export_raw needs a matching salt to publish coords_digest
-    # after the embargo - wire a store for it when that task lands.
+    # Persisted on the run itself (CensusRun.salt) so export_raw can later
+    # recompute a digest that actually matches this run's own
+    # coords_digest column - see that function's _digest_for docstring.
     salt = secrets.token_bytes(32)
+    run.salt = salt
 
     entries = list(fetch.paginate(client, endpoint, log))
     run.population_size = len(entries)

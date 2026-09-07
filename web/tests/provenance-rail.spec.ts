@@ -5,10 +5,14 @@ import { expect, test } from "@playwright/test";
 // slide-out transform), and focus must move into the rail on open and back
 // to the trigger on close.
 test("a closed provenance rail has no reachable descendants, and focus moves correctly", async ({ page }) => {
-  await page.goto("/findings?fixture=mixed");
+  await page.goto("/scans/1/findings?fixture=mixed");
 
   const rail = page.getByTestId("provenance-rail");
-  const trigger = page.getByTestId("claim");
+  // The real screen's `mixed` fixture carries several claim-activatable rows
+  // (the fixture-demo page this test used to target rendered exactly one,
+  // standalone `Claim`) -- `.first()` matches `findings.spec.ts`'s own
+  // disambiguation for the same testid on this route.
+  const trigger = page.getByTestId("claim").first();
   const closeButton = page.getByRole("button", { name: "Close provenance rail" });
 
   // Closed: inert, and its close button is not part of the tab order.

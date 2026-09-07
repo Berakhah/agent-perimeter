@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("severity is never encoded in colour alone", async ({ page }) => {
-  await page.goto("/findings?fixture=mixed");
+  await page.goto("/scans/1/findings?fixture=mixed");
   for (const row of await page.getByRole("row").all()) {
     const badge = row.getByTestId("severity-badge");
     if (await badge.count()) {
@@ -12,7 +12,7 @@ test("severity is never encoded in colour alone", async ({ page }) => {
 });
 
 test("numbers are tabular", async ({ page }) => {
-  await page.goto("/findings?fixture=mixed");
+  await page.goto("/scans/1/findings?fixture=mixed");
   const cell = page.getByTestId("numeric-cell").first();
   await expect(cell).toHaveCSS("font-variant-numeric", /tabular-nums/);
 });
