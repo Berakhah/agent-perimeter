@@ -1,0 +1,746 @@
+# Review package: 5ab877cff2e2886b62fde9adbf6f91f0c0dbc992..HEAD
+
+## Commits
+f037014 feat: census pipeline with a structural passive-only guarantee
+
+## Files changed
+ agent_perimeter/census/run.py     | 151 +++++++++++++++++
+ agent_perimeter/cli.py            |  45 +++++
+ tests/census/test_passive_only.py | 141 ++++++++++++++++
+ tests/census/test_run.py          | 342 ++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 679 insertions(+)
+
+## Diff
+diff --git a/agent_perimeter/census/run.py b/agent_perimeter/census/run.py
+new file mode 100644
+index 0000000..bb21ca2
+--- /dev/null
++++ b/agent_perimeter/census/run.py
+@@ -0,0 +1,151 @@
++"""Census orchestration. Registry, then artifacts. No live server, ever."""
++
++from __future__ import annotations
++
++import hashlib
++import inspect
++import secrets
++import shutil
++from datetime import UTC, datetime
++
++import httpx
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++
++from agent_perimeter import __version__
++from agent_perimeter.census import artifacts, detect, fetch, sample
++from agent_perimeter.census.fetch import RegistryEntry
++from agent_perimeter.census.sample import RankedEntry
++from agent_perimeter.db.models import CensusRecord, CensusRun
++from agent_perimeter.model.census import FetchStatus
++
++# Every record's artifact-fetch stage is either attempted (and gets a real
++# FetchStatus value) or never attempted at all (tier 1, or tier 2 with no
++# coords to fetch). fetch_status is NOT NULL, so "never attempted" needs its
++# own value distinct from every real FetchStatus outcome - conflating it with
++# e.g. NOT_FOUND would misreport a tier-1 entry as a failed fetch.
++NOT_ATTEMPTED = "not_attempted"
++
++
++def method_hash() -> str:
++    """Hash of the collection code itself, so a published number names its method.
++
++    B9 requires versioned results. Hashing the four modules that decide what gets
++    collected means a changed method cannot silently reuse an old report's label.
++    """
++    h = hashlib.sha256()
++    for module in (fetch, artifacts, detect, sample):
++        h.update(inspect.getsource(module).encode())
++    return h.hexdigest()[:16]
++
++
++def _distribution(entry: RegistryEntry) -> str:
++    """Task 2's revision: ~70% of the registry has no artifact at all. Every
++    entry gets a distribution, not just the ones with a package."""
++    if entry.coords is not None:
++        return f"package_{entry.coords.ecosystem.value}"
++    if entry.has_unmodeled_package:
++        return "package_other"
++    if entry.remotes:
++        return "remote_only"
++    return "none"
++
++
++def _digest_for(entry: RegistryEntry, salt: bytes) -> str:
++    """Same pseudonym construction as PackageCoords.digest, for an entry that
++    may have no PackageCoords at all (remote-only, or no package/remote)."""
++    if entry.coords is not None:
++        return entry.coords.digest(salt)
++    payload = f"registry:{entry.registry_id.lower()}".encode()
++    return hashlib.blake2b(payload, key=salt, digest_size=16).hexdigest()
++
++
++def _record_for(
++    run: CensusRun, entry: RegistryEntry, ranked_by_id: dict[str, RankedEntry], salt: bytes
++) -> CensusRecord:
++    coords = entry.coords
++    ranked_entry = ranked_by_id.get(entry.registry_id)
++    return CensusRecord(
++        census_run_id=run.id,
++        registry_id=entry.registry_id,
++        coords_digest=_digest_for(entry, salt),
++        ecosystem=coords.ecosystem.value if coords is not None else None,
++        package_name=coords.name if coords is not None else None,
++        distribution=_distribution(entry),
++        fetch_status=NOT_ATTEMPTED,
++        rank_metric=ranked_entry.downloads if ranked_entry is not None else None,
++        rank_metric_source=ranked_entry.rank_source.value if ranked_entry is not None else None,
++        collected_at=datetime.now(UTC),
++    )
++
++
++def _record_failures(session: Session, run: CensusRun) -> int:
++    """Artifact-fetch failures among this run's records, counted separately
++    from `log.failures` (registry-pagination failures) so `fetch_failures`
++    reflects every network attempt that failed, not just page fetches.
++    `NOT_ATTEMPTED` is not a failure - it means no request was ever made.
++    """
++    statuses = session.execute(
++        select(CensusRecord.fetch_status).where(CensusRecord.census_run_id == run.id)
++    ).scalars()
++    return sum(1 for status in statuses if status not in (FetchStatus.OK.value, NOT_ATTEMPTED))
++
++
++def run_census(session: Session, client: httpx.Client, *, endpoint: str, tier2_n: int) -> CensusRun:
++    started = datetime.now(UTC)
++    log = fetch.FetchLog()
++    run = CensusRun(
++        started_at=started,
++        population_size=0,
++        tool_version=__version__,
++        method_hash=method_hash(),
++        tier2_n=tier2_n,
++        registry_endpoint=endpoint,
++    )
++    session.add(run)
++    session.flush()
++
++    # ponytail: salt generated per run and not persisted anywhere outside this
++    # call. Task 7's export_raw needs a matching salt to publish coords_digest
++    # after the embargo - wire a store for it when that task lands.
++    salt = secrets.token_bytes(32)
++
++    entries = list(fetch.paginate(client, endpoint, log))
++    run.population_size = len(entries)
++
++    ranked = sample.rank(client, entries)
++    ranked_by_id = {r.entry.registry_id: r for r in ranked}
++    tier2 = {r.entry.registry_id for r in sample.top_n(ranked, tier2_n)}
++
++    for entry in entries:
++        record = _record_for(run, entry, ranked_by_id, salt)
++        if entry.registry_id in tier2 and entry.coords is not None:
++            result = artifacts.fetch_artifact(client, entry.coords)
++            record.fetch_status = result.status.value
++            record.fetch_detail = result.detail
++            if result.root is not None:
++                try:
++                    fp = detect.detect_features(result.root)
++                    record.sdk_version = fp.sdk_version
++                    record.feature_set_json = {
++                        "features": sorted(f.value for f in fp.features),
++                        "derivation": (
++                            fp.claim.derivation.value if fp.claim.derivation is not None else None
++                        ),
++                        "confidence": fp.claim.confidence,
++                        "caveat": fp.claim.caveat,
++                        "is_unknown": fp.is_unknown,
++                    }
++                finally:
++                    # Task 3's fetch_artifact leaves ArtifactResult.root
++                    # caller-owned; run_census is the caller. Left uncleaned,
++                    # a real census of hundreds of packages leaks up to
++                    # MAX_UNCOMPRESSED_BYTES of temp files per package for the
++                    # run's lifetime.
++                    shutil.rmtree(result.root, ignore_errors=True)
++        session.add(record)
++
++    run.fetch_failures = log.failures + _record_failures(session, run)
++    run.finished_at = datetime.now(UTC)
++    session.commit()
++    return run
+diff --git a/agent_perimeter/cli.py b/agent_perimeter/cli.py
+index b8e91d2..3ed6845 100644
+--- a/agent_perimeter/cli.py
++++ b/agent_perimeter/cli.py
+@@ -20,20 +20,21 @@ from pydantic import ValidationError
+ from agent_perimeter._contracts import Severity
+ from agent_perimeter.checks.registry import applicable, summarise_skips
+ from agent_perimeter.discover.enumerate import ToolRecord
+ from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile, require_scope
+ from agent_perimeter.transport.base import Transport, TransportError
+ from agent_perimeter.transport.revision import Fingerprint, fingerprint
+ from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
+ from agent_perimeter.transport.streamable_http import StreamableHttpTransport
+ 
+ DEFAULT_CONTACT_URL = "https://github.com/USER/agent-perimeter"
++DEFAULT_REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
+ 
+ # The plain `Severity` StrEnum sorts alphabetically (critical, high, info, low,
+ # medium) — wrong order. This is the actual severity ranking (revision §2.7).
+ SEVERITY_RANK: dict[Severity, int] = {
+     Severity.CRITICAL: 0,
+     Severity.HIGH: 1,
+     Severity.MEDIUM: 2,
+     Severity.LOW: 3,
+     Severity.INFO: 4,
+ }
+@@ -377,10 +378,54 @@ def scan(
+                 findings=findings,
+                 edges=edges,
+                 fingerprint=result,
+                 target=target,
+                 skipped=skipped,
+                 scores=published,
+             ),
+             encoding="utf-8",
+         )
+         typer.echo(f"Report written to {html}")
++
++
++@app.command()
++def census(
++    endpoint: Annotated[str, typer.Option(help="Registry API base URL.")] = DEFAULT_REGISTRY,
++    tier2_n: Annotated[int, typer.Option(help="Tier-2 packages per ecosystem.")] = 200,
++    out: Annotated[Path, typer.Option(help="Directory for the report and raw data.")] = Path(
++        "docs/census"
++    ),
++) -> None:
++    """Collect a passive census of the public MCP registry.
++
++    Reads the registry API and published package artifacts. Never connects to a
++    third-party MCP server.
++    """
++    import httpx
++    from sqlalchemy import create_engine
++    from sqlalchemy.orm import Session
++
++    from agent_perimeter.census.run import run_census
++    from agent_perimeter.db.models import Base
++
++    out.mkdir(parents=True, exist_ok=True)
++
++    # ponytail: a run-local SQLite file under `out`, not the project's shared
++    # Postgres (alembic.ini's connection is host-only, and nothing in the
++    # codebase yet bootstraps an app-level Postgres session to reuse). Every
++    # CensusRun/CensusRecord row this command writes is real and queryable -
++    # swap for the shared Postgres engine once an app-wide session helper
++    # exists for the CLI to share with the API.
++    engine = create_engine(f"sqlite:///{out / 'census.db'}")
++    Base.metadata.create_all(engine)
++
++    with httpx.Client() as client, Session(engine) as session:
++        run = run_census(session, client, endpoint=endpoint, tier2_n=tier2_n)
++        # Read while the session is still open - CensusRun's attributes are
++        # expired by the commit inside run_census, and refreshing them after
++        # the session closes below would raise DetachedInstanceError.
++        typer.echo(f"Population size: {run.population_size}")
++        typer.echo(f"Tier-2 n:        {run.tier2_n}")
++        # Printed unconditionally, zero included - B10: a number that only
++        # shows up when it's bad is a number nobody trusts.
++        typer.echo(f"Fetch failures:  {run.fetch_failures}")
++        typer.echo(f"Method hash:     {run.method_hash}")
+diff --git a/tests/census/test_passive_only.py b/tests/census/test_passive_only.py
+new file mode 100644
+index 0000000..8cc959f
+--- /dev/null
++++ b/tests/census/test_passive_only.py
+@@ -0,0 +1,141 @@
++import ast
++import re
++from pathlib import Path
++
++import pytest
++
++FORBIDDEN_PREFIXES = (
++    "agent_perimeter.transport",
++    "agent_perimeter.checks.active",
++    "agent_perimeter.checks.injection",
++    "agent_perimeter.discover",
++)
++
++
++def _imports(path: Path) -> set[str]:
++    tree = ast.parse(path.read_text(encoding="utf-8"))
++    names: set[str] = set()
++    for node in ast.walk(tree):
++        if isinstance(node, ast.Import):
++            names.update(a.name for a in node.names)
++        elif isinstance(node, ast.ImportFrom) and node.module:
++            names.add(node.module)
++    return names
++
++
++def _module_file(module_name: str) -> Path | None:
++    """Best-effort source file for an `agent_perimeter.*` dotted module name.
++
++    Returns None for anything not under `agent_perimeter` (third-party and
++    stdlib modules are out of scope - see the module docstring on the
++    transitive test below) and for a name that resolves to no file on disk
++    (e.g. an attribute pulled off a module, not a submodule itself).
++    """
++    if not (module_name == "agent_perimeter" or module_name.startswith("agent_perimeter.")):
++        return None
++    rel = Path(*module_name.split("."))
++    as_module = rel.with_suffix(".py")
++    if as_module.is_file():
++        return as_module
++    as_package = rel / "__init__.py"
++    if as_package.is_file():
++        return as_package
++    return None
++
++
++def test_census_can_never_reach_a_transport_or_an_active_check() -> None:
++    """The census must be structurally incapable of touching a third-party server.
++
++    This has to be a *transitive* module-reachability check, not a one-hop
++    scan of each census file's own direct imports. A one-hop version catches
++    a forbidden import written directly in census code, but misses a chain
++    that leaves the census package through another agent_perimeter module -
++    e.g. agent_perimeter.census.run importing agent_perimeter.report.foo,
++    where foo itself (not anything under agent_perimeter/census) imports
++    agent_perimeter.transport.bar. The one-hop test never looks at what foo
++    imports, so that chain would sail through claiming "can never reach"
++    while doing exactly that. This walks the whole agent_perimeter.* import
++    graph reachable from census - direct or transitive - and stops expanding
++    only at a forbidden module (already an offence, no need to go further)
++    or a module outside agent_perimeter entirely (third-party libraries are
++    not this project's graph to police).
++    """
++    offences: list[str] = []
++    seen: set[str] = set()
++    worklist: list[tuple[str, Path]] = []
++
++    for path in Path("agent_perimeter/census").rglob("*.py"):
++        for name in _imports(path):
++            if name.startswith(FORBIDDEN_PREFIXES):
++                offences.append(f"{path}: {name}")
++            elif name.startswith("agent_perimeter") and name not in seen:
++                seen.add(name)
++                worklist.append((name, path))
++
++    while worklist:
++        module_name, origin = worklist.pop()
++        module_file = _module_file(module_name)
++        if module_file is None:
++            continue
++        for name in _imports(module_file):
++            if name.startswith(FORBIDDEN_PREFIXES):
++                offences.append(f"{module_file}: {name} (reached from {origin} via {module_name})")
++            elif name.startswith("agent_perimeter") and name not in seen:
++                seen.add(name)
++                worklist.append((name, module_file))
++
++    assert offences == [], f"census reached a live-traffic module: {offences}"
++
++
++TIER3 = Path("agent_perimeter/census/tier3.py")
++_METHOD_RE = re.compile(r"^[a-z]+/[a-zA-Z]+$")
++
++
++def test_every_module_but_tier3_talks_only_to_the_allowed_hosts() -> None:
++    """Tiers 1-2 are artifact-only: the host list is closed and literal.
++
++    `github.com` is allowed alongside the five hosts tiers 1-2 actually send
++    requests to: it never appears as a request target in this package, only
++    as the contact URL baked into every `USER_AGENT` constant (fetch.py,
++    artifacts.py, sample.py) per the registry-collection convention of
++    identifying the tool with a contact URL. A regex over raw source can't
++    tell "host embedded in a header value" from "host requested," so it has
++    to be told this one is the former.
++    """
++    allowed = {
++        "registry.modelcontextprotocol.io",
++        "pypi.org",
++        "registry.npmjs.org",
++        "pypistats.org",
++        "api.npmjs.org",
++        "github.com",
++    }
++    src = "\n".join(
++        p.read_text(encoding="utf-8")
++        for p in Path("agent_perimeter/census").rglob("*.py")
++        if p != TIER3
++    )
++    hosts = set(re.findall(r"https://([a-z0-9.\-]+)/", src))
++    assert hosts <= allowed, f"unexpected host in census: {hosts - allowed}"
++
++
++@pytest.mark.skip(reason="tier3.py lands in task 6b")
++def test_tier3_sends_exactly_one_method_and_owns_no_host() -> None:
++    """Tier 3's targets come from the frame, so it is constrained by shape, not by host.
++
++    This is the guarantee that makes a live `server/discover` passive discovery
++    rather than an active probe. It must be impossible to widen by accident.
++    """
++    src = TIER3.read_text(encoding="utf-8")
++
++    methods = {
++        node.value
++        for node in ast.walk(ast.parse(src))
++        if isinstance(node, ast.Constant)
++        and isinstance(node.value, str)
++        and _METHOD_RE.fullmatch(node.value)
++    }
++    assert methods == {"server/discover"}, f"tier3 may send only server/discover, found {methods}"
++
++    hosts = set(re.findall(r"https://([a-z0-9.\-]+)/", src))
++    assert hosts == set(), f"tier3 must take every target from the frame, found {hosts}"
+diff --git a/tests/census/test_run.py b/tests/census/test_run.py
+new file mode 100644
+index 0000000..039dd57
+--- /dev/null
++++ b/tests/census/test_run.py
+@@ -0,0 +1,342 @@
++"""Tests for census orchestration: method_hash, run_census, temp-dir cleanup,
++and distribution-column population.
++
++Registry pagination and tier-2 ranking go through a single httpx.MockTransport
++dispatched by host, mirroring the real hosts fetch.py/sample.py talk to.
++`artifacts.fetch_artifact` is monkeypatched to isolate orchestration
++(the cleanup guarantee, fetch_status/failure bookkeeping, distribution) from
++archive-download/extraction mechanics already covered by test_artifacts.py;
++`detect.detect_features` runs for real against a small on-disk tree so the
++sdk_version/feature_set_json wiring is exercised end to end.
++"""
++
++from __future__ import annotations
++
++from collections.abc import Callable
++from pathlib import Path
++
++import httpx
++import pytest
++from sqlalchemy import create_engine, select
++from sqlalchemy.engine import Engine
++from sqlalchemy.orm import Session
++
++from agent_perimeter.census.run import method_hash, run_census
++from agent_perimeter.db.models import Base, CensusRecord, CensusRun
++from agent_perimeter.model.census import FetchStatus
++
++REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
++
++
++def _server_item(
++    name: str,
++    *,
++    version: str = "1.0.0",
++    packages: list[dict[str, object]] | None = None,
++    remotes: list[dict[str, object]] | None = None,
++) -> dict[str, object]:
++    server: dict[str, object] = {"name": name, "version": version}
++    if packages is not None:
++        server["packages"] = packages
++    if remotes is not None:
++        server["remotes"] = remotes
++    return {"server": server}
++
++
++def _page(items: list[dict[str, object]], *, next_cursor: str | None = None) -> dict[str, object]:
++    metadata: dict[str, object] = {} if next_cursor is None else {"nextCursor": next_cursor}
++    return {"servers": items, "metadata": metadata}
++
++
++def _handler(
++    pages: dict[str | None, dict[str, object]],
++    downloads: dict[tuple[str, str], int],
++) -> Callable[[httpx.Request], httpx.Response]:
++    """Dispatch by host: registry pagination (keyed by cursor) and the two
++    download-count endpoints rank() calls for every entry with coords."""
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        host = request.url.host
++        if host == "registry.modelcontextprotocol.io":
++            cursor = request.url.params.get("cursor")
++            page = pages.get(cursor)
++            if page is None:
++                return httpx.Response(500)
++            return httpx.Response(200, json=page)
++        if host == "pypistats.org":
++            name = request.url.path.split("/")[3]
++            count = downloads.get(("pypi", name))
++            if count is None:
++                return httpx.Response(404)
++            return httpx.Response(200, json={"data": {"last_month": count}})
++        if host == "api.npmjs.org":
++            name = request.url.path.rsplit("/", 1)[-1]
++            count = downloads.get(("npm", name))
++            if count is None:
++                return httpx.Response(404)
++            return httpx.Response(200, json={"downloads": count})
++        raise AssertionError(f"unexpected host in test: {host}")
++
++    return handler
++
++
++def _engine() -> Engine:
++    engine = create_engine("sqlite://")
++    Base.metadata.create_all(engine)
++    return engine
++
++
++# --- method_hash ---------------------------------------------------------
++
++
++def test_method_hash_is_a_stable_hex_string() -> None:
++    a = method_hash()
++    b = method_hash()
++    assert a == b
++    assert len(a) == 16
++    int(a, 16)  # raises ValueError if not hex
++
++
++# --- run_census: basic orchestration --------------------------------------
++
++
++def test_run_census_persists_a_run_with_the_right_summary_fields() -> None:
++    items = [_server_item("pkg/bare-one")]
++    client = httpx.Client(
++        transport=httpx.MockTransport(_handler({None: _page(items)}, {}))
++    )
++    engine = _engine()
++    with Session(engine) as session:
++        run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
++
++        assert run.id is not None
++        assert run.population_size == 1
++        assert run.tier2_n == 5
++        assert run.registry_endpoint == REGISTRY
++        assert run.method_hash == method_hash()
++        assert run.tool_version
++        assert run.started_at is not None
++        assert run.finished_at is not None
++        assert run.started_at <= run.finished_at
++        assert run.fetch_failures == 0
++
++        stored = session.execute(select(CensusRun).where(CensusRun.id == run.id)).scalar_one()
++        assert stored.population_size == 1
++    engine.dispose()
++
++
++def test_run_census_paginates_across_multiple_pages() -> None:
++    page1 = _page([_server_item("pkg/one")], next_cursor="c2")
++    page2 = _page([_server_item("pkg/two")])
++    client = httpx.Client(
++        transport=httpx.MockTransport(_handler({None: page1, "c2": page2}, {}))
++    )
++    engine = _engine()
++    with Session(engine) as session:
++        run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
++        assert run.population_size == 2
++    engine.dispose()
++
++
++# --- distribution column ---------------------------------------------------
++
++
++def test_distribution_is_populated_for_every_case() -> None:
++    items = [
++        _server_item(
++            "pkg/npm-one",
++            packages=[{"registryType": "npm", "identifier": "npm-one", "version": "1.0.0"}],
++        ),
++        _server_item(
++            "pkg/pypi-one",
++            packages=[{"registryType": "pypi", "identifier": "pypi-one", "version": "1.0.0"}],
++        ),
++        _server_item(
++            "pkg/oci-one",
++            packages=[{"registryType": "oci", "identifier": "oci-one", "version": "1.0.0"}],
++        ),
++        _server_item("pkg/remote-one", remotes=[{"url": "https://example.invalid/mcp"}]),
++        _server_item("pkg/bare-one"),
++    ]
++    downloads = {("npm", "npm-one"): 100, ("pypi", "pypi-one"): 50}
++    client = httpx.Client(
++        transport=httpx.MockTransport(_handler({None: _page(items)}, downloads))
++    )
++    engine = _engine()
++    with Session(engine) as session:
++        # tier2_n=0: no artifact fetch is attempted for anyone, isolating the
++        # distribution assertion below from artifact-fetch mechanics.
++        run = run_census(session, client, endpoint=REGISTRY, tier2_n=0)
++        records = (
++            session.execute(select(CensusRecord).where(CensusRecord.census_run_id == run.id))
++            .scalars()
++            .all()
++        )
++    engine.dispose()
++
++    by_id = {r.registry_id: r for r in records}
++    assert by_id["pkg/npm-one:1.0.0"].distribution == "package_npm"
++    assert by_id["pkg/pypi-one:1.0.0"].distribution == "package_pypi"
++    assert by_id["pkg/oci-one:1.0.0"].distribution == "package_other"
++    assert by_id["pkg/remote-one:1.0.0"].distribution == "remote_only"
++    assert by_id["pkg/bare-one:1.0.0"].distribution == "none"
++
++    # Nothing was attempted (tier2_n=0): every record says so explicitly
++    # rather than defaulting to a FetchStatus value that would falsely imply
++    # a network call was made.
++    assert all(r.fetch_status == "not_attempted" for r in records)
++
++    # coords_digest is non-null and set even for entries with no PackageCoords
++    # at all (remote-only, bare) - the pseudonym has to cover every record,
++    # not just the ones with a package.
++    assert all(r.coords_digest for r in records)
++    assert by_id["pkg/npm-one:1.0.0"].rank_metric == 100
++    assert by_id["pkg/pypi-one:1.0.0"].rank_metric == 50
++    assert by_id["pkg/bare-one:1.0.0"].rank_metric is None
++
++
++# --- temp-dir cleanup -------------------------------------------------------
++
++
++def test_temp_dir_is_removed_after_a_successful_tier2_fetch(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """Task 3's fetch_artifact leaves ArtifactResult.root caller-owned. run_census
++    is the caller: it must delete the extracted temp dir once detect_features
++    has read it, or a real census leaks up to 256 MiB per package for the
++    run's lifetime.
++    """
++    extracted_root = tmp_path / "extracted"
++    extracted_root.mkdir()
++    (extracted_root / "pyproject.toml").write_text(
++        '[project]\ndependencies = ["mcp==2.0.0"]\n', encoding="utf-8"
++    )
++
++    items = [
++        _server_item(
++            "pkg/npm-one",
++            packages=[{"registryType": "npm", "identifier": "npm-one", "version": "1.0.0"}],
++        )
++    ]
++    downloads = {("npm", "npm-one"): 999}
++    client = httpx.Client(
++        transport=httpx.MockTransport(_handler({None: _page(items)}, downloads))
++    )
++
++    from agent_perimeter.census.artifacts import ArtifactResult
++
++    def fake_fetch_artifact(client: httpx.Client, coords: object) -> ArtifactResult:
++        return ArtifactResult(
++            status=FetchStatus.OK, detail="", root=extracted_root, version="1.0.0"
++        )
++
++    monkeypatch.setattr("agent_perimeter.census.artifacts.fetch_artifact", fake_fetch_artifact)
++
++    engine = _engine()
++    with Session(engine) as session:
++        run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
++        records = (
++            session.execute(select(CensusRecord).where(CensusRecord.census_run_id == run.id))
++            .scalars()
++            .all()
++        )
++    engine.dispose()
++
++    assert not extracted_root.exists()
++    assert records[0].fetch_status == FetchStatus.OK.value
++    assert records[0].sdk_version == "2.0.0"
++
++
++def test_temp_dir_is_removed_even_when_no_source_features_are_found(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    """Same cleanup guarantee when detect_features finds nothing to report -
++    cleanup must not be conditioned on a successful detection."""
++    extracted_root = tmp_path / "extracted-empty"
++    extracted_root.mkdir()
++
++    items = [
++        _server_item(
++            "pkg/npm-two",
++            packages=[{"registryType": "npm", "identifier": "npm-two", "version": "1.0.0"}],
++        )
++    ]
++    downloads = {("npm", "npm-two"): 5}
++    client = httpx.Client(
++        transport=httpx.MockTransport(_handler({None: _page(items)}, downloads))
++    )
++
++    from agent_perimeter.census.artifacts import ArtifactResult
++
++    def fake_fetch_artifact(client: httpx.Client, coords: object) -> ArtifactResult:
++        return ArtifactResult(
++            status=FetchStatus.OK, detail="", root=extracted_root, version="1.0.0"
++        )
++
++    monkeypatch.setattr("agent_perimeter.census.artifacts.fetch_artifact", fake_fetch_artifact)
++
++    engine = _engine()
++    with Session(engine) as session:
++        run_census(session, client, endpoint=REGISTRY, tier2_n=5)
++    engine.dispose()
++
++    assert not extracted_root.exists()
++
++
++# --- fetch_failures aggregation ---------------------------------------------
++
++
++def test_fetch_failures_sums_pagination_and_artifact_failures(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    items = [
++        _server_item(
++            "pkg/npm-one",
++            packages=[{"registryType": "npm", "identifier": "npm-one", "version": "1.0.0"}],
++        )
++    ]
++    # page 1 points at a cursor whose page the handler doesn't have -> the
++    # handler's 500 branch fires, logging exactly one pagination failure.
++    page1 = _page(items, next_cursor="missing")
++    downloads = {("npm", "npm-one"): 10}
++    client = httpx.Client(
++        transport=httpx.MockTransport(_handler({None: page1}, downloads))
++    )
++
++    from agent_perimeter.census.artifacts import ArtifactResult
++
++    def failing_fetch_artifact(client: httpx.Client, coords: object) -> ArtifactResult:
++        return ArtifactResult(
++            status=FetchStatus.NOT_FOUND, detail="no artifact", root=None, version=None
++        )
++
++    monkeypatch.setattr("agent_perimeter.census.artifacts.fetch_artifact", failing_fetch_artifact)
++
++    engine = _engine()
++    with Session(engine) as session:
++        run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
++        records = (
++            session.execute(select(CensusRecord).where(CensusRecord.census_run_id == run.id))
++            .scalars()
++            .all()
++        )
++    engine.dispose()
++
++    assert run.fetch_failures == 2  # 1 pagination failure + 1 artifact failure
++    assert records[0].fetch_status == FetchStatus.NOT_FOUND.value
++
++
++def test_fetch_failures_is_printed_even_when_zero() -> None:
++    """B10: a number that only appears when it's bad is a number nobody trusts."""
++    items = [_server_item("pkg/bare-one")]
++    client = httpx.Client(
++        transport=httpx.MockTransport(_handler({None: _page(items)}, {}))
++    )
++    engine = _engine()
++    with Session(engine) as session:
++        run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
++        assert run.fetch_failures == 0
++        # The value is a real int either way, not an optional field a caller
++        # has to special-case before printing it.
++        assert isinstance(run.fetch_failures, int)
++    engine.dispose()

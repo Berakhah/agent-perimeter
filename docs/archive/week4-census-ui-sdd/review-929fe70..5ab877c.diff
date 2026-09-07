@@ -1,0 +1,321 @@
+# Review package: 929fe701e4e8facc479379bdc8d0bdf4426d29fe..HEAD
+
+## Commits
+5ab877c feat: deterministic within-ecosystem tier-2 sampling
+
+## Files changed
+ agent_perimeter/census/sample.py | 155 +++++++++++++++++++++++++++++++++++++++
+ tests/census/factories.py        |  42 +++++++++++
+ tests/census/test_sample.py      |  94 ++++++++++++++++++++++++
+ 3 files changed, 291 insertions(+)
+
+## Diff
+diff --git a/agent_perimeter/census/sample.py b/agent_perimeter/census/sample.py
+new file mode 100644
+index 0000000..b761bca
+--- /dev/null
++++ b/agent_perimeter/census/sample.py
+@@ -0,0 +1,155 @@
++"""Tier-2 selection. Deterministic, within-ecosystem, and it states its method.
++
++The registry API itself carries no popularity signal - see fetch.py's module
++docstring and docs/methodology.md ## Census collection for the confirmed
++response shape: no `downloads`, `stars`, `install_count` or equivalent field
++on any entry. That absence is why ranking goes out to pypistats.org and
++api.npmjs.org at all, rather than reading a field the registry never had.
++"""
++
++from __future__ import annotations
++
++import time
++from dataclasses import dataclass
++from enum import StrEnum
++
++import httpx
++
++from agent_perimeter import __version__
++from agent_perimeter.census.fetch import RegistryEntry
++from agent_perimeter.model.census import Ecosystem
++
++PYPI_DOWNLOADS = "https://pypistats.org/api/packages/{name}/recent"
++NPM_DOWNLOADS = "https://api.npmjs.org/downloads/point/last-month/{name}"
++
++USER_AGENT = (
++    f"agent-perimeter/{__version__} "
++    "(+https://github.com/USER/agent-perimeter/blob/main/docs/security.md)"
++)
++
++_TIMEOUT_S = 10.0
++
++# ponytail: fixed delay before the next pypistats.org call, not a token bucket.
++# pypistats rate-limits aggressively (429 after ~2 rapid requests, confirmed
++# live 2026-09-03) and a ~200-package tier-2 pass will hit it regardless. This
++# only reduces how often that happens; a throttled entry still comes back
++# UNAVAILABLE rather than raising, so there is nothing here worth a full
++# retry/backoff system like fetch.py's paginate. Swap for a token bucket if a
++# published Retry-After ever demands more than a fixed wait.
++MIN_INTERVAL_S = 0.3
++
++SELECTION_METHOD = (
++    "The registry API itself carries no popularity, download, star, or "
++    "install-count field for any entry, so tier 2 ranks against pypistats.org and "
++    "api.npmjs.org instead of a field the registry never had. Tier 2 is the top n "
++    "packages by download count within each ecosystem, ranked separately because "
++    "PyPI recent downloads and npm last-month downloads are different measurements "
++    "over different windows and are not comparable. Ties break on registry id "
++    "ascending. Entries with no available download metric are excluded from tier 2 "
++    "and counted in the report."
++)
++
++
++class RankSource(StrEnum):
++    PYPI_RECENT_DOWNLOADS = "pypi_recent_downloads"
++    NPM_LAST_MONTH_DOWNLOADS = "npm_last_month_downloads"
++    UNAVAILABLE = "unavailable"
++
++
++@dataclass(slots=True, frozen=True)
++class RankedEntry:
++    entry: RegistryEntry
++    downloads: int | None
++    rank_source: RankSource
++
++
++def _pypi_downloads(client: httpx.Client, name: str) -> int | None:
++    url = PYPI_DOWNLOADS.format(name=name)
++    try:
++        response = client.get(url, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_S)
++    except httpx.HTTPError:
++        return None
++    if response.status_code != 200:
++        return None
++    try:
++        doc = response.json()
++    except ValueError:
++        return None
++    data = doc.get("data") if isinstance(doc, dict) else None
++    last_month = data.get("last_month") if isinstance(data, dict) else None
++    return last_month if isinstance(last_month, int) else None
++
++
++def _npm_downloads(client: httpx.Client, name: str) -> int | None:
++    url = NPM_DOWNLOADS.format(name=name)
++    try:
++        response = client.get(url, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_S)
++    except httpx.HTTPError:
++        return None
++    if response.status_code != 200:
++        return None
++    try:
++        doc = response.json()
++    except ValueError:
++        return None
++    # Unknown package: {"error": "package ... not found"} - no "downloads" key
++    # at all, not a missing/null value under one.
++    downloads = doc.get("downloads") if isinstance(doc, dict) else None
++    return downloads if isinstance(downloads, int) else None
++
++
++def rank(client: httpx.Client, entries: list[RegistryEntry]) -> list[RankedEntry]:
++    """Look up a within-ecosystem download count for each entry.
++
++    Never raises into the caller - one throttled or unknown package must not
++    end a ranking pass over hundreds of entries. Any failure (429, timeout,
++    non-200, unparseable body, missing field) becomes RankSource.UNAVAILABLE
++    for that entry alone. An entry with no coords (a remote-only server, no
++    package) is never looked up at all - there is nothing to ask pypistats.org
++    or npm about.
++    """
++    out: list[RankedEntry] = []
++    for entry in entries:
++        coords = entry.coords
++        if coords is None:
++            out.append(
++                RankedEntry(entry=entry, downloads=None, rank_source=RankSource.UNAVAILABLE)
++            )
++            continue
++
++        # Ecosystem (model/census.py) only ever has these two members today, so
++        # mypy proves this match exhaustive - a third member would be a type
++        # error here, not a silent UNAVAILABLE at run time.
++        match coords.ecosystem:
++            case Ecosystem.PYPI:
++                downloads = _pypi_downloads(client, coords.name)
++                time.sleep(MIN_INTERVAL_S)
++                source = RankSource.PYPI_RECENT_DOWNLOADS
++            case Ecosystem.NPM:
++                downloads = _npm_downloads(client, coords.name)
++                source = RankSource.NPM_LAST_MONTH_DOWNLOADS
++
++        out.append(
++            RankedEntry(
++                entry=entry,
++                downloads=downloads,
++                rank_source=source if downloads is not None else RankSource.UNAVAILABLE,
++            )
++        )
++    return out
++
++
++def top_n(ranked: list[RankedEntry], n: int) -> list[RankedEntry]:
++    """Top n per ecosystem, deterministic. n is per ecosystem, not overall."""
++    out: list[RankedEntry] = []
++    for eco in Ecosystem:
++        pool = [
++            r
++            for r in ranked
++            if r.entry.coords is not None
++            and r.entry.coords.ecosystem is eco
++            and r.downloads is not None
++        ]
++        pool.sort(key=lambda r: (-(r.downloads or 0), r.entry.registry_id))
++        out.extend(pool[:n])
++    return out
+diff --git a/tests/census/factories.py b/tests/census/factories.py
+new file mode 100644
+index 0000000..5011ef6
+--- /dev/null
++++ b/tests/census/factories.py
+@@ -0,0 +1,42 @@
++"""Test factory for RankedEntry populations used by tier-2 sampling tests."""
++
++from __future__ import annotations
++
++from collections.abc import Sequence
++
++from agent_perimeter.census.fetch import RegistryEntry
++from agent_perimeter.census.sample import RankedEntry, RankSource
++from agent_perimeter.model.census import Ecosystem, PackageCoords
++
++_SOURCE_BY_ECOSYSTEM = {
++    Ecosystem.PYPI: RankSource.PYPI_RECENT_DOWNLOADS,
++    Ecosystem.NPM: RankSource.NPM_LAST_MONTH_DOWNLOADS,
++}
++
++
++def ranked(
++    specs: Sequence[tuple[str, int | None] | tuple[str, int | None, str]],
++) -> list[RankedEntry]:
++    """Build a RankedEntry population from (name, downloads[, ecosystem]) tuples.
++
++    `ecosystem` defaults to "pypi" when omitted - most `top_n` tests only care
++    about ranking within a single ecosystem and would otherwise have to spell
++    it out on every row.
++    """
++    out: list[RankedEntry] = []
++    for spec in specs:
++        match spec:
++            case (name, downloads, eco_str):
++                pass
++            case (name, downloads):
++                eco_str = "pypi"
++        eco = Ecosystem(eco_str)
++        entry = RegistryEntry(
++            registry_id=name,
++            name=name,
++            coords=PackageCoords(ecosystem=eco, name=name),
++            repository_url=None,
++        )
++        source = RankSource.UNAVAILABLE if downloads is None else _SOURCE_BY_ECOSYSTEM[eco]
++        out.append(RankedEntry(entry=entry, downloads=downloads, rank_source=source))
++    return out
+diff --git a/tests/census/test_sample.py b/tests/census/test_sample.py
+new file mode 100644
+index 0000000..9e8ccce
+--- /dev/null
++++ b/tests/census/test_sample.py
+@@ -0,0 +1,94 @@
++import httpx
++
++from agent_perimeter.census.fetch import RegistryEntry
++from agent_perimeter.census.sample import RankSource, rank, top_n
++from agent_perimeter.model.census import Ecosystem, PackageCoords
++from tests.census.factories import ranked
++
++
++def test_selection_is_deterministic() -> None:
++    pop = ranked([("a", 10), ("b", 30), ("c", 30), ("d", 5)])
++    assert [e.entry.name for e in top_n(pop, 2)] == [e.entry.name for e in top_n(pop, 2)]
++
++
++def test_ties_break_on_registry_id_not_arrival_order() -> None:
++    pop = ranked([("zeta", 30), ("alpha", 30)])
++    assert [e.entry.name for e in top_n(pop, 2)] == ["alpha", "zeta"]
++
++
++def test_ranking_happens_within_an_ecosystem_never_across() -> None:
++    """PyPI and npm counts are different measurements. Merging them is a lie."""
++    pop = ranked([("py-a", 100, "pypi"), ("js-a", 5, "npm")])
++    selected = top_n(pop, 2)
++    assert {e.rank_source for e in selected} == {
++        RankSource.PYPI_RECENT_DOWNLOADS,
++        RankSource.NPM_LAST_MONTH_DOWNLOADS,
++    }
++
++
++def test_an_entry_with_no_download_metric_is_excluded_and_counted() -> None:
++    pop = ranked([("a", 10), ("b", None)])
++    selected = top_n(pop, 5)
++    assert len(selected) == 1
++    assert sum(1 for e in pop if e.rank_source is RankSource.UNAVAILABLE) == 1
++
++
++def test_n_larger_than_the_population_returns_the_population() -> None:
++    assert len(top_n(ranked([("a", 1)]), 200)) == 1
++
++
++def _entry(name: str, ecosystem: Ecosystem | None) -> RegistryEntry:
++    coords = PackageCoords(ecosystem=ecosystem, name=name) if ecosystem is not None else None
++    return RegistryEntry(registry_id=name, name=name, coords=coords, repository_url=None)
++
++
++def test_rank_reads_pypi_recent_downloads_from_pypistats() -> None:
++    def handler(request: httpx.Request) -> httpx.Response:
++        assert "pypistats.org" in str(request.url)
++        return httpx.Response(200, json={"data": {"last_month": 4200}, "package": "astro"})
++
++    client = httpx.Client(transport=httpx.MockTransport(handler))
++    result = rank(client, [_entry("astro", Ecosystem.PYPI)])
++    assert result[0].downloads == 4200
++    assert result[0].rank_source is RankSource.PYPI_RECENT_DOWNLOADS
++
++
++def test_rank_reads_npm_last_month_downloads_from_api_npmjs() -> None:
++    def handler(request: httpx.Request) -> httpx.Response:
++        assert "api.npmjs.org" in str(request.url)
++        return httpx.Response(200, json={"downloads": 900, "package": "left-pad"})
++
++    client = httpx.Client(transport=httpx.MockTransport(handler))
++    result = rank(client, [_entry("left-pad", Ecosystem.NPM)])
++    assert result[0].downloads == 900
++    assert result[0].rank_source is RankSource.NPM_LAST_MONTH_DOWNLOADS
++
++
++def test_a_pypistats_429_is_unavailable_not_a_crash() -> None:
++    def handler(request: httpx.Request) -> httpx.Response:
++        return httpx.Response(429)
++
++    client = httpx.Client(transport=httpx.MockTransport(handler))
++    result = rank(client, [_entry("astro", Ecosystem.PYPI)])
++    assert result[0].downloads is None
++    assert result[0].rank_source is RankSource.UNAVAILABLE
++
++
++def test_an_npm_response_with_no_downloads_key_is_unavailable() -> None:
++    def handler(request: httpx.Request) -> httpx.Response:
++        return httpx.Response(200, json={"error": "package left-pad-nope not found"})
++
++    client = httpx.Client(transport=httpx.MockTransport(handler))
++    result = rank(client, [_entry("left-pad-nope", Ecosystem.NPM)])
++    assert result[0].downloads is None
++    assert result[0].rank_source is RankSource.UNAVAILABLE
++
++
++def test_an_entry_with_no_coords_is_unavailable_without_a_lookup() -> None:
++    def handler(request: httpx.Request) -> httpx.Response:
++        raise AssertionError("rank() must not make a network call for an entry with no coords")
++
++    client = httpx.Client(transport=httpx.MockTransport(handler))
++    result = rank(client, [_entry("remote-only-server", None)])
++    assert result[0].downloads is None
++    assert result[0].rank_source is RankSource.UNAVAILABLE

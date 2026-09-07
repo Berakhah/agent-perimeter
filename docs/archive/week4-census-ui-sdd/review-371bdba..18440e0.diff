@@ -1,0 +1,212 @@
+# Review package: 371bdba..HEAD
+
+## Commits
+18440e0 fix: gate QuotaStrip on fixture mode and wire SSE connection errors
+
+## Files changed
+ web/app/scans/[id]/fixtures.ts |  7 +++++--
+ web/app/scans/[id]/page.tsx    | 35 +++++++++++++++++++++++++++--------
+ 2 files changed, 32 insertions(+), 10 deletions(-)
+
+## Diff
+diff --git a/web/app/scans/[id]/fixtures.ts b/web/app/scans/[id]/fixtures.ts
+index 8dc7aa4..8119a01 100644
+--- a/web/app/scans/[id]/fixtures.ts
++++ b/web/app/scans/[id]/fixtures.ts
+@@ -11,21 +11,21 @@
+  * terminal frame. That is deliberate: it is this module's only lever for
+  * "a model lane engaged" (`page.tsx` watches for its check id in the
+  * arrived-event stream), and the determinism budget makes that the
+  * exception, not the rule -- `deterministic` shows the common case,
+  * `degraded` shows the one check the model-unavailable path actually skips.
+  */
+ import type { ScanCheckEvent, ScanEvent, ScanTerminalEvent } from "@/src/lib/api";
+ 
+ // 30 real, non-model check ids spanning every phase in the namespace list
+ // the brief hands us (`active`, `descriptions`, `injection`, `revision`,
+-// `secrets`, `static`) -- `revision` alone contributes 11, so any 29-slice
++// `secrets`, `static`) -- `revision` alone contributes 12, so any 29-slice
+ // below keeps at least one `revision` row (RED test 1's requirement).
+ const NON_MODEL_CHECK_IDS = [
+   "active.command_injection",
+   "active.confused_deputy",
+   "active.path_traversal",
+   "active.ssrf",
+   "descriptions.imperative_injection",
+   "descriptions.name_schema_mismatch",
+   "descriptions.shadowing",
+   "descriptions.unicode_anomaly",
+@@ -77,21 +77,24 @@ const STREAMING: ScanEvent[] = [...buildCheckEvents(STREAMING_IDS, 29), streamin
+ 
+ const DEGRADED_RUNNABLE_IDS = NON_MODEL_CHECK_IDS.slice(0, 28);
+ const degradedTerminal: ScanTerminalEvent = {
+   terminal: true,
+   completed: 28,
+   total: 29,
+   skipped: [
+     {
+       check_id: MODEL_CHECK_ID,
+       reason: "model_unavailable",
+-      detail: "Skipped — no model provider is configured for this scan.",
++      // No "Skipped --" prefix here -- `PhaseGroup` already renders one
++      // (`Skipped — {check.detail}`); doubling it up read as
++      // "Skipped — Skipped — ...".
++      detail: "no model provider is configured for this scan.",
+     },
+   ],
+ };
+ const DEGRADED: ScanEvent[] = [...buildCheckEvents(DEGRADED_RUNNABLE_IDS, 29), degradedTerminal];
+ 
+ const DETERMINISTIC_IDS = NON_MODEL_CHECK_IDS.slice(0, 29);
+ const deterministicTerminal: ScanTerminalEvent = { terminal: true, completed: 29, total: 29, skipped: [] };
+ const DETERMINISTIC: ScanEvent[] = [...buildCheckEvents(DETERMINISTIC_IDS, 29), deterministicTerminal];
+ 
+ export const FIXTURES: Record<string, ScanEvent[]> = {
+diff --git a/web/app/scans/[id]/page.tsx b/web/app/scans/[id]/page.tsx
+index 8b58170..a6e44ba 100644
+--- a/web/app/scans/[id]/page.tsx
++++ b/web/app/scans/[id]/page.tsx
+@@ -27,28 +27,29 @@
+  * so they're unwrapped with React's `use()` rather than `await` --
+  * `findings/page.tsx`'s `await searchParams` pattern is for an async
+  * Server Component, which this can't be and still subscribe to anything.
+  *
+  * `?fixture=streaming|degraded|deterministic` replays a canned
+  * `ScanEvent[]` (`./fixtures.ts`) through `replayScanEvents`, which shares
+  * `subscribeToScanEvents`'s exact `(id, onEvent, onError?) => unsubscribe`
+  * signature and dispatches on a real `setTimeout` cadence -- not one
+  * synchronous dump. No live backend is reachable from this project's
+  * Playwright runs (no CORS/rewrite wired), so the real `subscribeToScanEvents`
+- * branch below is wired for production but isn't exercised by any test here
+- * -- the same forward-reference pattern `app/page.tsx`'s real `createScan`
+- * call already uses.
++ * branch below -- `onError` surfaced through `ErrorState`, `onRetry` bumping
++ * `retryCount` to re-run the subscription effect -- is wired for production
++ * but isn't exercised by any test here -- the same forward-reference pattern
++ * `app/page.tsx`'s real `createScan` call already uses.
+  */
+ import { use, useEffect, useMemo, useState } from "react";
+ 
+ import { PhaseGroup, type PhaseGroupCheck } from "@/app/components/PhaseGroup";
+-import { EmptyState, QuotaStrip, Skeleton, type ProviderQuota } from "@/src/lib/_bok-ui";
++import { EmptyState, ErrorState, QuotaStrip, Skeleton, type ProviderQuota } from "@/src/lib/_bok-ui";
+ import { isTerminalEvent, subscribeToScanEvents, type ScanEvent, type ScanTerminalEvent } from "@/src/lib/api";
+ import { FIXTURES } from "./fixtures";
+ 
+ // 29 checks at 30ms apart (~870ms) plus a 500ms pause before the terminal
+ // frame -- comfortably under the ~2s ruling-2 pacing budget, and the pause
+ // is what gives the status region's un-collided "n of total" text a window
+ // wide enough for Playwright's poll interval to land inside, before it's
+ // swapped for the terminal summary.
+ const FRAME_DELAY_MS = 30;
+ const TERMINAL_PAUSE_MS = 500;
+@@ -86,43 +87,51 @@ interface CheckRow extends PhaseGroupCheck {
+   phase: string;
+ }
+ 
+ // The only check the determinism budget lets call a model (CLAUDE.md) --
+ // its presence in the arrived-event stream is this screen's one signal
+ // that a model lane engaged at all.
+ const MODEL_CHECK_ID = "descriptions.llm_judge";
+ 
+ // ponytail: `ScanEvent` carries no real provider-quota numbers on the wire
+ // today -- this acknowledges the model lane engaged, it isn't live quota
+-// telemetry. Swap for real numbers once the backend streams them.
++// telemetry, and is gated on `fixture` (below) so it only ever appears in a
++// fixture demo, never as fabricated data in a real scan. Swap for real
++// numbers, unconditionally rendered, once the backend streams them.
+ const PLACEHOLDER_PROVIDERS: ProviderQuota[] = [{ name: "model provider", status: "ok", used: 1, limit: 1 }];
+ 
+ export default function LiveScanPage({
+   params,
+   searchParams,
+ }: {
+   params: Promise<{ id: string }>;
+   searchParams: Promise<{ fixture?: string }>;
+ }) {
+   const { id } = use(params);
+   const { fixture } = use(searchParams);
+ 
+   const [rows, setRows] = useState<CheckRow[]>([]);
+   const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
+   const [terminalEvent, setTerminalEvent] = useState<ScanTerminalEvent | null>(null);
+   const [modelEngaged, setModelEngaged] = useState(false);
++  const [connectionError, setConnectionError] = useState(false);
++  // Bumping this re-runs the subscription effect -- `onRetry` below's way of
++  // re-opening the real EventSource after a connection error (fixture mode
++  // never errors, so this is only ever touched on the real path).
++  const [retryCount, setRetryCount] = useState(0);
+ 
+   useEffect(() => {
+     setRows([]);
+     setProgress(null);
+     setTerminalEvent(null);
+     setModelEngaged(false);
++    setConnectionError(false);
+ 
+     function handleEvent(event: ScanEvent) {
+       if (isTerminalEvent(event)) {
+         setProgress({ completed: event.completed, total: event.total });
+         setTerminalEvent(event);
+         if (event.skipped.length > 0) {
+           setRows((prev) => [
+             ...prev,
+             ...event.skipped.map((s) => ({
+               checkId: s.check_id,
+@@ -138,22 +147,22 @@ export default function LiveScanPage({
+       if (event.check_id === MODEL_CHECK_ID) setModelEngaged(true);
+       setRows((prev) => [
+         ...prev,
+         { checkId: event.check_id, phase: event.phase, status: event.status, elapsedMs: event.elapsed_ms },
+       ]);
+     }
+ 
+     if (fixture) {
+       return replayScanEvents(id, FIXTURES[fixture] ?? [], handleEvent);
+     }
+-    return subscribeToScanEvents(id, handleEvent);
+-  }, [id, fixture]);
++    return subscribeToScanEvents(id, handleEvent, () => setConnectionError(true));
++  }, [id, fixture, retryCount]);
+ 
+   const phases = useMemo(() => {
+     const grouped = new Map<string, PhaseGroupCheck[]>();
+     for (const row of rows) {
+       const list = grouped.get(row.phase) ?? [];
+       list.push(row);
+       grouped.set(row.phase, list);
+     }
+     return grouped;
+   }, [rows]);
+@@ -176,20 +185,30 @@ export default function LiveScanPage({
+         <EmptyState
+           title="No findings for the checks that ran"
+           description={
+             skippedCount === 0
+               ? "0 checks skipped."
+               : `${skippedCount} check${skippedCount === 1 ? "" : "s"} skipped — see the skipped rows below for why.`
+           }
+         />
+       )}
+ 
+-      {modelEngaged && <QuotaStrip providers={PLACEHOLDER_PROVIDERS} />}
++      {connectionError && (
++        <ErrorState
++          title="Lost connection to the scan"
++          description="The live update stream disconnected — retry to reconnect."
++          onRetry={() => setRetryCount((n) => n + 1)}
++        />
++      )}
++
++      {/* Fixture-gated (not just `modelEngaged`): `ScanEvent` carries no real
++          quota telemetry, so a real scan must never show invented numbers. */}
++      {modelEngaged && fixture && <QuotaStrip providers={PLACEHOLDER_PROVIDERS} />}
+ 
+       {[...phases.entries()].map(([phase, checks]) => (
+         <PhaseGroup key={phase} phase={phase} checks={checks} />
+       ))}
+ 
+       {hasPending && <Skeleton lines={4} />}
+     </main>
+   );
+ }

@@ -1,0 +1,874 @@
+# Review package: f4477ea..HEAD
+
+## Commits
+e4d9564 docs: licence audit, Apache-2.0 copyright line, README, clean-machine record
+68a84ea fix: set the executable bit on scripts/smoke.sh
+89573da feat: restructure compose to db/api/web/fixture, add web Dockerfile
+88b1d78 feat: add GET /api/health for the compose healthcheck and smoke script
+
+## Files changed
+ .dockerignore                  |  12 ++++
+ .env.example                   |  10 +++
+ Dockerfile                     |   8 +++
+ LICENSE                        |   2 +-
+ NOTICE                         |   9 +++
+ README.md                      | 134 ++++++++++++++++++++++++++++++++++++
+ agent_perimeter/api/app.py     |   8 +++
+ agent_perimeter/scan_runner.py |  15 +++--
+ alembic.ini                    |   2 +-
+ docker-compose.yml             |  78 ++++++++++++++++++---
+ docs/evidence/clean-machine.md | 139 ++++++++++++++++++++++++++++++++++++++
+ docs/licences.md               | 149 +++++++++++++++++++++++++++++++++++++++++
+ scripts/smoke.sh               |  36 ++++++++++
+ tests/api/test_health.py       |  18 +++++
+ web/.dockerignore              |   9 +++
+ web/Dockerfile                 |  18 +++++
+ web/package.json               |   1 +
+ 17 files changed, 631 insertions(+), 17 deletions(-)
+
+## Diff
+diff --git a/.dockerignore b/.dockerignore
+new file mode 100644
+index 0000000..fbda264
+--- /dev/null
++++ b/.dockerignore
+@@ -0,0 +1,12 @@
++.git
++.venv
++.pytest_cache
++.superpowers
++web/node_modules
++web/.next
++web/test-results
++web/playwright-report
++docs
++Starting_Documents
++*.pyc
++__pycache__
+diff --git a/.env.example b/.env.example
+index 7be64cb..b935a7c 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,2 +1,12 @@
+ POSTGRES_PASSWORD=change-me-locally
++# `localhost` for bare-metal (CLI/tests run directly on the host, migrating
++# against a locally-installed Postgres). docker-compose.yml's `api` service
++# overrides this to `db` -- the two containers are not on the host's own
++# loopback interface, they reach each other by Docker Compose service name.
++POSTGRES_HOST=localhost
+ AP_CONTACT_URL=https://github.com/USER/agent-perimeter
++# Browser-side base URL the web UI's fetch calls are built against
++# (web/src/lib/api.ts). Under `docker compose up`, web (port 3000) and api
++# (port 8000) are separate origins from the browser's point of view, so this
++# must be absolute; Next.js inlines NEXT_PUBLIC_* variables at build time.
++NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+diff --git a/Dockerfile b/Dockerfile
+index 58d6d1a..3eeb8cb 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,6 +1,14 @@
+ FROM python:3.12-slim
+ WORKDIR /app
+ COPY pyproject.toml uv.lock ./
+ COPY agent_perimeter ./agent_perimeter
++# alembic.ini + migrations/ are needed inside the image too: docker-compose's
++# `api` service runs `alembic upgrade head` on start and scripts/smoke.sh
++# execs `alembic current` in the running container (task 17 Step 2). alembic
++# and uvicorn are both `pip install .` console scripts already (both are
++# direct pyproject.toml dependencies) -- no separate `uv` install needed
++# inside this image, which only ever runs the built package, not `uv run`.
++COPY alembic.ini ./
++COPY migrations ./migrations
+ RUN pip install --no-cache-dir .
+ ENTRYPOINT ["agent-perimeter"]
+diff --git a/LICENSE b/LICENSE
+index d645695..ea35ccb 100644
+--- a/LICENSE
++++ b/LICENSE
+@@ -180,21 +180,21 @@
+ 
+       To apply the Apache License to your work, attach the following
+       boilerplate notice, with the fields enclosed by brackets "[]"
+       replaced with your own identifying information. (Don't include
+       the brackets!)  The text should be enclosed in the appropriate
+       comment syntax for the file format. We also recommend that a
+       file or class name and description of purpose be included on the
+       same "printed page" as the copyright notice for easier
+       identification within third-party archives.
+ 
+-   Copyright [yyyy] [name of copyright owner]
++   Copyright 2026 Agent Perimeter contributors
+ 
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+ 
+        http://www.apache.org/licenses/LICENSE-2.0
+ 
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+diff --git a/NOTICE b/NOTICE
+new file mode 100644
+index 0000000..f829f58
+--- /dev/null
++++ b/NOTICE
+@@ -0,0 +1,9 @@
++Agent Perimeter
++Copyright 2026 Agent Perimeter contributors
++
++This product is licensed under the Apache License, Version 2.0. See the
++LICENSE file for the full license text.
++
++This product includes third-party software; see docs/licences.md (Python
++dependencies, via `pip-licenses`) and `web/` (npm dependencies, via
++`npx license-checker`) for the full list of dependencies and their licenses.
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..03daa7d
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,134 @@
++# Agent Perimeter
++
++Security posture scanner for MCP servers and tool-using agents.
++
++> *"You wired an agent into your internal systems. I will show you, with a
++> reproduction for each finding, exactly what an attacker can make it do."*
++
++Agent Perimeter is **the first MCP scanner that knows which revision of the
++protocol it is looking at**, and the only one that publishes its own
++precision and recall. Every check declares a CWE and a published taxonomy
++entry (OWASP LLM Top 10, OWASP MCP Top 10, CoSAI, NSA CSI, MITRE ATLAS), and
++every finding ships with a reproduction command a sceptic can run.
++
++## Before you scan anything: the scope-file requirement
++
++**An active probe against a server you do not own or have not been
++authorised to test refuses to run, with no exception.** Passive checks
++(static analysis of a manifest, a cloned public repo, or metadata already
++returned by `tools/list`) need nothing. An active probe — anything that
++sends a live request to confirm a finding — needs a scope file: `target`,
++`authorising_party`, `authorised_on`, `attestation`, and optionally
++`expires_on`. Without one, both the CLI and the HTTP API refuse the request
++through the same authorisation function (`agent_perimeter.model.scope`), not
++two implementations that could someday disagree — see
++`tests/api/test_refusal.py::test_the_api_and_the_cli_refuse_on_the_same_condition`.
++
++```bash
++agent-perimeter scan --target https://mcp.example.test/rpc --mode active \
++  --scope-file scope.yaml
++```
++
++```yaml
++# scope.yaml
++target: https://mcp.example.test/rpc
++authorising_party: Acme Ltd
++authorised_on: 2026-09-01
++attestation: "I am authorised to test this system."
++expires_on: 2026-12-01
++```
++
++Run the same request over HTTP with no scope file and the API refuses it
++with `422 authorization_required`, naming the missing field — never a silent
++skip, never a `500`.
++
++## Quickstart
++
++```bash
++git clone <repo-url> && cd agent-perimeter
++cp .env.example .env
++docker compose up -d --wait
++./scripts/smoke.sh
++```
++
++This brings up four things: `db` (Postgres 16), `api` (the FastAPI surface,
++running pending Alembic migrations on start), and `web` (the Next.js UI) —
++plus, opt-in only, `fixture`, a parameterised MCP stdio server for demos
++(it is not started by a bare `docker compose up`; a stdio server has no
++"healthy and listening" state the way an HTTP service does):
++
++```bash
++docker compose --profile demo run --rm fixture
++```
++
++Once `db`/`api`/`web` report healthy, the UI is at `http://localhost:3000`
++and the API at `http://localhost:8000` (`GET /api/health`, `POST
++/api/scans`, docs at `/api/docs`). `scripts/smoke.sh` asserts all of this
++end to end, including the scope-file refusal above, and is what
++`docs/evidence/clean-machine.md` records a run of.
++
++Scanning a **stdio** target (an untrusted binary you are about to execute)
++goes through the CLI, never the HTTP API, and always inside the
++containerised, non-root, read-only, network-off-unless-needed launcher —
++see hard constraint 4 in `CLAUDE.md`:
++
++```bash
++agent-perimeter scan --target "python /server.py" --mode passive
++```
++
++## CI: SARIF in GitHub code scanning
++
++`GET /api/scans/{id}/report.sarif` (or `agent-perimeter scan --sarif
++out.sarif`) produces SARIF 2.1.0 that validates against the schema and
++renders in GitHub's code scanning UI (`tests/report/test_sarif.py` is the
++golden-file proof). This project's own CI (`.github/workflows/ci.yml`) is
++the reference usage:
++
++```yaml
++- name: Upload SARIF sample to code scanning
++  if: github.event_name == 'push'
++  uses: github/codeql-action/upload-sarif@v3
++  with:
++    sarif_file: path/to/report.sarif
++```
++
++## What this is not
++
++Public-registry scanning is passive only — manifests, cloned repos, static
++artifacts, never a live probe against a server this project does not own
++(hard constraint 2). A discovered secret is never validated against a live
++service and never stored beyond its fingerprint — SHA-256 hash, entropy,
++prefix, last 4 characters, file/line (hard constraint 3). Probes prove
++reachability and stop; a path-traversal check reads one benign canary file
++and reports the path, nothing more (hard constraint 7).
++
++## Further reading
++
++- **[docs/methodology.md](docs/methodology.md)** — what "vulnerable" does and
++  does not mean here, the measured precision/recall table per check
++  (regenerated every commit, CI fails if it goes stale), sample/population
++  definitions, and every known limitation including the project's own
++  measured false-positive rate.
++- **The registry census report** — `docs/census/CHANGELOG.md` tracks it;
++  as of this release **no run has been published yet** (two prerequisites —
++  verified SDK version floors, and Tier 3 live-discover wiring — are called
++  out there as still outstanding). `analysis/census_analysis.py` is the
++  script that will reproduce every published figure from the raw CSV alone
++  once a run ships.
++- **[docs/security.md](docs/security.md)** — the coordinated-disclosure
++  policy for findings discovered *in* servers this project scans: a 90-day
++  embargo, no third-party server ever named in a published report, secrets
++  reported to the owner immediately and outside embargo, aggregate
++  statistics only. **[SECURITY.md](SECURITY.md)** is for vulnerabilities
++  *in Agent Perimeter itself*.
++- **[docs/licences.md](docs/licences.md)** — the full Python dependency
++  licence audit; no AGPL, SSPL, BUSL or non-commercial dependency, with
++  every non-Apache/MIT/BSD dependency (all MPL-2.0 or LGPL-3.0, none
++  copyleft-triggering for how this project uses them) flagged explicitly
++  rather than adopted silently.
++- **[docs/evidence/](docs/evidence/)** — accessibility (axe, keyboard,
++  375px, print), and the compose verification record.
++
++## Licence
++
++Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+diff --git a/agent_perimeter/api/app.py b/agent_perimeter/api/app.py
+index 2329f0f..3e4dd67 100644
+--- a/agent_perimeter/api/app.py
++++ b/agent_perimeter/api/app.py
+@@ -67,13 +67,21 @@ def create_app(*, database_url: str | None = None) -> FastAPI:
+             content={
+                 "error": "authorization_required",
+                 "missing_field": exc.missing_field,
+                 "message": (
+                     f"Active checks need a scope file with {exc.missing_field}. "
+                     "Attach one and re-run."
+                 ),
+             },
+         )
+ 
++    @app.get("/api/health")
++    def _health() -> dict[str, str]:
++        # Plain liveness probe -- scripts/smoke.sh and docker-compose.yml's
++        # `api` healthcheck both target this route (task 17 ruling 3). No
++        # database round-trip: the API must report healthy even before
++        # Postgres is reachable (see the best-effort create_all above).
++        return {"status": "ok"}
++
+     app.include_router(scans.router, prefix="/api")
+     app.include_router(census.router, prefix="/api")
+     return app
+diff --git a/agent_perimeter/scan_runner.py b/agent_perimeter/scan_runner.py
+index 771475d..5400331 100644
+--- a/agent_perimeter/scan_runner.py
++++ b/agent_perimeter/scan_runner.py
+@@ -32,27 +32,28 @@ from agent_perimeter.model.edge import CapabilityEdge
+ from agent_perimeter.model.finding import Finding
+ from agent_perimeter.model.scope import ScopeFile, require_scope
+ from agent_perimeter.transport.base import Transport, TransportError
+ from agent_perimeter.transport.revision import Fingerprint, fingerprint
+ from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
+ from agent_perimeter.transport.streamable_http import StreamableHttpTransport
+ 
+ DEFAULT_CONTACT_URL = "https://github.com/USER/agent-perimeter"
+ 
+ # Same DSN alembic.ini's `sqlalchemy.url` uses (migrations/env.py expands
+-# ${POSTGRES_PASSWORD} the same way, at read time, since configparser/typer
+-# don't do it on their own) - one Postgres instance for migrations, the CLI
+-# and the API to share. Keep in sync by hand; there's no app-wide config
+-# module yet for either to read from.
+-DEFAULT_DATABASE_URL = (
+-    "postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@localhost:5432/agent_perimeter"
+-)
++# ${POSTGRES_PASSWORD}/${POSTGRES_HOST} the same way, at read time, since
++# configparser/typer don't do it on their own) - one Postgres instance for
++# migrations, the CLI and the API to share. Keep in sync by hand; there's no
++# app-wide config module yet for either to read from. ${POSTGRES_HOST}
++# defaults to `localhost` for bare-metal use (.env.example) and is set to
++# `db` by docker-compose.yml's `api` service, which is on the same Docker
++# network as the `db` service rather than the host's loopback interface.
++DEFAULT_DATABASE_URL = "postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:5432/agent_perimeter"
+ 
+ 
+ class ScanMode(StrEnum):
+     """A free-form `str` let `--mode actve` (typo) silently run a passive
+     scan with no warning. An enum makes Typer/pydantic reject an invalid
+     value outright instead of misinterpreting it as "not active"."""
+ 
+     PASSIVE = "passive"
+     ACTIVE = "active"
+ 
+diff --git a/alembic.ini b/alembic.ini
+index 274f7e1..ed3422f 100644
+--- a/alembic.ini
++++ b/alembic.ini
+@@ -79,21 +79,21 @@ path_separator = os
+ # new in Alembic version 1.10
+ # recursive_version_locations = false
+ 
+ # the output encoding used when revision files
+ # are written from script.py.mako
+ # output_encoding = utf-8
+ 
+ # database URL.  This is consumed by the user-maintained env.py script only.
+ # other means of configuring database URLs may be customized within the env.py
+ # file.
+-sqlalchemy.url = postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@localhost:5432/agent_perimeter
++sqlalchemy.url = postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:5432/agent_perimeter
+ 
+ 
+ [post_write_hooks]
+ # post_write_hooks defines scripts or Python functions that are run
+ # on newly generated revision scripts.  See the documentation for further
+ # detail and examples
+ 
+ # format using "black" - use the console_scripts runner, against the "black" entrypoint
+ # hooks = black
+ # black.type = console_scripts
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 2f6abb5..de510c9 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -1,16 +1,78 @@
+ services:
+-  app:
+-    build: .
+-    environment:
+-      AP_CONTACT_URL: ${AP_CONTACT_URL}
+-    depends_on:
+-      - postgres
+-
+-  postgres:
++  db:
+     image: postgres:16-alpine
+     environment:
+       POSTGRES_USER: agent_perimeter
+       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+       POSTGRES_DB: agent_perimeter
+     ports:
+       - "5432:5432"
++    volumes:
++      - agent_perimeter_db:/var/lib/postgresql/data
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready -U agent_perimeter"]
++      interval: 5s
++      timeout: 5s
++      retries: 10
++
++  api:
++    build: .
++    entrypoint: []
++    # Runs pending migrations before serving -- `alembic` and `uvicorn` are
++    # both `pip install .` console scripts already (both are direct
++    # pyproject.toml dependencies), so no separate `uv` is needed in the
++    # image (see Dockerfile). POSTGRES_HOST=db (not the image's own
++    # ${POSTGRES_HOST} default of `localhost`, see .env.example) is what
++    # alembic.ini's sqlalchemy.url actually connects with here.
++    command: >
++      sh -c "alembic upgrade head &&
++             uvicorn agent_perimeter.api.app:create_app --factory --host 0.0.0.0 --port 8000"
++    environment:
++      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
++      POSTGRES_HOST: db
++      AP_DATABASE_URL: postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@db:5432/agent_perimeter
++      AP_CONTACT_URL: ${AP_CONTACT_URL}
++    ports:
++      - "8000:8000"
++    depends_on:
++      db:
++        condition: service_healthy
++    healthcheck:
++      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/api/health')"]
++      interval: 5s
++      timeout: 5s
++      retries: 20
++
++  web:
++    build:
++      context: ./web
++      args:
++        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
++    ports:
++      - "3000:3000"
++    depends_on:
++      api:
++        condition: service_healthy
++    healthcheck:
++      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
++      interval: 5s
++      timeout: 5s
++      retries: 20
++
++  # The parameterised MCP fixture server (Week 1 Task 6, tests/fixtures/servers/),
++  # for demos. Talks stdio JSON-RPC over stdin/stdout -- it is not an
++  # always-on daemon, so it is not started by a bare `docker compose up`
++  # (which would otherwise see it exit immediately on empty stdin and either
++  # loop-restart or report unhealthy for no real reason). Run it explicitly:
++  #   docker compose --profile demo run --rm fixture
++  fixture:
++    build:
++      context: ./tests/fixtures/servers
++    environment:
++      AP_FIXTURE_REVISION: ${AP_FIXTURE_REVISION:-2026-07-28}
++      AP_FIXTURE_FLAW: ${AP_FIXTURE_FLAW:-none}
++    profiles: ["demo"]
++    stdin_open: true
++
++volumes:
++  agent_perimeter_db:
+diff --git a/docs/evidence/clean-machine.md b/docs/evidence/clean-machine.md
+new file mode 100644
+index 0000000..50d4c8d
+--- /dev/null
++++ b/docs/evidence/clean-machine.md
+@@ -0,0 +1,139 @@
++# Compose verification record
++
++**This is not a clean-machine run.** A genuine clean-machine verification —
++`git clone` on a fresh VM or a container with only Docker installed, nothing
++else — is still outstanding and is explicitly out of scope for the task that
++produced this record (see the scope boundary recorded in this plan's task-17
++brief/progress notes). What follows is a best-effort verification of the same
++`docker compose up -d --wait && ./scripts/smoke.sh` sequence run **inside the
++existing development sandbox** — the same machine and checkout every other
++task in this plan was implemented on, with Docker Desktop already installed,
++`uv`/`npm`/Python package registries already warm, and this repository's own
++`.venv`/`node_modules` present alongside (but not used by) the containers.
++Treat the numbers below as "the compose topology and healthchecks are
++internally correct" evidence, not as "a stranger with a bare VM will see
++this" evidence. That second claim needs an actual fresh VM run before it can
++be made honestly.
++
++## Environment
++
++- **Date:** 2026-09-07
++- **Host OS:** Windows 11 Home 10.0.26200 (Docker Desktop, WSL2 backend)
++- **Docker:** `Docker version 29.7.2, build a7dcaa6`
++- **Docker Compose:** `Docker Compose version v5.4.0`
++- **Repo state:** this task's own worktree/branch (`week4-census-ui`), working
++  tree clean before the run, `cp .env.example .env` performed exactly as the
++  README's quickstart instructs (no manual edits to the copied `.env`).
++
++## What was run
++
++```bash
++cp .env.example .env
++docker compose up -d --build --wait
++./scripts/smoke.sh
++```
++
++## Outcome: green
++
++```
++ Container week4-census-ui-db-1 Healthy
++ Container week4-census-ui-api-1 Healthy
++ Container week4-census-ui-web-1 Healthy
++```
++
++```
++$ docker compose exec -T api alembic current
++INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
++INFO  [alembic.runtime.migration] Will assume transactional DDL.
++0003 (head)
++```
++
++```
++$ ./scripts/smoke.sh
++INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
++INFO  [alembic.runtime.migration] Will assume transactional DDL.
++OK: api, web, refusal path and migrations all verified
++```
++
++All three always-on services (`db`, `api`, `web`) reached `healthy` and the
++smoke script's four assertions (API liveness, web serving, the 422
++scope-file refusal on an active scan, migrations at head) all passed.
++
++The fourth compose service, `fixture` (the Week 1 parameterised MCP stdio
++fixture, gated behind `--profile demo` since it is a stdio server, not a
++daemon — see docker-compose.yml's comment on that service), was also built
++and exercised directly in this same sandbox run:
++
++```
++$ docker compose --profile demo build fixture   # built clean
++$ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
++    | docker compose --profile demo run --rm -T fixture
++{"jsonrpc": "2.0", "id": 1, "result": {"tools": [...]}}
++```
++
++## Timing (caveated — not a from-clean-clone number)
++
++A `docker compose up -d --build --wait` timed after removing this session's
++own previously-built `api`/`web` images (`docker compose down --rmi local`)
++completed in **38 seconds**, with the smoke script adding **2 more seconds**
++(40s total from `up` to a fully green smoke run). This number is not
++representative of a true cold clone-to-green time: Docker's *layer* cache
++(base images, and — critically — the `npm ci`/`pip install` layers
++themselves, which are content-addressed and were not evicted by removing the
++final image) was still warm from the same session's earlier build a few
++minutes prior, and the host's package registries were already reachable and
++recently used. The very first build in this session, with nothing at all
++cached, took roughly 82s for the `api` image (dominated by `pip install .`
++resolving and downloading ~35 wheels, ~74s of that alone) and roughly 133s
++for the `web` image (dominated by `npm ci`, ~60s, and `next build`, ~38s) —
++call it on the order of **3–4 minutes** wall-clock for a genuinely first-ever
++build on this sandbox, run as two separate sequential `docker compose build`
++invocations rather than the parallelised `docker compose up --build`. A real
++clean-machine run should be expected to land somewhere in that neighbourhood
++or a bit higher (slower disk, no local registry mirror, first-time Docker
++Desktop startup overhead) — this record does not attempt to be more precise
++than that about a machine nobody has actually run this on yet.
++
++## What this run did and did not need beyond the README
++
++Nothing needed a step the README doesn't already state. `cp .env.example
++.env` followed by `docker compose up -d --wait` and `./scripts/smoke.sh`
++worked with no manual intervention, no undocumented environment variable, and
++no manual `docker` command outside the three shown above. (Per the brief's
++own instruction for this step: "if anything needed a step not in the README,
++add the step to the README rather than to the transcript" — nothing did, so
++nothing was added.)
++
++## Two real, verified bugs this run caught and fixed
++
++Both are documented inline where they were fixed (`scripts/smoke.sh`,
++`docker-compose.yml`, `Dockerfile`, `alembic.ini`), noted here because they
++are exactly the class of thing a compose verification step exists to catch:
++
++1. **Migration number.** The brief's own shown `smoke.sh` checked for
++   migration `0004`; the real migration head in this repository is `0003`
++   (`migrations/versions/0003_census.py`). Fixed in `scripts/smoke.sh`.
++2. **The refusal-path smoke assertion posted a stdio-shaped target
++   (`"python /server.py"`) to prove the scope-file refusal, but
++   `agent_perimeter/api/scans.py` classifies a target's transport *before*
++   checking for a scope file — a stdio target always gets `400
++   unsupported_target`, never `422`, regardless of whether the scope-file
++   refusal itself works.** This was caught by actually running the script
++   against the real API in this sandbox (it failed with `FAIL: active scan
++   without a scope file returned 400, expected 422`), not by static reading.
++   Fixed by posting an `https://` target instead, which is what the
++   assertion needs to actually exercise the 422 path (confirmed against
++   `tests/api/test_scans.py::test_a_stdio_target_is_refused_with_a_400_naming_the_cli`,
++   which independently documents the same classify-before-scope ordering).
++
++Neither bug would have been caught by re-reading the brief's script; both
++were only visible by actually executing it against a live stack, which is
++the entire point of doing even a best-effort sandbox run rather than skipping
++Step 3 outright.
++
++## Outstanding
++
++A genuine clean-machine (fresh VM / container with only Docker installed) run
++is still outstanding. Per the scope boundary for this task, it is explicitly
++not attempted here and is left for the human partner to run before Step 8's
++publish actions (also explicitly out of scope for this task) are taken.
+diff --git a/docs/licences.md b/docs/licences.md
+new file mode 100644
+index 0000000..1fb5581
+--- /dev/null
++++ b/docs/licences.md
+@@ -0,0 +1,149 @@
++| Name                      | Version         | License                              | URL                                                                   |
++|---------------------------|-----------------|--------------------------------------|-----------------------------------------------------------------------|
++| Jinja2                    | 3.1.6           | BSD License                          | https://github.com/pallets/jinja/                                     |
++| Mako                      | 1.4.1           | MIT                                  | https://www.makotemplates.org/                                        |
++| MarkupSafe                | 3.0.3           | BSD-3-Clause                         | https://github.com/pallets/markupsafe/                                |
++| PyYAML                    | 6.0.3           | MIT License                          | https://pyyaml.org/                                                   |
++| Pygments                  | 2.21.0          | BSD-2-Clause                         | https://pygments.org                                                  |
++| SQLAlchemy                | 2.0.52          | MIT                                  | https://www.sqlalchemy.org                                            |
++| agent-perimeter           | 0.1.0           | Apache-2.0                           | UNKNOWN                                                               |
++| alembic                   | 1.19.1          | MIT                                  | https://alembic.sqlalchemy.org                                        |
++| annotated-doc             | 0.0.5           | MIT                                  | https://github.com/fastapi/annotated-doc                              |
++| annotated-types           | 0.8.0           | MIT                                  | https://github.com/annotated-types/annotated-types                    |
++| anyio                     | 4.14.2          | MIT                                  | https://anyio.readthedocs.io/en/stable/versionhistory.html            |
++| ast_serialize             | 0.8.0           | MIT                                  | https://github.com/mypyc/ast_serialize                                |
++| attrs                     | 26.1.0          | MIT                                  | https://www.attrs.org/en/stable/changelog.html                        |
++| certifi                   | 2026.7.22       | Mozilla Public License 2.0 (MPL 2.0) | https://github.com/certifi/python-certifi                             |
++| click                     | 8.5.0           | BSD-3-Clause                         | https://github.com/pallets/click/                                     |
++| colorama                  | 0.4.6           | BSD License                          | https://github.com/tartley/colorama                                   |
++| coverage                  | 7.16.0          | Apache-2.0                           | https://github.com/coveragepy/coveragepy                              |
++| fastapi                   | 0.141.1         | MIT                                  | https://github.com/fastapi/fastapi                                    |
++| greenlet                  | 3.5.5           | MIT AND PSF-2.0                      | https://greenlet.readthedocs.io                                       |
++| h11                       | 0.16.0          | MIT License                          | https://github.com/python-hyper/h11                                   |
++| httpcore                  | 1.0.9           | BSD-3-Clause                         | https://www.encode.io/httpcore/                                       |
++| httptools                 | 0.8.0           | MIT                                  | https://github.com/MagicStack/httptools                               |
++| httpx                     | 0.28.1          | BSD License                          | https://github.com/encode/httpx                                       |
++| hypothesis                | 6.167.1         | MPL-2.0                              | https://hypothesis.works                                              |
++| idna                      | 3.19            | BSD-3-Clause                         | https://github.com/kjd/idna                                           |
++| iniconfig                 | 2.3.0           | MIT                                  | https://github.com/pytest-dev/iniconfig                               |
++| jsonschema                | 4.26.0          | MIT                                  | https://github.com/python-jsonschema/jsonschema                       |
++| jsonschema-specifications | 2025.9.1        | MIT                                  | https://github.com/python-jsonschema/jsonschema-specifications        |
++| librt                     | 0.15.0          | MIT                                  | https://github.com/mypyc/librt                                        |
++| markdown-it-py            | 4.2.0           | MIT License                          | https://github.com/executablebooks/markdown-it-py                     |
++| mdurl                     | 0.1.2           | MIT License                          | https://github.com/executablebooks/mdurl                              |
++| mypy                      | 2.3.1           | MIT                                  | https://www.mypy-lang.org/                                            |
++| mypy_extensions           | 1.1.0           | MIT                                  | https://github.com/python/mypy_extensions                             |
++| packaging                 | 26.3            | Apache-2.0 OR BSD-2-Clause           | https://github.com/pypa/packaging                                     |
++| pathspec                  | 1.1.1           | Mozilla Public License 2.0 (MPL 2.0) | https://python-path-specification.readthedocs.io/en/latest/index.html |
++| pluggy                    | 1.6.0           | MIT License                          | UNKNOWN                                                               |
++| psycopg                   | 3.3.4           | LGPL-3.0-only                        | https://psycopg.org/                                                  |
++| psycopg-binary            | 3.3.4           | LGPL-3.0-only                        | https://psycopg.org/                                                  |
++| pydantic                  | 2.13.5          | MIT                                  | https://github.com/pydantic/pydantic                                  |
++| pydantic_core             | 2.46.5          | MIT                                  | https://github.com/pydantic                                           |
++| pytest                    | 9.1.1           | MIT                                  | https://docs.pytest.org/en/latest/                                    |
++| pytest-cov                | 7.1.0           | MIT                                  | https://pytest-cov.readthedocs.io/en/latest/changelog.html            |
++| python-dotenv             | 1.2.3           | BSD-3-Clause                         | https://github.com/theskumar/python-dotenv                            |
++| referencing               | 0.37.0          | MIT                                  | https://github.com/python-jsonschema/referencing                      |
++| rich                      | 15.0.0          | MIT License                          | https://github.com/Textualize/rich                                    |
++| rpds-py                   | 2026.6.3        | MIT                                  | https://github.com/crate-py/rpds                                      |
++| ruff                      | 0.16.5          | MIT                                  | https://docs.astral.sh/ruff                                           |
++| shellingham               | 1.5.4           | ISC License (ISCL)                   | https://github.com/sarugaku/shellingham                               |
++| sortedcontainers          | 2.4.0           | Apache Software License              | http://www.grantjenks.com/docs/sortedcontainers/                      |
++| starlette                 | 1.6.0           | BSD-3-Clause                         | https://github.com/Kludex/starlette                                   |
++| typer                     | 0.27.2          | MIT                                  | https://github.com/fastapi/typer                                      |
++| types-PyYAML              | 6.0.12.20260815 | Apache-2.0                           | https://github.com/python/typeshed                                    |
++| typing-inspection         | 0.4.4           | MIT                                  | https://github.com/pydantic/typing-inspection                         |
++| typing_extensions         | 4.16.0          | PSF-2.0                              | https://github.com/python/typing_extensions                           |
++| tzdata                    | 2026.3          | Apache-2.0                           | https://github.com/python/tzdata                                      |
++| uvicorn                   | 0.52.4          | BSD-3-Clause                         | https://uvicorn.dev/                                                  |
++| watchfiles                | 1.2.0           | MIT License                          | https://github.com/samuelcolvin/watchfiles                            |
++| websockets                | 17.1            | BSD-3-Clause                         | https://github.com/python-websockets/websockets                       |
++
++---
++
++## Audit notes
++
++Generated with `uv run --with pip-licenses pip-licenses --format=markdown --with-urls`
++(table above). `uvx pip-licenses` alone reports on `pip-licenses`'s own
++isolated environment, not this project's — `uv run --with pip-licenses` was
++used instead so the table reflects `agent-perimeter`'s real resolved
++dependency set, dev group included. `pip-licenses` is not itself a project
++dependency (pyproject.toml has no such entry) and is invoked ad hoc, per
++task 17 ruling 5.
++
++**No AGPL, SSPL, BUSL or non-commercial-licensed dependency was found**, on
++either the Python side (table above) or the web/npm side (`cd web && npx
++license-checker --summary`, 393 packages, full breakdown below).
++
++Every dependency not under Apache-2.0/MIT/BSD, found on either side:
++
++| Package | License | Side | Runtime or dev-only |
++|---|---|---|---|
++| `hypothesis` 6.167.1 | MPL-2.0 | Python (dev group) | dev-only — property-based test cases, never imported by `agent_perimeter/` itself |
++| `pathspec` 1.1.1 | MPL-2.0 | Python (transitive, via `mypy`/`ruff`) | dev-only |
++| `certifi` 2026.7.22 | MPL-2.0 | Python (transitive, via `httpx`) | **runtime** — `httpx` is a direct dependency; `certifi` supplies its CA bundle |
++| `psycopg` / `psycopg-binary` 3.3.4 | LGPL-3.0-only | Python (direct dependency, `psycopg[binary]>=3.1`) | **runtime** — the Postgres driver |
++| `@axe-core/playwright` / `axe-core` 4.13.0 | MPL-2.0 | npm (devDependency) | dev-only — Playwright accessibility test runner, never shipped to the browser bundle |
++| `lightningcss` / `lightningcss-win32-x64-msvc` 1.32.0 | MPL-2.0 | npm (transitive, via `@tailwindcss/postcss`) | dev/build-only — a CSS build-time transform; Tailwind's compiled CSS output ships, not lightningcss itself |
++| `@img/sharp-win32-x64` 0.35.4 | Apache-2.0 AND LGPL-3.0-or-later | npm (transitive, optional peer of `next`) | runtime-reachable if `next/image` server-side optimization is exercised; this UI does not currently use `next/image` |
++
++`hypothesis` and `@axe-core/playwright` were already known and flagged in an
++earlier task; both are confirmed dev-only and non-AGPL here again, not a new
++surprise. `certifi`, `pathspec`, `psycopg`/`psycopg-binary`,
++`lightningcss`/`lightningcss-win32-x64-msvc` and `@img/sharp-win32-x64` are
++new findings from this task's audit, none of them AGPL/SSPL/BUSL/non-commercial:
++
++- **MPL-2.0** (`certifi`, `pathspec`, `@axe-core/playwright`/`axe-core`,
++  `lightningcss`/`lightningcss-win32-x64-msvc`) is file-level weak copyleft:
++  it requires that modifications *to the MPL-covered files themselves* stay
++  MPL-licensed if redistributed, and explicitly permits combining with a
++  larger work under a different licence (this project's own Apache-2.0 code
++  included) with no obligation on the larger work. None of these packages'
++  source is modified here.
++- **LGPL-3.0** (`psycopg`/`psycopg-binary`, and the LGPL half of
++  `@img/sharp-win32-x64`'s dual licence) permits linking/dynamic use from a
++  differently-licensed application without relicensing the application —
++  the obligation triggers only on modifying and redistributing the LGPL
++  library itself, which this project does not do; both are pulled in
++  unmodified via PyPI/npm.
++- `certifi` and `psycopg`/`psycopg-binary` are the two genuinely
++  **runtime**, not dev-only, entries in this list (`certifi` transitively
++  via `httpx`, `psycopg` directly). Both are extremely common, effectively
++  unavoidable choices in their category (a Python HTTPS client's CA bundle;
++  the canonical async-capable Postgres driver) and neither is AGPL, SSPL,
++  BUSL or non-commercial, so per this project's own "Apache/MIT/BSD deps
++  only — flag any AGPL dependency explicitly" rule (CLAUDE.md), they are
++  flagged here rather than adopted silently, but are not blocking findings.
++
++### Web (npm) dependency summary
++
++`cd web && npx license-checker --summary` (393 packages total):
++
++```
++MIT: 330
++Apache-2.0: 24
++ISC: 15
++BSD-2-Clause: 7
++MPL-2.0: 4
++BSD-3-Clause: 4
++Apache-2.0 AND LGPL-3.0-or-later: 1   (@img/sharp-win32-x64, see above)
++Python-2.0: 1
++CC-BY-4.0: 1
++CC0-1.0: 1
++BlueOak-1.0.0: 1
++(WTFPL OR MIT): 1
++(BSD-2-Clause OR MIT OR Apache-2.0): 1
++0BSD: 1
++(MIT OR CC0-1.0): 1
++```
++
++The `web@0.1.0` self-entry `license-checker` reports as `UNLICENSED` is not a
++third-party dependency — it is `web/package.json` itself, which
++`license-checker` reports as `UNLICENSED` for any `"private": true` package
++regardless of its declared `license` field (confirmed: it persists even
++after this task added `"license": "Apache-2.0"` to `web/package.json`,
++matching `pyproject.toml`'s existing `license = { text = "Apache-2.0" }`;
++the `--excludePrivatePackages` flag removes exactly this one entry and
++nothing else, confirming it). The field was still added for its own sake —
++`web/package.json` honestly stating its licence now, tool quirk aside — but
++does not change `license-checker`'s summary output.
+diff --git a/scripts/smoke.sh b/scripts/smoke.sh
+new file mode 100755
+index 0000000..df44b03
+--- /dev/null
++++ b/scripts/smoke.sh
+@@ -0,0 +1,36 @@
++#!/usr/bin/env bash
++# Asserts the compose stack is actually up, not just "docker compose" exiting
++# 0. Run after `docker compose up -d --wait`. Fails closed: any assertion
++# failing exits non-zero with a message naming what broke, no narration.
++set -euo pipefail
++
++fail() { echo "FAIL: $1" >&2; exit 1; }
++
++curl -fsS localhost:8000/api/health >/dev/null || fail "api not healthy"
++curl -fsS localhost:3000/ >/dev/null || fail "web not serving"
++
++# A second, verified deviation from the brief's own shown script here (task
++# 17): the brief posts a stdio-shaped target ("python /server.py"), but
++# agent_perimeter/api/scans.py::create_scan classifies the target's transport
++# *before* checking for a scope file (Task 9 ruling #3 -- this API only ever
++# accepts http(s) targets; a stdio target gets a 400 "unsupported_target"
++# naming the CLI instead, proven by
++# tests/api/test_scans.py::test_a_stdio_target_is_refused_with_a_400_naming_the_cli).
++# Posting a stdio-shaped target here would always get 400, never 422,
++# regardless of whether the scope-file refusal itself is working -- an http(s)
++# target is what actually exercises the assertion this check exists for.
++code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/api/scans \
++  -H 'content-type: application/json' \
++  -d '{"target":"https://example.invalid/mcp","mode":"active"}')
++[ "$code" = "422" ] || fail "active scan without a scope file returned $code, expected 422"
++
++# Migration head is 0003 (migrations/versions/0003_census.py) -- task 17
++# ruling 2: the brief's own script shown here as `grep -q 0004` is stale,
++# same class of drift Task 1 already corrected once in this plan. Run
++# directly via `alembic`, not `uv run alembic`: the api image installs this
++# project with `pip install .` (Dockerfile), not as a uv-managed venv, so
++# `alembic` is already on PATH and `uv` itself is never installed in the
++# image.
++docker compose exec -T api alembic current | grep -q 0003 || fail "migrations not at head"
++
++echo "OK: api, web, refusal path and migrations all verified"
+diff --git a/tests/api/test_health.py b/tests/api/test_health.py
+new file mode 100644
+index 0000000..7489f68
+--- /dev/null
++++ b/tests/api/test_health.py
+@@ -0,0 +1,18 @@
++"""GET /api/health — the compose healthcheck and scripts/smoke.sh's first
++assertion both target this route (task 17 ruling 3: it did not exist before
++this task). No database, no scan pipeline; a plain liveness probe.
++"""
++
++from __future__ import annotations
++
++from fastapi.testclient import TestClient
++
++from agent_perimeter.api.app import create_app
++
++client = TestClient(create_app())
++
++
++def test_health_reports_ok() -> None:
++    r = client.get("/api/health")
++    assert r.status_code == 200
++    assert r.json() == {"status": "ok"}
+diff --git a/web/.dockerignore b/web/.dockerignore
+new file mode 100644
+index 0000000..116a011
+--- /dev/null
++++ b/web/.dockerignore
+@@ -0,0 +1,9 @@
++node_modules
++.next
++out
++build
++coverage
++test-results
++playwright-report
++blob-report
++.env*
+diff --git a/web/Dockerfile b/web/Dockerfile
+new file mode 100644
+index 0000000..7f8fa2c
+--- /dev/null
++++ b/web/Dockerfile
+@@ -0,0 +1,18 @@
++FROM node:20-alpine
++WORKDIR /app
++COPY package.json package-lock.json ./
++RUN npm ci
++COPY . .
++# NEXT_PUBLIC_* variables are inlined into the client bundle at build time,
++# not read at container start -- must be a build ARG, not just a runtime
++# `environment:` entry in docker-compose.yml. Default matches .env.example.
++ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
++ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
++# ponytail: single-stage build (full node_modules + source stay in the final
++# image, no `output: "standalone"` in next.config.ts) -- larger image than a
++# multi-stage build, but zero changes to next.config.ts for a project that
++# doesn't already use standalone output. Switch to a standalone multi-stage
++# build if image size becomes a real constraint.
++RUN npm run build
++EXPOSE 3000
++CMD ["npm", "run", "start"]
+diff --git a/web/package.json b/web/package.json
+index c9d43f7..96b06dd 100644
+--- a/web/package.json
++++ b/web/package.json
+@@ -1,14 +1,15 @@
+ {
+   "name": "web",
+   "version": "0.1.0",
+   "private": true,
++  "license": "Apache-2.0",
+   "scripts": {
+     "dev": "next dev",
+     "build": "next build",
+     "start": "next start",
+     "lint": "eslint",
+     "pretest": "cd .. && uv run python analysis/render_web_fixtures.py"
+   },
+   "dependencies": {
+     "@tanstack/react-virtual": "^3.14.10",
+     "diff": "^9.0.0",

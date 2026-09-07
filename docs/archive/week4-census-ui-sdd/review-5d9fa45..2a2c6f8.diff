@@ -1,0 +1,260 @@
+# Review package: 5d9fa45..HEAD
+
+## Commits
+2a2c6f8 fix: correct timeout double-logging, preserve oci/nuget/mcpb signal, test version=latest
+
+## Files changed
+ agent_perimeter/census/fetch.py | 49 +++++++++++++++++++---------
+ tests/census/test_fetch.py      | 71 +++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 105 insertions(+), 15 deletions(-)
+
+## Diff
+diff --git a/agent_perimeter/census/fetch.py b/agent_perimeter/census/fetch.py
+index 78e846f..359b986 100644
+--- a/agent_perimeter/census/fetch.py
++++ b/agent_perimeter/census/fetch.py
+@@ -13,21 +13,24 @@ from collections.abc import Iterator
+ from dataclasses import dataclass, field
+ 
+ import httpx
+ from pydantic import BaseModel, ConfigDict
+ 
+ from agent_perimeter import __version__
+ from agent_perimeter.model.census import Ecosystem, FetchStatus, PackageCoords
+ 
+ USER_AGENT = (
+     f"agent-perimeter/{__version__} "
+-    "(+https://github.com/OWNER/agent-perimeter/blob/main/docs/security.md)"
++    # Same placeholder repo path as agent_perimeter.cli.DEFAULT_CONTACT_URL - not
++    # imported from there to avoid pulling the CLI's typer/transport dependency
++    # graph into a read-only fetch module for one string.
++    "(+https://github.com/USER/agent-perimeter/blob/main/docs/security.md)"
+ )
+ 
+ # A page holds at most this many entries; also the signal the loud guard below
+ # uses to tell "the population truly ended" from "we stopped reading a cursor
+ # that was there".
+ PAGE_LIMIT = 100
+ 
+ # ponytail: fixed interval rather than a token bucket. One request every 500ms sits
+ # well inside any published registry limit; swap for a bucket if one is ever hit.
+ MIN_INTERVAL_S = 0.5
+@@ -57,40 +60,47 @@ class FetchLog:
+ 
+ 
+ class RegistryEntry(BaseModel):
+     model_config = ConfigDict(frozen=True)
+ 
+     registry_id: str
+     name: str
+     coords: PackageCoords | None
+     repository_url: str | None
+     remotes: tuple[str, ...] = ()
++    # True when `packages` contains an entry whose registryType is a *known*
++    # ecosystem this module does not model (oci/nuget/mcpb) - distinct from
++    # coords is None because there was no package at all. A later task deriving
++    # census_record.distribution needs this to tell package_other from none
++    # without re-parsing the raw registry response.
++    has_unmodeled_package: bool = False
++
++
++# Ecosystem (model/census.py, Task 1's file) only models pypi/npm. These are
++# registryType values the registry actually uses that have no Ecosystem member
++# yet - known, just unsupported, not the same fact as an unrecognised value.
++_UNMODELED_REGISTRY_TYPES = frozenset({"oci", "nuget", "mcpb"})
++
++
++def _registry_type(package: dict[str, object]) -> str:
++    return str(package.get("registryType") or package.get("registry_name") or "").lower()
+ 
+ 
+ def _coords(package: dict[str, object]) -> PackageCoords | None:
+-    registry = str(package.get("registryType") or package.get("registry_name") or "")
+     name = package.get("identifier") or package.get("name")
+     if not isinstance(name, str):
+         return None
+-    match registry.lower():
++    match _registry_type(package):
+         case "pypi":
+             eco = Ecosystem.PYPI
+         case "npm":
+             eco = Ecosystem.NPM
+-        case "oci" | "nuget" | "mcpb":
+-            # Recognised registry types with no Ecosystem member yet (Ecosystem is
+-            # owned by model/census.py, Task 1's file). Returning None here is
+-            # deliberate, not a fallthrough: it lets a later task tell "known
+-            # ecosystem we don't model" apart from "unrecognised value" if it
+-            # inspects the raw registryType, rather than merging both into one
+-            # "no coordinates" bucket the way the original draft did.
+-            return None
+         case _:
+             return None
+     version = package.get("version")
+     return PackageCoords(
+         ecosystem=eco, name=name, version=version if isinstance(version, str) else None
+     )
+ 
+ 
+ def _remotes(server: dict[str, object]) -> tuple[str, ...]:
+     remotes = server.get("remotes")
+@@ -109,39 +119,43 @@ def _entry(item: dict[str, object]) -> RegistryEntry | None:
+     server = item.get("server")
+     if not isinstance(server, dict):
+         return None
+     name = server.get("name")
+     if not isinstance(name, str) or not name:
+         return None
+     version = server.get("version")
+     registry_id = f"{name}:{version}" if isinstance(version, str) and version else name
+ 
+     coords: PackageCoords | None = None
++    has_unmodeled_package = False
+     packages = server.get("packages")
+     if isinstance(packages, list):
+         for package in packages:
+-            if isinstance(package, dict):
++            if not isinstance(package, dict):
++                continue
++            if coords is None:
+                 coords = _coords(package)
+-                if coords is not None:
+-                    break
++            if _registry_type(package) in _UNMODELED_REGISTRY_TYPES:
++                has_unmodeled_package = True
+ 
+     repository = server.get("repository")
+     repository_url = repository.get("url") if isinstance(repository, dict) else None
+     if not isinstance(repository_url, str):
+         repository_url = None
+ 
+     return RegistryEntry(
+         registry_id=registry_id,
+         name=name,
+         coords=coords,
+         repository_url=repository_url,
+         remotes=_remotes(server),
++        has_unmodeled_package=has_unmodeled_package,
+     )
+ 
+ 
+ def _retry_after_seconds(header_value: str | None) -> float:
+     if header_value is None:
+         return MIN_INTERVAL_S
+     try:
+         return max(float(header_value), 0.0)
+     except ValueError:
+         return MIN_INTERVAL_S
+@@ -153,21 +167,26 @@ def _get_page(
+     params: dict[str, str | int],
+     log: FetchLog,
+     page: int,
+     max_retries: int,
+ ) -> dict[str, object] | None:
+     headers = {"User-Agent": USER_AGENT}
+     for attempt in range(max_retries):
+         try:
+             response = client.get(endpoint, params=params, headers=headers, timeout=10.0)
+         except httpx.TimeoutException:
+-            log.record(FetchStatus.TIMEOUT, f"page {page}: request timed out")
++            if attempt + 1 >= max_retries:
++                log.record(
++                    FetchStatus.TIMEOUT,
++                    f"page {page}: timed out, gave up after {max_retries} attempts",
++                )
++                return None
+             continue
+ 
+         if response.status_code == 429:
+             if attempt + 1 >= max_retries:
+                 log.record(
+                     FetchStatus.THROTTLED,
+                     f"page {page}: throttled, gave up after {max_retries} attempts",
+                 )
+                 return None
+             time.sleep(_retry_after_seconds(response.headers.get("Retry-After")))
+diff --git a/tests/census/test_fetch.py b/tests/census/test_fetch.py
+index 1873eb7..1637009 100644
+--- a/tests/census/test_fetch.py
++++ b/tests/census/test_fetch.py
+@@ -55,10 +55,81 @@ def test_a_full_first_page_with_no_cursor_is_flagged_not_completed() -> None:
+             {"server": {"name": f"srv.example/n{i}", "version": "1.0.0"}} for i in range(100)
+         ],
+         "metadata": {"count": 100},
+     }
+     log = FetchLog()
+     client = httpx.Client(transport=_transport([page]))
+     entries = list(paginate(client, "https://example.invalid/v0/servers", log))
+     assert len(entries) == 100
+     assert log.population_is_complete is False
+     assert log.outcomes[0].status is FetchStatus.PARSE_ERROR
++
++
++def test_every_retry_timing_out_logs_exactly_one_failure_not_one_per_attempt() -> None:
++    def handler(request: httpx.Request) -> httpx.Response:
++        raise httpx.TimeoutException("boom", request=request)
++
++    log = FetchLog()
++    client = httpx.Client(transport=httpx.MockTransport(handler))
++    entries = list(paginate(client, "https://example.invalid/v0/servers", log, max_retries=3))
++    assert entries == []
++    assert log.failures == 1
++    assert log.outcomes[0].status is FetchStatus.TIMEOUT
++
++
++def test_an_unmodeled_registry_type_is_distinguishable_from_no_package_at_all() -> None:
++    oci_page = {
++        "servers": [
++            {
++                "server": {
++                    "name": "example/oci-server",
++                    "version": "1.0.0",
++                    "packages": [
++                        {
++                            "registryType": "oci",
++                            "identifier": "example/oci-server",
++                            "version": "1.0.0",
++                        }
++                    ],
++                }
++            }
++        ],
++        "metadata": {"count": 1},
++    }
++    bare_page = {
++        "servers": [{"server": {"name": "example/bare-server", "version": "1.0.0"}}],
++        "metadata": {"count": 1},
++    }
++
++    oci_entries = list(
++        paginate(
++            httpx.Client(transport=_transport([oci_page])),
++            "https://example.invalid/v0/servers",
++            FetchLog(),
++        )
++    )
++    bare_entries = list(
++        paginate(
++            httpx.Client(transport=_transport([bare_page])),
++            "https://example.invalid/v0/servers",
++            FetchLog(),
++        )
++    )
++
++    assert oci_entries[0].coords is None
++    assert oci_entries[0].has_unmodeled_package is True
++    assert bare_entries[0].coords is None
++    assert bare_entries[0].has_unmodeled_package is False
++
++
++def test_paginate_requests_version_latest_on_every_page(registry_pages: list[dict]) -> None:
++    seen_params: list[httpx.QueryParams] = []
++
++    def handler(request: httpx.Request) -> httpx.Response:
++        seen_params.append(request.url.params)
++        i = len(seen_params) - 1
++        return httpx.Response(200, json=registry_pages[min(i, len(registry_pages) - 1)])
++
++    client = httpx.Client(transport=httpx.MockTransport(handler))
++    list(paginate(client, "https://example.invalid/v0/servers", FetchLog()))
++    assert seen_params, "expected at least one request"
++    assert all(params.get("version") == "latest" for params in seen_params)

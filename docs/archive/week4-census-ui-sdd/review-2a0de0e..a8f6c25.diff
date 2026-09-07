@@ -1,0 +1,442 @@
+# Review package: 2a0de0e6282c4314da4b589512dc9bbdf079309a..HEAD
+
+## Commits
+a8f6c25 feat: scan setup screen with active mode locked behind a scope file
+
+## Files changed
+ docs/evidence/active-locked.png              | Bin 0 -> 45586 bytes
+ web/app/components/ModeSelector.tsx          |  59 +++++++++++++++++
+ web/app/components/ScopeFileField.tsx        |  92 ++++++++++++++++++++++++++
+ web/app/globals.css                          |  55 ++++++++++++++++
+ web/app/page.tsx                             |  94 ++++++++++++++++++++++++++-
+ web/tests/fixtures/scope-no-attestation.json |   5 ++
+ web/tests/fixtures/scope-valid.json          |   6 ++
+ web/tests/scan-setup.spec.ts                 |  43 ++++++++++++
+ 8 files changed, 353 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/docs/evidence/active-locked.png b/docs/evidence/active-locked.png
+new file mode 100644
+index 0000000..c1e109e
+Binary files /dev/null and b/docs/evidence/active-locked.png differ
+diff --git a/web/app/components/ModeSelector.tsx b/web/app/components/ModeSelector.tsx
+new file mode 100644
+index 0000000..24bb59e
+--- /dev/null
++++ b/web/app/components/ModeSelector.tsx
+@@ -0,0 +1,59 @@
++"use client";
++
++/**
++ * Passive/active radio group. Active is disabled until the caller reports a
++ * structurally valid scope file is attached (`activeUnlocked`) -- this
++ * component never parses or validates the file itself; that's
++ * `ScopeFileField`'s job (task-11 ruling 1: structural validation only, the
++ * server still decides real authorisation).
++ */
++import type { ScanMode } from "@/src/lib/api";
++
++export interface ModeSelectorProps {
++  mode: ScanMode;
++  onChange: (mode: ScanMode) => void;
++  activeUnlocked: boolean;
++}
++
++// Lock copy (task-11 brief) rewritten to satisfy the RED test's
++// /scope file.*authorisation/i regex -- the brief's literal copy says
++// "authorising party", never the word "authorisation", so the two given
++// requirements conflicted; this keeps the brief's content (target,
++// authorising party, dated attestation) and states the same fact ("this is
++// how the tool proves authorisation") in the word the test looks for.
++const LOCK_REASON =
++  "Active checks need a scope file that records authorisation: the target, the authorising party and a dated attestation.";
++
++export function ModeSelector({ mode, onChange, activeUnlocked }: ModeSelectorProps) {
++  return (
++    <fieldset className="bok-mode-selector">
++      <legend>Scan mode</legend>
++      <label className="bok-mode-option">
++        <input
++          type="radio"
++          name="mode"
++          value="passive"
++          checked={mode === "passive"}
++          onChange={() => onChange("passive")}
++        />
++        Passive
++      </label>
++      <label className="bok-mode-option">
++        <input
++          type="radio"
++          name="mode"
++          value="active"
++          checked={mode === "active"}
++          disabled={!activeUnlocked}
++          onChange={() => onChange("active")}
++        />
++        Active
++      </label>
++      {!activeUnlocked && (
++        <p data-testid="active-lock-reason" className="bok-lock-reason">
++          {LOCK_REASON}
++        </p>
++      )}
++    </fieldset>
++  );
++}
+diff --git a/web/app/components/ScopeFileField.tsx b/web/app/components/ScopeFileField.tsx
+new file mode 100644
+index 0000000..0f59a0a
+--- /dev/null
++++ b/web/app/components/ScopeFileField.tsx
+@@ -0,0 +1,92 @@
++"use client";
++
++/**
++ * File input (plus a drag-drop dropzone around it) for the scope file that
++ * unlocks active mode. Reads and JSON.parses the file, then checks for the
++ * three fields `ScopeFileInput` requires -- `target`, `authorising_party`,
++ * `attestation`, in that order -- and reports the first missing/blank one.
++ *
++ * This is structural validation only (task-11 ruling 1): it never decides
++ * whether the scope file actually authorises the target. A structurally
++ * valid file is handed up as a typed `ScopeFileInput`; the server renders
++ * the real authorisation answer when the scan is submitted.
++ */
++import { type ChangeEvent, type DragEvent, useState } from "react";
++
++import type { ScopeFileInput } from "@/src/lib/api";
++
++export interface ScopeFileFieldProps {
++  onScopeFile: (scopeFile: ScopeFileInput | null) => void;
++  onError: (message: string | null) => void;
++}
++
++const REQUIRED_FIELDS: Array<{ key: keyof ScopeFileInput; label: string }> = [
++  { key: "target", label: "target" },
++  { key: "authorising_party", label: "authorising party" },
++  { key: "attestation", label: "attestation" },
++];
++
++function isBlank(value: unknown): boolean {
++  return typeof value !== "string" || value.trim() === "";
++}
++
++export function ScopeFileField({ onScopeFile, onError }: ScopeFileFieldProps) {
++  const [fileName, setFileName] = useState<string | null>(null);
++
++  async function processFile(file: File) {
++    setFileName(file.name);
++
++    let parsed: unknown;
++    try {
++      parsed = JSON.parse(await file.text());
++    } catch {
++      onScopeFile(null);
++      onError(`${file.name} is not valid JSON.`);
++      return;
++    }
++    if (typeof parsed !== "object" || parsed === null) {
++      onScopeFile(null);
++      onError(`${file.name} must contain a JSON object.`);
++      return;
++    }
++
++    const record = parsed as Record<string, unknown>;
++    const missing = REQUIRED_FIELDS.find(({ key }) => isBlank(record[key]));
++    if (missing) {
++      onScopeFile(null);
++      onError(`Scope file is missing ${missing.label}.`);
++      return;
++    }
++
++    onScopeFile(record as unknown as ScopeFileInput);
++    onError(null);
++  }
++
++  function handleInputChange(event: ChangeEvent<HTMLInputElement>) {
++    const file = event.target.files?.[0];
++    if (file) void processFile(file);
++  }
++
++  function handleDrop(event: DragEvent<HTMLDivElement>) {
++    event.preventDefault();
++    const file = event.dataTransfer.files?.[0];
++    if (file) void processFile(file);
++  }
++
++  return (
++    <div className="bok-scope-file-field" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
++      <label htmlFor="scope-file">Scope file</label>
++      <input
++        id="scope-file"
++        data-testid="scope-file"
++        type="file"
++        accept="application/json,.json"
++        onChange={handleInputChange}
++      />
++      <p className="bok-hint">
++        Drop or choose the scope file naming the target, the authorising party and a dated attestation.
++      </p>
++      {fileName && <p className="bok-scope-file-name">{fileName}</p>}
++    </div>
++  );
++}
+diff --git a/web/app/globals.css b/web/app/globals.css
+index 2200406..059c1f0 100644
+--- a/web/app/globals.css
++++ b/web/app/globals.css
+@@ -477,20 +477,75 @@ body {
+   border-radius: var(--radius-control);
+   padding: calc(var(--density-gap) * 2);
+   text-align: center;
+   color: var(--neutral-600);
+ }
+ .bok-error-state {
+   border-color: var(--severity-critical);
+   color: var(--severity-critical);
+ }
+ 
++/* Scan setup screen (task 11). */
++.bok-scan-setup form {
++  display: flex;
++  flex-direction: column;
++  gap: calc(var(--density-gap) * 2);
++  max-width: 32rem;
++}
++.bok-field {
++  display: flex;
++  flex-direction: column;
++  gap: var(--density-cell-y);
++}
++.bok-field input[type="text"] {
++  border: 1px solid var(--neutral-300);
++  border-radius: var(--radius-control);
++  padding: var(--density-cell-y) var(--density-cell-x);
++  background: var(--paper);
++  color: var(--ink);
++}
++.bok-mode-selector {
++  display: flex;
++  flex-direction: column;
++  gap: var(--density-cell-y);
++  border: 1px solid var(--neutral-200);
++  border-radius: var(--radius-control);
++  padding: var(--density-gap);
++}
++.bok-mode-option {
++  display: flex;
++  align-items: center;
++  gap: 0.5em;
++}
++.bok-lock-reason {
++  color: var(--severity-medium);
++  border-left: 2px solid var(--severity-medium);
++  padding-left: var(--density-cell-x);
++  font-size: 0.9em;
++}
++.bok-scope-file-field {
++  display: flex;
++  flex-direction: column;
++  gap: var(--density-cell-y);
++  border: 1px dashed var(--neutral-300);
++  border-radius: var(--radius-control);
++  padding: var(--density-gap);
++}
++.bok-hint {
++  color: var(--neutral-600);
++  font-size: 0.9em;
++}
++.bok-scope-file-name {
++  font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
++  font-size: 0.9em;
++}
++
+ /* Skeleton -- loading is a skeleton, never a spinner (00 §5.5). */
+ .bok-skeleton {
+   display: flex;
+   flex-direction: column;
+   gap: var(--density-cell-y);
+ }
+ .bok-skeleton-line {
+   height: 1em;
+   border-radius: var(--radius-cell);
+   background: linear-gradient(90deg, var(--neutral-100), var(--neutral-150), var(--neutral-100));
+diff --git a/web/app/page.tsx b/web/app/page.tsx
+index fde55f0..0f5f3b8 100644
+--- a/web/app/page.tsx
++++ b/web/app/page.tsx
+@@ -1,8 +1,100 @@
++"use client";
++
++/**
++ * Screen 1 -- scan setup (brief §7). The one thing that must be exactly
++ * right: active mode is disabled and visibly locked until a structurally
++ * valid scope file is attached, and the lock explains why in one sentence
++ * (`ModeSelector`). Target is the page's first focusable element -- there's
++ * no header/nav above it (`app/layout.tsx`) -- so it's also the form's
++ * natural first Tab stop.
++ *
++ * Submitting calls the real API (`createScan`) and navigates to
++ * `/scans/{id}` on success; `/scans/{id}` doesn't exist yet (a later task),
++ * same as any other forward reference in this codebase. A thrown `ApiError`
++ * renders through `ErrorState` rather than being swallowed.
++ */
++import { type FormEvent, useState } from "react";
++import { useRouter } from "next/navigation";
++
++import { ErrorState } from "@/src/lib/_bok-ui";
++import { ApiError, createScan, type ScanMode, type ScopeFileInput } from "@/src/lib/api";
++import { ModeSelector } from "./components/ModeSelector";
++import { ScopeFileField } from "./components/ScopeFileField";
++
+ export default function Home() {
++  const router = useRouter();
++  const [target, setTarget] = useState("");
++  const [mode, setMode] = useState<ScanMode>("passive");
++  const [scopeFile, setScopeFile] = useState<ScopeFileInput | null>(null);
++  const [scopeFileError, setScopeFileError] = useState<string | null>(null);
++  const [submitError, setSubmitError] = useState<string | null>(null);
++  const [submitting, setSubmitting] = useState(false);
++
++  function handleScopeFile(next: ScopeFileInput | null) {
++    setScopeFile(next);
++    // The active radio is about to become disabled again; don't leave the
++    // form silently holding a mode its own UI no longer offers.
++    if (!next && mode === "active") setMode("passive");
++  }
++
++  async function handleSubmit(event: FormEvent) {
++    event.preventDefault();
++    setSubmitError(null);
++    setSubmitting(true);
++    try {
++      const accepted = await createScan({
++        target,
++        mode,
++        scope_file: mode === "active" && scopeFile ? scopeFile : undefined,
++      });
++      router.push(`/scans/${accepted.id}`);
++    } catch (err) {
++      const message =
++        err instanceof ApiError
++          ? `The scan API returned ${err.status}.`
++          : "Could not reach the scan API.";
++      setSubmitError(message);
++    } finally {
++      setSubmitting(false);
++    }
++  }
++
+   return (
+-    <main style={{ padding: "2rem", fontFamily: "var(--font-newsreader), serif" }}>
++    <main className="bok-scan-setup">
+       <h1>Agent Perimeter</h1>
+       <p>Security posture scanner for MCP servers and tool-using agents.</p>
++
++      <form onSubmit={handleSubmit}>
++        <div className="bok-field">
++          <label htmlFor="target">Target</label>
++          <input
++            id="target"
++            name="target"
++            type="text"
++            required
++            value={target}
++            onChange={(event) => setTarget(event.target.value)}
++            placeholder="stdio command, https:// URL, or registry reference"
++          />
++        </div>
++
++        <ScopeFileField onScopeFile={handleScopeFile} onError={setScopeFileError} />
++        {scopeFileError && <ErrorState title="Scope file incomplete" description={scopeFileError} />}
++
++        <ModeSelector mode={mode} onChange={setMode} activeUnlocked={scopeFile !== null} />
++
++        {submitError && (
++          <ErrorState
++            title="Scan could not be started"
++            description={submitError}
++            onRetry={() => setSubmitError(null)}
++          />
++        )}
++
++        <button type="submit" disabled={submitting || target.trim() === ""}>
++          {submitting ? "Starting scan…" : "Start scan"}
++        </button>
++      </form>
+     </main>
+   );
+ }
+diff --git a/web/tests/fixtures/scope-no-attestation.json b/web/tests/fixtures/scope-no-attestation.json
+new file mode 100644
+index 0000000..9e7563d
+--- /dev/null
++++ b/web/tests/fixtures/scope-no-attestation.json
+@@ -0,0 +1,5 @@
++{
++  "target": "https://example.com/mcp",
++  "authorising_party": "Example Corp Security Team",
++  "attestation": ""
++}
+diff --git a/web/tests/fixtures/scope-valid.json b/web/tests/fixtures/scope-valid.json
+new file mode 100644
+index 0000000..39311d1
+--- /dev/null
++++ b/web/tests/fixtures/scope-valid.json
+@@ -0,0 +1,6 @@
++{
++  "target": "https://example.com/mcp",
++  "authorising_party": "Example Corp Security Team",
++  "attestation": "Example Corp authorises this scan of the named target.",
++  "authorised_on": "2026-09-04"
++}
+diff --git a/web/tests/scan-setup.spec.ts b/web/tests/scan-setup.spec.ts
+new file mode 100644
+index 0000000..723f3e2
+--- /dev/null
++++ b/web/tests/scan-setup.spec.ts
+@@ -0,0 +1,43 @@
++import { expect, test } from "@playwright/test";
++
++test("active mode is locked until a scope file is attached", async ({ page }) => {
++  await page.goto("/");
++  const active = page.getByRole("radio", { name: /active/i });
++  await expect(active).toBeDisabled();
++  await expect(page.getByTestId("active-lock-reason")).toHaveText(
++    /scope file.*authorisation/i,
++  );
++});
++
++test("the lock reason is one sentence and does not apologise", async ({ page }) => {
++  await page.goto("/");
++  const text = await page.getByTestId("active-lock-reason").innerText();
++  expect(text.split(".").filter(Boolean).length).toBe(1);
++  expect(text.toLowerCase()).not.toMatch(/sorry|unfortunately|apolog/);
++});
++
++test("attaching a valid scope file unlocks active mode", async ({ page }) => {
++  await page.goto("/");
++  await page.getByTestId("scope-file").setInputFiles("tests/fixtures/scope-valid.json");
++  await expect(page.getByRole("radio", { name: /active/i })).toBeEnabled();
++});
++
++test("an incomplete scope file names the missing field", async ({ page }) => {
++  await page.goto("/");
++  await page.getByTestId("scope-file").setInputFiles("tests/fixtures/scope-no-attestation.json");
++  // Next.js App Router mounts its own always-present role="alert" live
++  // region for route-change announcements (a real accessibility feature,
++  // node_modules/next/dist/client/components/app-router-announcer.js --
++  // not application code, unconditional on every page, no config opt-out).
++  // .filter() picks out our error surface without touching that unrelated
++  // framework node or reducing its own accessibility function.
++  const alert = page.getByRole("alert").filter({ hasText: "attestation" });
++  await expect(alert).toContainText("attestation");
++  await expect(page.getByRole("radio", { name: /active/i })).toBeDisabled();
++});
++
++test("the whole form is operable from the keyboard", async ({ page }) => {
++  await page.goto("/");
++  await page.keyboard.press("Tab");
++  await expect(page.getByLabel(/target/i)).toBeFocused();
++});

@@ -1,0 +1,1019 @@
+# Review package: e4d9564..375004b
+
+## Commits
+375004b fix: close final-review findings -- CORS, false-zero findings, fixture-demo route, census export, NOTICE
+
+## Files changed
+ .env.example                                |  2 +
+ NOTICE                                      |  6 +--
+ agent_perimeter/api/app.py                  | 20 +++++++
+ agent_perimeter/census/run.py               |  7 +--
+ agent_perimeter/cli.py                      | 28 +++++++++-
+ agent_perimeter/db/models.py                |  6 +++
+ agent_perimeter/report/census_report.py     | 11 ++--
+ docker-compose.yml                          |  1 +
+ migrations/versions/0004_census_run_salt.py | 32 +++++++++++
+ tests/api/test_cors.py                      | 55 +++++++++++++++++++
+ tests/census/test_run.py                    | 64 ++++++++++++++++++++++
+ tests/test_cli.py                           | 48 ++++++++++++++++-
+ web/app/findings/ProvenanceDemo.tsx         | 37 -------------
+ web/app/findings/page.tsx                   | 82 -----------------------------
+ web/app/scans/[id]/page.tsx                 | 55 ++++++++++++++++---
+ web/tests/live-scan.spec.ts                 | 52 ++++++++++++++++++
+ web/tests/provenance-rail.spec.ts           |  8 ++-
+ web/tests/tokens.spec.ts                    |  4 +-
+ 18 files changed, 372 insertions(+), 146 deletions(-)
+
+## Diff
+diff --git a/.env.example b/.env.example
+index b935a7c..8c71692 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,12 +1,14 @@
+ POSTGRES_PASSWORD=change-me-locally
+ # `localhost` for bare-metal (CLI/tests run directly on the host, migrating
+ # against a locally-installed Postgres). docker-compose.yml's `api` service
+ # overrides this to `db` -- the two containers are not on the host's own
+ # loopback interface, they reach each other by Docker Compose service name.
+ POSTGRES_HOST=localhost
+ AP_CONTACT_URL=https://github.com/USER/agent-perimeter
++# Comma-separated browser origins the API's CORS middleware accepts (agent_perimeter/api/app.py).
++AP_CORS_ORIGINS=http://localhost:3000
+ # Browser-side base URL the web UI's fetch calls are built against
+ # (web/src/lib/api.ts). Under `docker compose up`, web (port 3000) and api
+ # (port 8000) are separate origins from the browser's point of view, so this
+ # must be absolute; Next.js inlines NEXT_PUBLIC_* variables at build time.
+ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+diff --git a/NOTICE b/NOTICE
+index f829f58..d4553ce 100644
+--- a/NOTICE
++++ b/NOTICE
+@@ -1,9 +1,9 @@
+ Agent Perimeter
+ Copyright 2026 Agent Perimeter contributors
+ 
+ This product is licensed under the Apache License, Version 2.0. See the
+ LICENSE file for the full license text.
+ 
+-This product includes third-party software; see docs/licences.md (Python
+-dependencies, via `pip-licenses`) and `web/` (npm dependencies, via
+-`npx license-checker`) for the full list of dependencies and their licenses.
++This product includes third-party software; see docs/licences.md for the
++full Python dependency list (via `pip-licenses`) and an npm dependency
++licence-type summary (via `npx license-checker --summary`).
+diff --git a/agent_perimeter/api/app.py b/agent_perimeter/api/app.py
+index 3e4dd67..ef045e4 100644
+--- a/agent_perimeter/api/app.py
++++ b/agent_perimeter/api/app.py
+@@ -2,20 +2,21 @@
+ """HTTP surface over the existing scan pipeline. It adds no security decisions."""
+ 
+ from __future__ import annotations
+ 
+ import logging
+ import os
+ from collections.abc import AsyncIterator
+ from contextlib import asynccontextmanager
+ 
+ from fastapi import FastAPI, Request
++from fastapi.middleware.cors import CORSMiddleware
+ from fastapi.responses import JSONResponse
+ from sqlalchemy import create_engine
+ from sqlalchemy.orm import sessionmaker
+ 
+ from agent_perimeter.api import census, scans
+ from agent_perimeter.api.state import AppState
+ from agent_perimeter.db.models import Base
+ from agent_perimeter.model.scope import AuthorizationRequired, require_scope  # noqa: F401
+ from agent_perimeter.scan_runner import DEFAULT_DATABASE_URL
+ 
+@@ -52,20 +53,39 @@ def create_app(*, database_url: str | None = None) -> FastAPI:
+         logger.warning("could not prepare the database at %s; persistence will be best-effort", url)
+ 
+     @asynccontextmanager
+     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+         yield
+         engine.dispose()
+ 
+     app = FastAPI(title="Agent Perimeter", docs_url="/api/docs", lifespan=_lifespan)
+     app.state.ap = AppState(session_factory=sessionmaker(bind=engine))
+ 
++    # docker-compose.yml runs `web` (:3000) and `api` (:8000) as separate
++    # origins -- every browser fetch()/EventSource call in web/src/lib/api.ts
++    # is cross-origin from the browser's point of view, and without this the
++    # browser blocks the response before the UI ever sees it. No
++    # cookies/auth exist on this API (the auth/SSRF gating gap is a disclosed,
++    # human-confirmed decision, not this middleware's job), so
++    # `allow_credentials=False` -- there is nothing to carry credentials for,
++    # and the CORS spec requires False to pair with a wildcard-shaped origin
++    # config anyway.
++    cors_env = os.environ.get("AP_CORS_ORIGINS", "http://localhost:3000")
++    origins = [o.strip() for o in cors_env.split(",") if o.strip()]
++    app.add_middleware(
++        CORSMiddleware,
++        allow_origins=origins,
++        allow_credentials=False,
++        allow_methods=["*"],
++        allow_headers=["*"],
++    )
++
+     @app.exception_handler(AuthorizationRequired)
+     async def _refusal(request: Request, exc: AuthorizationRequired) -> JSONResponse:
+         # Copy rule: what happened, what to do, no apology.
+         return JSONResponse(
+             status_code=422,
+             content={
+                 "error": "authorization_required",
+                 "missing_field": exc.missing_field,
+                 "message": (
+                     f"Active checks need a scope file with {exc.missing_field}. "
+diff --git a/agent_perimeter/census/run.py b/agent_perimeter/census/run.py
+index bb21ca2..c0297f5 100644
+--- a/agent_perimeter/census/run.py
++++ b/agent_perimeter/census/run.py
+@@ -98,24 +98,25 @@ def run_census(session: Session, client: httpx.Client, *, endpoint: str, tier2_n
+         started_at=started,
+         population_size=0,
+         tool_version=__version__,
+         method_hash=method_hash(),
+         tier2_n=tier2_n,
+         registry_endpoint=endpoint,
+     )
+     session.add(run)
+     session.flush()
+ 
+-    # ponytail: salt generated per run and not persisted anywhere outside this
+-    # call. Task 7's export_raw needs a matching salt to publish coords_digest
+-    # after the embargo - wire a store for it when that task lands.
++    # Persisted on the run itself (CensusRun.salt) so export_raw can later
++    # recompute a digest that actually matches this run's own
++    # coords_digest column - see that function's _digest_for docstring.
+     salt = secrets.token_bytes(32)
++    run.salt = salt
+ 
+     entries = list(fetch.paginate(client, endpoint, log))
+     run.population_size = len(entries)
+ 
+     ranked = sample.rank(client, entries)
+     ranked_by_id = {r.entry.registry_id: r for r in ranked}
+     tier2 = {r.entry.registry_id for r in sample.top_n(ranked, tier2_n)}
+ 
+     for entry in entries:
+         record = _record_for(run, entry, ranked_by_id, salt)
+diff --git a/agent_perimeter/cli.py b/agent_perimeter/cli.py
+index 901af82..40f6c90 100644
+--- a/agent_perimeter/cli.py
++++ b/agent_perimeter/cli.py
+@@ -268,25 +268,26 @@ def census(
+         str,
+         typer.Option(help="SQLAlchemy DSN. Defaults to this project's Postgres (see alembic.ini)."),
+     ] = DEFAULT_DATABASE_URL,
+ ) -> None:
+     """Collect a passive census of the public MCP registry.
+ 
+     Reads the registry API and published package artifacts. Never connects to a
+     third-party MCP server.
+     """
+     import httpx
+-    from sqlalchemy import create_engine
++    from sqlalchemy import create_engine, select
+     from sqlalchemy.orm import Session
+ 
+     from agent_perimeter.census.run import run_census
+-    from agent_perimeter.db.models import Base
++    from agent_perimeter.db.models import Base, CensusRecord
++    from agent_perimeter.report.census_report import export_raw, render_census
+ 
+     out.mkdir(parents=True, exist_ok=True)
+ 
+     # Every CensusRun/CensusRecord row this command writes lands in the same
+     # Postgres alembic/docker-compose.yml already stand up - not a throwaway
+     # file invisible to alembic, psql or a future API. --database-url exists
+     # so a different deployment (or a test) can point elsewhere.
+     engine = create_engine(os.path.expandvars(database_url))
+     Base.metadata.create_all(engine)
+ 
+@@ -294,10 +295,33 @@ def census(
+         run = run_census(session, client, endpoint=endpoint, tier2_n=tier2_n)
+         # Read while the session is still open - CensusRun's attributes are
+         # expired by the commit inside run_census, and refreshing them after
+         # the session closes below would raise DetachedInstanceError.
+         typer.echo(f"Population size: {run.population_size}")
+         typer.echo(f"Tier-2 n:        {run.tier2_n}")
+         # Printed unconditionally, zero included - B10: a number that only
+         # shows up when it's bad is a number nobody trusts.
+         typer.echo(f"Fetch failures:  {run.fetch_failures}")
+         typer.echo(f"Method hash:     {run.method_hash}")
++
++        # Same "read while the session is still open" constraint as the
++        # summary lines above - records is a plain list by the time the
++        # session closes, so render_census/export_raw need no session of
++        # their own.
++        records = list(
++            session.execute(
++                select(CensusRecord).where(CensusRecord.census_run_id == run.id)
++            ).scalars()
++        )
++        html_path = out / "census.html"
++        html_path.write_text(render_census(run, records), encoding="utf-8")
++        # run.salt is the same salt run_census just used for every record's
++        # coords_digest - passing it here (not a fresh one) is what makes
++        # this export's digests verifiable against the database (final
++        # review fix wave, Important #4/#5). Nullable only for a pre-release
++        # row that predates this column (there are none); run_census always
++        # sets it on the row it creates.
++        if run.salt is None:
++            raise RuntimeError("run_census did not persist a salt for this run")
++        csv_path = export_raw(run, records, salt=run.salt, out=out)
++        typer.echo(f"Report written to {html_path}")
++        typer.echo(f"Raw data written to {csv_path}")
+diff --git a/agent_perimeter/db/models.py b/agent_perimeter/db/models.py
+index f48fc8a..3ff2a33 100644
+--- a/agent_perimeter/db/models.py
++++ b/agent_perimeter/db/models.py
+@@ -164,20 +164,26 @@ class CensusRun(Base):
+ 
+     id: Mapped[int] = mapped_column(primary_key=True)
+     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+     population_size: Mapped[int]
+     fetch_failures: Mapped[int] = mapped_column(default=0)
+     tool_version: Mapped[str]
+     method_hash: Mapped[str]
+     tier2_n: Mapped[int | None] = mapped_column(nullable=True)
+     registry_endpoint: Mapped[str]
++    # Persists the per-run pseudonymisation salt `census/run.py::run_census`
++    # generates so `export_raw`'s digests can be recomputed against this
++    # run's own `CensusRecord.coords_digest` values later -- nullable because
++    # this is pre-release data with no backfill story, not because a salt is
++    # ever optional for a run going forward.
++    salt: Mapped[bytes | None] = mapped_column(nullable=True)
+ 
+ 
+ class CensusRecord(Base):
+     __tablename__ = "census_record"
+ 
+     id: Mapped[int] = mapped_column(primary_key=True)
+     census_run_id: Mapped[int] = mapped_column(ForeignKey("census_run.id"))
+     registry_id: Mapped[str]
+     coords_digest: Mapped[str] = mapped_column(nullable=False, index=True)
+     ecosystem: Mapped[str | None] = mapped_column(nullable=True)
+diff --git a/agent_perimeter/report/census_report.py b/agent_perimeter/report/census_report.py
+index 51e7b4f..1cff8ab 100644
+--- a/agent_perimeter/report/census_report.py
++++ b/agent_perimeter/report/census_report.py
+@@ -166,25 +166,26 @@ def _agg_dict(agg: Aggregate) -> dict[str, object]:
+     without re-deriving the property formulas.
+     """
+     return {**asdict(agg), "n": agg.n, "share": agg.share}
+ 
+ 
+ def _by_derivation(records: Sequence[CensusRecord], derivation: str) -> list[CensusRecord]:
+     return [r for r in records if r.feature_set_json.get("derivation") == derivation]
+ 
+ 
+ def _digest_for(record: CensusRecord, salt: bytes) -> str:
+-    """A durable digest for the raw export, keyed by the export's own salt -
+-    never the DB row's own `coords_digest`, which was computed with a
+-    per-run salt that `census/run.py` discards immediately after collection
+-    (see its `run_census`, which never persists the salt it generates) and
+-    so cannot be reproduced later. Mirrors `PackageCoords.digest` / that
++    """A digest for the raw export, keyed by whatever `salt` the caller
++    passes. `agent_perimeter/cli.py`'s `census` command passes the run's own
++    persisted `CensusRun.salt` (`census/run.py::run_census` now sets it on
++    the row it creates), so the exported digest matches the DB row's own
++    `coords_digest` by construction - the two are no longer computed with
++    two different, unrelated salts. Mirrors `PackageCoords.digest` / that
+     same module's `_digest_for` fallback for a record with no resolvable
+     package coordinates.
+     """
+     if record.ecosystem is not None and record.package_name is not None:
+         coords = PackageCoords(ecosystem=Ecosystem(record.ecosystem), name=record.package_name)
+         return coords.digest(salt)
+     payload = f"registry:{record.registry_id.lower()}".encode()
+     return hashlib.blake2b(payload, key=salt, digest_size=16).hexdigest()
+ 
+ 
+diff --git a/docker-compose.yml b/docker-compose.yml
+index de510c9..71040c5 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -25,20 +25,21 @@ services:
+     # ${POSTGRES_HOST} default of `localhost`, see .env.example) is what
+     # alembic.ini's sqlalchemy.url actually connects with here.
+     command: >
+       sh -c "alembic upgrade head &&
+              uvicorn agent_perimeter.api.app:create_app --factory --host 0.0.0.0 --port 8000"
+     environment:
+       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+       POSTGRES_HOST: db
+       AP_DATABASE_URL: postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@db:5432/agent_perimeter
+       AP_CONTACT_URL: ${AP_CONTACT_URL}
++      AP_CORS_ORIGINS: ${AP_CORS_ORIGINS:-http://localhost:3000}
+     ports:
+       - "8000:8000"
+     depends_on:
+       db:
+         condition: service_healthy
+     healthcheck:
+       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/api/health')"]
+       interval: 5s
+       timeout: 5s
+       retries: 20
+diff --git a/migrations/versions/0004_census_run_salt.py b/migrations/versions/0004_census_run_salt.py
+new file mode 100644
+index 0000000..3742bce
+--- /dev/null
++++ b/migrations/versions/0004_census_run_salt.py
+@@ -0,0 +1,32 @@
++"""census run salt
++
++Revision ID: 0004
++Revises: 0003
++Create Date: 2026-09-07 10:00:00.000000
++
++"""
++from typing import Sequence, Union
++
++from alembic import op
++import sqlalchemy as sa
++
++
++# revision identifiers, used by Alembic.
++revision: str = '0004'
++down_revision: Union[str, Sequence[str], None] = '0003'
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Upgrade schema."""
++    # ### commands auto generated by Alembic - please adjust! ###
++    op.add_column('census_run', sa.Column('salt', sa.LargeBinary(), nullable=True))
++    # ### end Alembic commands ###
++
++
++def downgrade() -> None:
++    """Downgrade schema."""
++    # ### commands auto generated by Alembic - please adjust! ###
++    op.drop_column('census_run', 'salt')
++    # ### end Alembic commands ###
+diff --git a/tests/api/test_cors.py b/tests/api/test_cors.py
+new file mode 100644
+index 0000000..31a93f0
+--- /dev/null
++++ b/tests/api/test_cors.py
+@@ -0,0 +1,55 @@
++"""CORS coverage for the FastAPI app (final-review fix wave, Critical #1).
++
++`web/src/lib/api.ts`'s fetch()/EventSource calls are cross-origin from the
++browser's point of view under docker-compose.yml's split `web`/`api`
++services -- without `CORSMiddleware`, the browser blocks the response
++outright and the deliverable README flow (docker compose up, open the UI,
++submit a scan) fails before any application code runs.
++"""
++
++from __future__ import annotations
++
++import pytest
++from fastapi.testclient import TestClient
++
++from agent_perimeter.api.app import create_app
++
++client = TestClient(create_app())
++
++
++def test_allowed_origin_gets_the_cors_header() -> None:
++    r = client.get("/api/health", headers={"Origin": "http://localhost:3000"})
++    assert r.status_code == 200
++    assert r.headers["access-control-allow-origin"] == "http://localhost:3000"
++
++
++def test_unrelated_origin_gets_no_cors_header() -> None:
++    r = client.get("/api/health", headers={"Origin": "http://evil.example"})
++    assert r.status_code == 200
++    assert "access-control-allow-origin" not in r.headers
++
++
++def test_preflight_for_the_allowed_origin_is_accepted() -> None:
++    r = client.options(
++        "/api/health",
++        headers={
++            "Origin": "http://localhost:3000",
++            "Access-Control-Request-Method": "GET",
++        },
++    )
++    assert r.status_code == 200
++    assert r.headers["access-control-allow-origin"] == "http://localhost:3000"
++
++
++@pytest.mark.parametrize("env_value", ["", "  ", " , "])
++def test_an_empty_cors_origins_env_var_does_not_allow_every_origin(
++    monkeypatch: pytest.MonkeyPatch, env_value: str
++) -> None:
++    # A blank/whitespace AP_CORS_ORIGINS must not split into [""] -- an empty
++    # string is Starlette's wildcard-adjacent "matches everything" footgun,
++    # not "no origins configured".
++    monkeypatch.setenv("AP_CORS_ORIGINS", env_value)
++    app = create_app(database_url="sqlite://")
++    scoped_client = TestClient(app)
++    r = scoped_client.get("/api/health", headers={"Origin": "http://localhost:3000"})
++    assert "access-control-allow-origin" not in r.headers
+diff --git a/tests/census/test_run.py b/tests/census/test_run.py
+index 039dd57..8952b7b 100644
+--- a/tests/census/test_run.py
++++ b/tests/census/test_run.py
+@@ -319,20 +319,84 @@ def test_fetch_failures_sums_pagination_and_artifact_failures(
+             session.execute(select(CensusRecord).where(CensusRecord.census_run_id == run.id))
+             .scalars()
+             .all()
+         )
+     engine.dispose()
+ 
+     assert run.fetch_failures == 2  # 1 pagination failure + 1 artifact failure
+     assert records[0].fetch_status == FetchStatus.NOT_FOUND.value
+ 
+ 
++
++# --- salt persistence (final-review fix wave, Important #4/#5) -------------
++
++
++def test_the_salt_used_for_coords_digest_is_persisted_on_the_run() -> None:
++    """The bug `export_raw`'s own `_digest_for` docstring used to document:
++    `run_census` generated a salt, used it for every record's
++    `coords_digest`, then discarded it - nothing durable existed to publish
++    or to verify the DB's digests against later. `run.salt` must now carry
++    the exact bytes used, both in memory and once persisted."""
++    items = [_server_item("pkg/bare-one")]
++    client = httpx.Client(
++        transport=httpx.MockTransport(_handler({None: _page(items)}, {}))
++    )
++    engine = _engine()
++    with Session(engine) as session:
++        run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
++        assert run.salt is not None
++        assert isinstance(run.salt, bytes)
++
++        stored = session.execute(select(CensusRun).where(CensusRun.id == run.id)).scalar_one()
++        assert stored.salt == run.salt
++    engine.dispose()
++
++
++def test_export_raw_digest_matches_the_records_own_coords_digest(tmp_path: Path) -> None:
++    """The regression this whole fix exists for: `export_raw`, called with
++    the run's own persisted salt (not a fresh one, as `cli.py`'s `census`
++    command now does), must reproduce the exact digest already stored in
++    `CensusRecord.coords_digest` for that record - proving the two are
++    verifiable against each other, not just that both happen to be strings.
++    """
++    from agent_perimeter.report.census_report import export_raw
++
++    items = [
++        _server_item(
++            "pkg/npm-one",
++            packages=[{"registryType": "npm", "identifier": "npm-one", "version": "1.0.0"}],
++        )
++    ]
++    downloads = {("npm", "npm-one"): 100}
++    client = httpx.Client(
++        transport=httpx.MockTransport(_handler({None: _page(items)}, downloads))
++    )
++    engine = _engine()
++    with Session(engine) as session:
++        # tier2_n=0: no artifact fetch, so feature_set_json stays {} - this
++        # test is about the digest column, not about the two-stratum
++        # classification export_raw also performs.
++        run = run_census(session, client, endpoint=REGISTRY, tier2_n=0)
++        records = (
++            session.execute(select(CensusRecord).where(CensusRecord.census_run_id == run.id))
++            .scalars()
++            .all()
++        )
++        assert run.salt is not None
++        export_raw(run, records, salt=run.salt, out=tmp_path)
++
++        body = (tmp_path / "records.csv").read_text(encoding="utf-8")
++        record = records[0]
++        assert record.coords_digest in body
++    engine.dispose()
++
++
+ def test_fetch_failures_is_printed_even_when_zero() -> None:
+     """B10: a number that only appears when it's bad is a number nobody trusts."""
+     items = [_server_item("pkg/bare-one")]
+     client = httpx.Client(
+         transport=httpx.MockTransport(_handler({None: _page(items)}, {}))
+     )
+     engine = _engine()
+     with Session(engine) as session:
+         run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
+         assert run.fetch_failures == 0
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+index 0b21dc3..bd2ec03 100644
+--- a/tests/test_cli.py
++++ b/tests/test_cli.py
+@@ -214,27 +214,37 @@ def test_reproduction_command_replays_the_config_flag_that_produced_it(
+     assert result.exit_code == 0, result.stdout
+     document = json.loads(sarif.read_text())
+     (emitted,) = document["runs"][0]["results"]
+     assert f"--config {shlex.quote(str(config))}" in emitted["message"]["text"]
+     assert "--only secrets.config_scan" in emitted["message"]["text"]
+     uri = emitted["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+     assert uri == "mcp.json", uri
+ 
+ 
+ def _stub_census_run(**overrides: object) -> SimpleNamespace:
+-    """Stand-in for census.run.CensusRun - only the attributes the `census`
+-    CLI command reads to print its summary."""
++    """Stand-in for census.run.CensusRun - every attribute the `census` CLI
++    command reads, both to print its summary and (final-review fix wave,
++    Important #4/#5) to render the report and raw export it now writes to
++    `--out`. `id` is a real, matchable value so the command's own
++    `CensusRecord` query runs against a real (if empty) session rather than
++    crashing on a stub with no primary key."""
+     fields: dict[str, object] = {
++        "id": 1,
++        "started_at": datetime(2026, 9, 1, tzinfo=UTC),
++        "finished_at": datetime(2026, 9, 1, tzinfo=UTC),
+         "population_size": 0,
+         "tier2_n": 200,
+         "fetch_failures": 0,
++        "tool_version": "0.1.0",
+         "method_hash": "deadbeef00000000",
++        "registry_endpoint": "https://registry.modelcontextprotocol.io/v0/servers",
++        "salt": b"test-salt-0000000000000000000000",
+     }
+     fields.update(overrides)
+     return SimpleNamespace(**fields)
+ 
+ 
+ def test_census_defaults_to_the_project_postgres_not_sqlite(
+     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+ ) -> None:
+     """Finding 2 regression: `agent-perimeter census` must default to this
+     project's real Postgres (the same DSN alembic.ini/migrations/env.py
+@@ -294,10 +304,44 @@ def test_census_database_url_can_be_overridden_without_a_live_postgres(
+             "--out",
+             str(tmp_path / "out"),
+             "--database-url",
+             f"sqlite:///{db_path}",
+         ],
+     )
+ 
+     assert result.exit_code == 0, result.stdout
+     assert db_path.exists()
+     assert "Population size: 3" in result.stdout
++
++
++def test_census_out_writes_the_html_report_and_raw_export(
++    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
++) -> None:
++    """Finding 4a: `census --out` created the directory and printed four
++    summary lines, then did nothing else - `render_census`/`export_raw`
++    (both pure functions with no CLI dependency) were never called, so the
++    command could not produce the published census report end to end. The
++    report is the actual deliverable of this command, not a byproduct of
++    running it.
++    """
++    monkeypatch.setattr(
++        "agent_perimeter.census.run.run_census",
++        lambda session, client, *, endpoint, tier2_n: _stub_census_run(),
++    )
++    out_dir = tmp_path / "out"
++
++    result = runner.invoke(
++        app,
++        [
++            "census",
++            "--out",
++            str(out_dir),
++            "--database-url",
++            f"sqlite:///{tmp_path / 'census.db'}",
++        ],
++    )
++
++    assert result.exit_code == 0, result.stdout
++    assert (out_dir / "census.html").exists()
++    assert (out_dir / "records.csv").exists()
++    assert f"Report written to {out_dir / 'census.html'}" in result.stdout
++    assert f"Raw data written to {out_dir / 'records.csv'}" in result.stdout
+diff --git a/web/app/findings/ProvenanceDemo.tsx b/web/app/findings/ProvenanceDemo.tsx
+deleted file mode 100644
+index 4513fbd..0000000
+--- a/web/app/findings/ProvenanceDemo.tsx
++++ /dev/null
+@@ -1,37 +0,0 @@
+-"use client";
+-
+-/**
+- * Fixture-only demo of `Claim` opening `ProvenanceRail` -- exercises the
+- * activation/focus-management contract end to end so it's covered by a real
+- * page, not just unit-level reasoning. Task 11's real findings screen wires
+- * a `Claim` like this one around each finding's confidence value; this is
+- * the minimal wiring needed to prove the contract works, not that screen.
+- */
+-import { useState } from "react";
+-
+-import { Claim, ProvenanceRail, type ProvenanceChainEntry } from "@/src/lib/_bok-ui";
+-
+-const DEMO_CHAIN: ProvenanceChainEntry[] = [
+-  {
+-    value: "0.95",
+-    method: "deterministic",
+-    derivation: "probe",
+-    source: "agent_perimeter/checks/active/path_traversal.py:42",
+-    confidence: 0.95,
+-    calibrated: false,
+-    observedAt: "2026-09-04T10:00:00Z",
+-  },
+-];
+-
+-export function ProvenanceDemo() {
+-  const [open, setOpen] = useState(false);
+-  return (
+-    <section>
+-      <h2>Provenance</h2>
+-      <p>
+-        Confidence: <Claim value="0.95" derivation="probe" numeric onActivate={() => setOpen(true)} />
+-      </p>
+-      <ProvenanceRail open={open} chain={DEMO_CHAIN} onClose={() => setOpen(false)} />
+-    </section>
+-  );
+-}
+diff --git a/web/app/findings/page.tsx b/web/app/findings/page.tsx
+deleted file mode 100644
+index 6f415da..0000000
+--- a/web/app/findings/page.tsx
++++ /dev/null
+@@ -1,82 +0,0 @@
+-import { EmptyState, type FindingsTableRow, FindingsTable } from "@/src/lib/_bok-ui";
+-import { ProvenanceDemo } from "./ProvenanceDemo";
+-
+-/**
+- * Fixture-only route for exercising `FindingsTable` end to end (severity
+- * glyphs, tabular numeric cells, provenance column) -- this is what
+- * `tests/tokens.spec.ts` drives via `?fixture=mixed`. Task 11 replaces this
+- * with the real screen wired to `src/lib/api.ts::getFindings`; this page
+- * intentionally does not call the API yet.
+- */
+-const FIXTURES: Record<string, FindingsTableRow[]> = {
+-  mixed: [
+-    {
+-      id: "1",
+-      title: "Path traversal via `read_file` tool",
+-      checkId: "active.path_traversal",
+-      severity: "critical",
+-      derivation: "probe",
+-      confidence: 0.95,
+-    },
+-    {
+-      id: "2",
+-      title: "Tool description contains an embedded instruction",
+-      checkId: "descriptions.injection_pattern",
+-      severity: "high",
+-      derivation: "description",
+-      confidence: 0.7,
+-    },
+-    {
+-      id: "3",
+-      title: "Input schema accepts an unbounded string for a path parameter",
+-      checkId: "static.unbounded_path_param",
+-      severity: "medium",
+-      derivation: "schema",
+-      confidence: 0.55,
+-    },
+-    {
+-      id: "4",
+-      title: "Server declares a capability it never exercises",
+-      checkId: "static.unused_capability",
+-      severity: "low",
+-      derivation: "artifact",
+-      confidence: null,
+-    },
+-    {
+-      id: "5",
+-      title: "Server responded to `initialize` with a supported protocol revision",
+-      checkId: "version_negotiation.supported_revision",
+-      severity: "info",
+-      derivation: "schema",
+-      confidence: 1,
+-    },
+-  ],
+-};
+-
+-export default async function FindingsPage({
+-  searchParams,
+-}: {
+-  searchParams: Promise<{ fixture?: string }>;
+-}) {
+-  const { fixture } = await searchParams;
+-  const rows = fixture ? FIXTURES[fixture] : undefined;
+-
+-  if (!rows) {
+-    return (
+-      <main>
+-        <EmptyState
+-          title="No findings for the checks that ran"
+-          description="Pass ?fixture=mixed to preview the table, or run a scan from the setup screen."
+-        />
+-      </main>
+-    );
+-  }
+-
+-  return (
+-    <main>
+-      <h1>Findings</h1>
+-      <FindingsTable rows={rows} caption="Fixture data for design-token verification" />
+-      <ProvenanceDemo />
+-    </main>
+-  );
+-}
+diff --git a/web/app/scans/[id]/page.tsx b/web/app/scans/[id]/page.tsx
+index d79f417..915549d 100644
+--- a/web/app/scans/[id]/page.tsx
++++ b/web/app/scans/[id]/page.tsx
+@@ -25,32 +25,42 @@
+  * `params`/`searchParams` are both Promises in Next 15; this page is a
+  * Client Component (it does real client-side subscription work, ruling 1),
+  * so they're unwrapped with React's `use()` rather than `await` --
+  * `findings/page.tsx`'s `await searchParams` pattern is for an async
+  * Server Component, which this can't be and still subscribe to anything.
+  *
+  * `?fixture=streaming|degraded|deterministic` replays a canned
+  * `ScanEvent[]` (`./fixtures.ts`) through `replayScanEvents`, which shares
+  * `subscribeToScanEvents`'s exact `(id, onEvent, onError?) => unsubscribe`
+  * signature and dispatches on a real `setTimeout` cadence -- not one
+- * synchronous dump. No live backend is reachable from this project's
+- * Playwright runs (no CORS/rewrite wired), so the real `subscribeToScanEvents`
+- * branch below -- `onError` surfaced through `ErrorState`, `onRetry` bumping
+- * `retryCount` to re-run the subscription effect -- is wired for production
+- * but isn't exercised by any test here -- the same forward-reference pattern
+- * `app/page.tsx`'s real `createScan` call already uses.
++ * synchronous dump. `tests/live-scan.spec.ts`'s route-mocked real-path test
++ * is the one test that exercises the real (non-fixture) branch below at
++ * all; `onError` surfaced through `ErrorState`, `onRetry` bumping
++ * `retryCount` to re-run the subscription effect, is still untested -- the
++ * same forward-reference pattern `app/page.tsx`'s real `createScan` call
++ * already uses.
++ *
++ * Terminal-summary fix (final-review fix wave, Important #2): the terminal
++ * frame alone never means "no findings" -- it only means "no more checks
++ * are running". The real (non-fixture) path fetches `getScan(id)` once the
++ * terminal frame arrives and branches on `findings_count`: zero renders the
++ * existing `EmptyState` copy unchanged, a positive count states the number
++ * and points at the findings link above (never invented reassurance), and
++ * an absent/failed count reads as "unknown", never as a false zero -- see
++ * `findingsCount`'s state comment below. None of the three fixture
++ * scenarios represents an unclean run, so fixture mode is untouched.
+  */
+ import { use, useEffect, useMemo, useState } from "react";
+ 
+ import { PhaseGroup, type PhaseGroupCheck } from "@/app/components/PhaseGroup";
+ import { EmptyState, ErrorState, QuotaStrip, Skeleton, type ProviderQuota } from "@/src/lib/_bok-ui";
+-import { isTerminalEvent, subscribeToScanEvents, type ScanEvent, type ScanTerminalEvent } from "@/src/lib/api";
++import { getScan, isTerminalEvent, subscribeToScanEvents, type ScanEvent, type ScanTerminalEvent } from "@/src/lib/api";
+ import { FIXTURES } from "./fixtures";
+ 
+ // 29 checks at 30ms apart (~870ms) plus a 500ms pause before the terminal
+ // frame -- comfortably under the ~2s ruling-2 pacing budget, and the pause
+ // is what gives the status region's un-collided "n of total" text a window
+ // wide enough for Playwright's poll interval to land inside, before it's
+ // swapped for the terminal summary.
+ const FRAME_DELAY_MS = 30;
+ const TERMINAL_PAUSE_MS = 500;
+ 
+@@ -111,43 +121,58 @@ export default function LiveScanPage({
+ 
+   const [rows, setRows] = useState<CheckRow[]>([]);
+   const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
+   const [terminalEvent, setTerminalEvent] = useState<ScanTerminalEvent | null>(null);
+   const [modelEngaged, setModelEngaged] = useState(false);
+   const [connectionError, setConnectionError] = useState(false);
+   // Bumping this re-runs the subscription effect -- `onRetry` below's way of
+   // re-opening the real EventSource after a connection error (fixture mode
+   // never errors, so this is only ever touched on the real path).
+   const [retryCount, setRetryCount] = useState(0);
++  // Real path only (fixture mode never sets this -- see the terminal-summary
++  // ternary below). `undefined` covers both "not fetched yet" and "fetched
++  // but the field/fetch came back empty" -- both read as "unknown", never as
++  // a false zero, the same absence-reads-as-unknown convention
++  // `ConformanceStrip`'s `revisionClaimed` handling already established.
++  const [findingsCount, setFindingsCount] = useState<number | undefined>(undefined);
+ 
+   useEffect(() => {
+     setRows([]);
+     setProgress(null);
+     setTerminalEvent(null);
+     setModelEngaged(false);
+     setConnectionError(false);
++    setFindingsCount(undefined);
+ 
+     function handleEvent(event: ScanEvent) {
+       if (isTerminalEvent(event)) {
+         setProgress({ completed: event.completed, total: event.total });
+         setTerminalEvent(event);
+         if (event.skipped.length > 0) {
+           setRows((prev) => [
+             ...prev,
+             ...event.skipped.map((s) => ({
+               checkId: s.check_id,
+               phase: phaseOf(s.check_id),
+               status: "skipped" as const,
+               detail: s.detail,
+             })),
+           ]);
+         }
++        // Fixture replays carry no backing `getScan` to call -- the real
++        // scan's completion is the only case where the true findings count
++        // needs fetching at all.
++        if (!fixture) {
++          getScan(id)
++            .then((status) => setFindingsCount(status.findings_count))
++            .catch(() => setFindingsCount(undefined));
++        }
+         return;
+       }
+       setProgress({ completed: event.completed, total: event.total });
+       if (event.check_id === MODEL_CHECK_ID) setModelEngaged(true);
+       setRows((prev) => [
+         ...prev,
+         { checkId: event.check_id, phase: event.phase, status: event.status, elapsedMs: event.elapsed_ms },
+       ]);
+     }
+ 
+@@ -185,29 +210,43 @@ export default function LiveScanPage({
+       <p>
+         <a href={`/scans/${id}/findings`} data-testid="findings-link">
+           View findings for this scan
+         </a>
+       </p>
+ 
+       {terminalEvent === null ? (
+         <p role="status" aria-live="polite" className="bok-scan-progress">
+           {progress ? `${progress.completed} of ${progress.total} checks complete` : "Starting scan…"}
+         </p>
+-      ) : (
++      ) : fixture || findingsCount === 0 ? (
++        // Fixture mode: none of the three canned scenarios represents an
++        // unclean run, so this stays the existing, verified-clean copy.
++        // Real mode: `findingsCount === 0` is the one case where "No
++        // findings" is actually true.
+         <EmptyState
+           title="No findings for the checks that ran"
+           description={
+             skippedCount === 0
+               ? "0 checks skipped."
+               : `${skippedCount} check${skippedCount === 1 ? "" : "s"} skipped — see the skipped rows below for why.`
+           }
+         />
++      ) : typeof findingsCount === "number" ? (
++        <p data-testid="findings-summary" role="status" aria-live="polite">
++          {findingsCount} finding{findingsCount === 1 ? "" : "s"} — see the findings link above.
++        </p>
++      ) : (
++        // `getScan` hasn't resolved yet, or it failed -- absence is not the
++        // same claim as zero, so this never falls back to "No findings".
++        <p data-testid="findings-summary" role="status" aria-live="polite">
++          findings count unknown — see the findings link above to check.
++        </p>
+       )}
+ 
+       {connectionError && (
+         <ErrorState
+           title="Lost connection to the scan"
+           description="The live update stream disconnected — retry to reconnect."
+           onRetry={() => setRetryCount((n) => n + 1)}
+         />
+       )}
+ 
+diff --git a/web/tests/live-scan.spec.ts b/web/tests/live-scan.spec.ts
+index b7a0138..1aa41b8 100644
+--- a/web/tests/live-scan.spec.ts
++++ b/web/tests/live-scan.spec.ts
+@@ -32,10 +32,62 @@ test("progress is announced to assistive technology", async ({ page }) => {
+   // progress announcer's own role="status", since Playwright's `toContainText`
+   // fails immediately on a strict-mode violation rather than retrying through
+   // it (verified directly: both 5-worker and --workers=1 runs failed in
+   // under 700ms, not at the 5s timeout). `Skeleton` renders no text at all,
+   // so `.filter({ hasText: /of/ })` -- the same disambiguation-by-filter
+   // pattern `scan-setup.spec.ts` uses for Next's own route announcer --
+   // narrows to the progress announcer without touching either component's
+   // real accessibility semantics.
+   await expect(page.getByRole("status").filter({ hasText: /of/ })).toContainText(/\d+ of 29/);
+ });
++
++// Final-review fix wave, Important #2: the real (non-fixture) path used to
++// render "No findings for the checks that ran" the instant the terminal SSE
++// frame arrived, regardless of the scan's actual findings count. No fixture
++// exercises this branch (fixtures never call `getScan`), so the real
++// `/api/scans/1/events` and `/api/scans/1` calls are mocked directly --
++// this is the first test in this file to touch the non-fixture path at all.
++test("a non-zero findings count is never reported as no findings", async ({ page }) => {
++  await page.route("**/api/scans/1/events", (route) =>
++    route.fulfill({
++      status: 200,
++      contentType: "text/event-stream",
++      body: `data: ${JSON.stringify({ terminal: true, completed: 29, total: 29, skipped: [] })}\n\n`,
++    }),
++  );
++  await page.route("**/api/scans/1", (route) =>
++    route.fulfill({
++      status: 200,
++      contentType: "application/json",
++      body: JSON.stringify({ id: "1", status: "completed", findings_count: 3 }),
++    }),
++  );
++
++  await page.goto("/scans/1");
++
++  await expect(page.getByTestId("findings-summary")).toContainText("3 findings");
++  await expect(page.getByText("No findings for the checks that ran")).toHaveCount(0);
++});
++
++test("an unknown findings count reads as unknown, never as a false zero", async ({ page }) => {
++  await page.route("**/api/scans/1/events", (route) =>
++    route.fulfill({
++      status: 200,
++      contentType: "text/event-stream",
++      body: `data: ${JSON.stringify({ terminal: true, completed: 29, total: 29, skipped: [] })}\n\n`,
++    }),
++  );
++  // `findings_count` genuinely absent from the response -- the same shape a
++  // scan still in flux, or a backend that hasn't computed it yet, produces.
++  await page.route("**/api/scans/1", (route) =>
++    route.fulfill({
++      status: 200,
++      contentType: "application/json",
++      body: JSON.stringify({ id: "1", status: "completed" }),
++    }),
++  );
++
++  await page.goto("/scans/1");
++
++  await expect(page.getByTestId("findings-summary")).toContainText(/unknown/i);
++  await expect(page.getByText("No findings for the checks that ran")).toHaveCount(0);
++});
+diff --git a/web/tests/provenance-rail.spec.ts b/web/tests/provenance-rail.spec.ts
+index 50106c0..a0a2e28 100644
+--- a/web/tests/provenance-rail.spec.ts
++++ b/web/tests/provenance-rail.spec.ts
+@@ -1,21 +1,25 @@
+ import { expect, test } from "@playwright/test";
+ 
+ // Covers task-10 review Finding 3: a closed ProvenanceRail must have zero
+ // reachable/tabbable descendants (the `inert` DOM property, not just the
+ // slide-out transform), and focus must move into the rail on open and back
+ // to the trigger on close.
+ test("a closed provenance rail has no reachable descendants, and focus moves correctly", async ({ page }) => {
+-  await page.goto("/findings?fixture=mixed");
++  await page.goto("/scans/1/findings?fixture=mixed");
+ 
+   const rail = page.getByTestId("provenance-rail");
+-  const trigger = page.getByTestId("claim");
++  // The real screen's `mixed` fixture carries several claim-activatable rows
++  // (the fixture-demo page this test used to target rendered exactly one,
++  // standalone `Claim`) -- `.first()` matches `findings.spec.ts`'s own
++  // disambiguation for the same testid on this route.
++  const trigger = page.getByTestId("claim").first();
+   const closeButton = page.getByRole("button", { name: "Close provenance rail" });
+ 
+   // Closed: inert, and its close button is not part of the tab order.
+   await expect(rail).toHaveJSProperty("inert", true);
+ 
+   await trigger.click();
+ 
+   // Open: no longer inert, focus moved to the close button inside it.
+   await expect(rail).toHaveJSProperty("inert", false);
+   await expect(closeButton).toBeFocused();
+diff --git a/web/tests/tokens.spec.ts b/web/tests/tokens.spec.ts
+index 36655e3..69c6eb8 100644
+--- a/web/tests/tokens.spec.ts
++++ b/web/tests/tokens.spec.ts
+@@ -1,25 +1,25 @@
+ import { expect, test } from "@playwright/test";
+ 
+ test("severity is never encoded in colour alone", async ({ page }) => {
+-  await page.goto("/findings?fixture=mixed");
++  await page.goto("/scans/1/findings?fixture=mixed");
+   for (const row of await page.getByRole("row").all()) {
+     const badge = row.getByTestId("severity-badge");
+     if (await badge.count()) {
+       await expect(badge).toHaveAttribute("data-glyph", /.+/);
+       await expect(badge).not.toHaveText("");
+     }
+   }
+ });
+ 
+ test("numbers are tabular", async ({ page }) => {
+-  await page.goto("/findings?fixture=mixed");
++  await page.goto("/scans/1/findings?fixture=mixed");
+   const cell = page.getByTestId("numeric-cell").first();
+   await expect(cell).toHaveCSS("font-variant-numeric", /tabular-nums/);
+ });
+ 
+ test("no external host is contacted", async ({ page }) => {
+   const external: string[] = [];
+   page.on("request", (r) => {
+     const url = new URL(r.url());
+     if (!["localhost", "127.0.0.1"].includes(url.hostname)) external.push(r.url());
+   });
