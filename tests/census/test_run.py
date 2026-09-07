@@ -326,6 +326,70 @@ def test_fetch_failures_sums_pagination_and_artifact_failures(
     assert records[0].fetch_status == FetchStatus.NOT_FOUND.value
 
 
+
+# --- salt persistence (final-review fix wave, Important #4/#5) -------------
+
+
+def test_the_salt_used_for_coords_digest_is_persisted_on_the_run() -> None:
+    """The bug `export_raw`'s own `_digest_for` docstring used to document:
+    `run_census` generated a salt, used it for every record's
+    `coords_digest`, then discarded it - nothing durable existed to publish
+    or to verify the DB's digests against later. `run.salt` must now carry
+    the exact bytes used, both in memory and once persisted."""
+    items = [_server_item("pkg/bare-one")]
+    client = httpx.Client(
+        transport=httpx.MockTransport(_handler({None: _page(items)}, {}))
+    )
+    engine = _engine()
+    with Session(engine) as session:
+        run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
+        assert run.salt is not None
+        assert isinstance(run.salt, bytes)
+
+        stored = session.execute(select(CensusRun).where(CensusRun.id == run.id)).scalar_one()
+        assert stored.salt == run.salt
+    engine.dispose()
+
+
+def test_export_raw_digest_matches_the_records_own_coords_digest(tmp_path: Path) -> None:
+    """The regression this whole fix exists for: `export_raw`, called with
+    the run's own persisted salt (not a fresh one, as `cli.py`'s `census`
+    command now does), must reproduce the exact digest already stored in
+    `CensusRecord.coords_digest` for that record - proving the two are
+    verifiable against each other, not just that both happen to be strings.
+    """
+    from agent_perimeter.report.census_report import export_raw
+
+    items = [
+        _server_item(
+            "pkg/npm-one",
+            packages=[{"registryType": "npm", "identifier": "npm-one", "version": "1.0.0"}],
+        )
+    ]
+    downloads = {("npm", "npm-one"): 100}
+    client = httpx.Client(
+        transport=httpx.MockTransport(_handler({None: _page(items)}, downloads))
+    )
+    engine = _engine()
+    with Session(engine) as session:
+        # tier2_n=0: no artifact fetch, so feature_set_json stays {} - this
+        # test is about the digest column, not about the two-stratum
+        # classification export_raw also performs.
+        run = run_census(session, client, endpoint=REGISTRY, tier2_n=0)
+        records = (
+            session.execute(select(CensusRecord).where(CensusRecord.census_run_id == run.id))
+            .scalars()
+            .all()
+        )
+        assert run.salt is not None
+        export_raw(run, records, salt=run.salt, out=tmp_path)
+
+        body = (tmp_path / "records.csv").read_text(encoding="utf-8")
+        record = records[0]
+        assert record.coords_digest in body
+    engine.dispose()
+
+
 def test_fetch_failures_is_printed_even_when_zero() -> None:
     """B10: a number that only appears when it's bad is a number nobody trusts."""
     items = [_server_item("pkg/bare-one")]

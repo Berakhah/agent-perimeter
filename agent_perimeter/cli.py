@@ -275,11 +275,12 @@ def census(
     third-party MCP server.
     """
     import httpx
-    from sqlalchemy import create_engine
+    from sqlalchemy import create_engine, select
     from sqlalchemy.orm import Session
 
     from agent_perimeter.census.run import run_census
-    from agent_perimeter.db.models import Base
+    from agent_perimeter.db.models import Base, CensusRecord
+    from agent_perimeter.report.census_report import export_raw, render_census
 
     out.mkdir(parents=True, exist_ok=True)
 
@@ -301,3 +302,26 @@ def census(
         # shows up when it's bad is a number nobody trusts.
         typer.echo(f"Fetch failures:  {run.fetch_failures}")
         typer.echo(f"Method hash:     {run.method_hash}")
+
+        # Same "read while the session is still open" constraint as the
+        # summary lines above - records is a plain list by the time the
+        # session closes, so render_census/export_raw need no session of
+        # their own.
+        records = list(
+            session.execute(
+                select(CensusRecord).where(CensusRecord.census_run_id == run.id)
+            ).scalars()
+        )
+        html_path = out / "census.html"
+        html_path.write_text(render_census(run, records), encoding="utf-8")
+        # run.salt is the same salt run_census just used for every record's
+        # coords_digest - passing it here (not a fresh one) is what makes
+        # this export's digests verifiable against the database (final
+        # review fix wave, Important #4/#5). Nullable only for a pre-release
+        # row that predates this column (there are none); run_census always
+        # sets it on the row it creates.
+        if run.salt is None:
+            raise RuntimeError("run_census did not persist a salt for this run")
+        csv_path = export_raw(run, records, salt=run.salt, out=out)
+        typer.echo(f"Report written to {html_path}")
+        typer.echo(f"Raw data written to {csv_path}")

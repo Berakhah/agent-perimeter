@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -58,6 +59,25 @@ def create_app(*, database_url: str | None = None) -> FastAPI:
 
     app = FastAPI(title="Agent Perimeter", docs_url="/api/docs", lifespan=_lifespan)
     app.state.ap = AppState(session_factory=sessionmaker(bind=engine))
+
+    # docker-compose.yml runs `web` (:3000) and `api` (:8000) as separate
+    # origins -- every browser fetch()/EventSource call in web/src/lib/api.ts
+    # is cross-origin from the browser's point of view, and without this the
+    # browser blocks the response before the UI ever sees it. No
+    # cookies/auth exist on this API (the auth/SSRF gating gap is a disclosed,
+    # human-confirmed decision, not this middleware's job), so
+    # `allow_credentials=False` -- there is nothing to carry credentials for,
+    # and the CORS spec requires False to pair with a wildcard-shaped origin
+    # config anyway.
+    cors_env = os.environ.get("AP_CORS_ORIGINS", "http://localhost:3000")
+    origins = [o.strip() for o in cors_env.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.exception_handler(AuthorizationRequired)
     async def _refusal(request: Request, exc: AuthorizationRequired) -> JSONResponse:

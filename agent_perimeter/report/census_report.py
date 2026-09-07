@@ -173,11 +173,12 @@ def _by_derivation(records: Sequence[CensusRecord], derivation: str) -> list[Cen
 
 
 def _digest_for(record: CensusRecord, salt: bytes) -> str:
-    """A durable digest for the raw export, keyed by the export's own salt -
-    never the DB row's own `coords_digest`, which was computed with a
-    per-run salt that `census/run.py` discards immediately after collection
-    (see its `run_census`, which never persists the salt it generates) and
-    so cannot be reproduced later. Mirrors `PackageCoords.digest` / that
+    """A digest for the raw export, keyed by whatever `salt` the caller
+    passes. `agent_perimeter/cli.py`'s `census` command passes the run's own
+    persisted `CensusRun.salt` (`census/run.py::run_census` now sets it on
+    the row it creates), so the exported digest matches the DB row's own
+    `coords_digest` by construction - the two are no longer computed with
+    two different, unrelated salts. Mirrors `PackageCoords.digest` / that
     same module's `_digest_for` fallback for a record with no resolvable
     package coordinates.
     """

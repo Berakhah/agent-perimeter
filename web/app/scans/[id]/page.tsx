@@ -32,18 +32,28 @@
  * `ScanEvent[]` (`./fixtures.ts`) through `replayScanEvents`, which shares
  * `subscribeToScanEvents`'s exact `(id, onEvent, onError?) => unsubscribe`
  * signature and dispatches on a real `setTimeout` cadence -- not one
- * synchronous dump. No live backend is reachable from this project's
- * Playwright runs (no CORS/rewrite wired), so the real `subscribeToScanEvents`
- * branch below -- `onError` surfaced through `ErrorState`, `onRetry` bumping
- * `retryCount` to re-run the subscription effect -- is wired for production
- * but isn't exercised by any test here -- the same forward-reference pattern
- * `app/page.tsx`'s real `createScan` call already uses.
+ * synchronous dump. `tests/live-scan.spec.ts`'s route-mocked real-path test
+ * is the one test that exercises the real (non-fixture) branch below at
+ * all; `onError` surfaced through `ErrorState`, `onRetry` bumping
+ * `retryCount` to re-run the subscription effect, is still untested -- the
+ * same forward-reference pattern `app/page.tsx`'s real `createScan` call
+ * already uses.
+ *
+ * Terminal-summary fix (final-review fix wave, Important #2): the terminal
+ * frame alone never means "no findings" -- it only means "no more checks
+ * are running". The real (non-fixture) path fetches `getScan(id)` once the
+ * terminal frame arrives and branches on `findings_count`: zero renders the
+ * existing `EmptyState` copy unchanged, a positive count states the number
+ * and points at the findings link above (never invented reassurance), and
+ * an absent/failed count reads as "unknown", never as a false zero -- see
+ * `findingsCount`'s state comment below. None of the three fixture
+ * scenarios represents an unclean run, so fixture mode is untouched.
  */
 import { use, useEffect, useMemo, useState } from "react";
 
 import { PhaseGroup, type PhaseGroupCheck } from "@/app/components/PhaseGroup";
 import { EmptyState, ErrorState, QuotaStrip, Skeleton, type ProviderQuota } from "@/src/lib/_bok-ui";
-import { isTerminalEvent, subscribeToScanEvents, type ScanEvent, type ScanTerminalEvent } from "@/src/lib/api";
+import { getScan, isTerminalEvent, subscribeToScanEvents, type ScanEvent, type ScanTerminalEvent } from "@/src/lib/api";
 import { FIXTURES } from "./fixtures";
 
 // 29 checks at 30ms apart (~870ms) plus a 500ms pause before the terminal
@@ -118,6 +128,12 @@ export default function LiveScanPage({
   // re-opening the real EventSource after a connection error (fixture mode
   // never errors, so this is only ever touched on the real path).
   const [retryCount, setRetryCount] = useState(0);
+  // Real path only (fixture mode never sets this -- see the terminal-summary
+  // ternary below). `undefined` covers both "not fetched yet" and "fetched
+  // but the field/fetch came back empty" -- both read as "unknown", never as
+  // a false zero, the same absence-reads-as-unknown convention
+  // `ConformanceStrip`'s `revisionClaimed` handling already established.
+  const [findingsCount, setFindingsCount] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     setRows([]);
@@ -125,6 +141,7 @@ export default function LiveScanPage({
     setTerminalEvent(null);
     setModelEngaged(false);
     setConnectionError(false);
+    setFindingsCount(undefined);
 
     function handleEvent(event: ScanEvent) {
       if (isTerminalEvent(event)) {
@@ -140,6 +157,14 @@ export default function LiveScanPage({
               detail: s.detail,
             })),
           ]);
+        }
+        // Fixture replays carry no backing `getScan` to call -- the real
+        // scan's completion is the only case where the true findings count
+        // needs fetching at all.
+        if (!fixture) {
+          getScan(id)
+            .then((status) => setFindingsCount(status.findings_count))
+            .catch(() => setFindingsCount(undefined));
         }
         return;
       }
@@ -192,7 +217,11 @@ export default function LiveScanPage({
         <p role="status" aria-live="polite" className="bok-scan-progress">
           {progress ? `${progress.completed} of ${progress.total} checks complete` : "Starting scan…"}
         </p>
-      ) : (
+      ) : fixture || findingsCount === 0 ? (
+        // Fixture mode: none of the three canned scenarios represents an
+        // unclean run, so this stays the existing, verified-clean copy.
+        // Real mode: `findingsCount === 0` is the one case where "No
+        // findings" is actually true.
         <EmptyState
           title="No findings for the checks that ran"
           description={
@@ -201,6 +230,16 @@ export default function LiveScanPage({
               : `${skippedCount} check${skippedCount === 1 ? "" : "s"} skipped — see the skipped rows below for why.`
           }
         />
+      ) : typeof findingsCount === "number" ? (
+        <p data-testid="findings-summary" role="status" aria-live="polite">
+          {findingsCount} finding{findingsCount === 1 ? "" : "s"} — see the findings link above.
+        </p>
+      ) : (
+        // `getScan` hasn't resolved yet, or it failed -- absence is not the
+        // same claim as zero, so this never falls back to "No findings".
+        <p data-testid="findings-summary" role="status" aria-live="polite">
+          findings count unknown — see the findings link above to check.
+        </p>
       )}
 
       {connectionError && (
