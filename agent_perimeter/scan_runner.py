@@ -39,13 +39,14 @@ from agent_perimeter.transport.streamable_http import StreamableHttpTransport
 DEFAULT_CONTACT_URL = "https://github.com/USER/agent-perimeter"
 
 # Same DSN alembic.ini's `sqlalchemy.url` uses (migrations/env.py expands
-# ${POSTGRES_PASSWORD} the same way, at read time, since configparser/typer
-# don't do it on their own) - one Postgres instance for migrations, the CLI
-# and the API to share. Keep in sync by hand; there's no app-wide config
-# module yet for either to read from.
-DEFAULT_DATABASE_URL = (
-    "postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@localhost:5432/agent_perimeter"
-)
+# ${POSTGRES_PASSWORD}/${POSTGRES_HOST} the same way, at read time, since
+# configparser/typer don't do it on their own) - one Postgres instance for
+# migrations, the CLI and the API to share. Keep in sync by hand; there's no
+# app-wide config module yet for either to read from. ${POSTGRES_HOST}
+# defaults to `localhost` for bare-metal use (.env.example) and is set to
+# `db` by docker-compose.yml's `api` service, which is on the same Docker
+# network as the `db` service rather than the host's loopback interface.
+DEFAULT_DATABASE_URL = "postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:5432/agent_perimeter"
 
 
 class ScanMode(StrEnum):
