@@ -1,12 +1,5 @@
 services:
-  app:
-    build: .
-    environment:
-      AP_CONTACT_URL: ${AP_CONTACT_URL}
-    depends_on:
-      - postgres
-
-  postgres:
+  db:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: agent_perimeter
@@ -14,3 +7,72 @@ services:
       POSTGRES_DB: agent_perimeter
     ports:
       - "5432:5432"
+    volumes:
+      - agent_perimeter_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent_perimeter"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    entrypoint: []
+    # Runs pending migrations before serving -- `alembic` and `uvicorn` are
+    # both `pip install .` console scripts already (both are direct
+    # pyproject.toml dependencies), so no separate `uv` is needed in the
+    # image (see Dockerfile). POSTGRES_HOST=db (not the image's own
+    # ${POSTGRES_HOST} default of `localhost`, see .env.example) is what
+    # alembic.ini's sqlalchemy.url actually connects with here.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn agent_perimeter.api.app:create_app --factory --host 0.0.0.0 --port 8000"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_HOST: db
+      AP_DATABASE_URL: postgresql+psycopg://agent_perimeter:${POSTGRES_PASSWORD}@db:5432/agent_perimeter
+      AP_CONTACT_URL: ${AP_CONTACT_URL}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/api/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # The parameterised MCP fixture server (Week 1 Task 6, tests/fixtures/servers/),
+  # for demos. Talks stdio JSON-RPC over stdin/stdout -- it is not an
+  # always-on daemon, so it is not started by a bare `docker compose up`
+  # (which would otherwise see it exit immediately on empty stdin and either
+  # loop-restart or report unhealthy for no real reason). Run it explicitly:
+  #   docker compose --profile demo run --rm fixture
+  fixture:
+    build:
+      context: ./tests/fixtures/servers
+    environment:
+      AP_FIXTURE_REVISION: ${AP_FIXTURE_REVISION:-2026-07-28}
+      AP_FIXTURE_FLAW: ${AP_FIXTURE_FLAW:-none}
+    profiles: ["demo"]
+    stdin_open: true
+
+volumes:
+  agent_perimeter_db:
