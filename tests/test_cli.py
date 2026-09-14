@@ -345,3 +345,38 @@ def test_census_out_writes_the_html_report_and_raw_export(
     assert (out_dir / "records.csv").exists()
     assert f"Report written to {out_dir / 'census.html'}" in result.stdout
     assert f"Raw data written to {out_dir / 'records.csv'}" in result.stdout
+
+
+def test_census_exits_nonzero_and_writes_nothing_when_pagination_is_truncated(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A registry page that fails after every retry used to end pagination
+    silently and the run published the prefix as the population. The command
+    must now say so, exit 1, and leave no report behind for anyone to mistake
+    for a complete census."""
+    from agent_perimeter.census.fetch import PaginationTruncated
+
+    def boom(session: object, client: object, *, endpoint: str, tier2_n: int) -> object:
+        raise PaginationTruncated(3, 200, "page 3: status 502, gave up after 3 attempts")
+
+    monkeypatch.setattr("agent_perimeter.census.run.run_census", boom)
+    out_dir = tmp_path / "out"
+
+    result = runner.invoke(
+        app,
+        [
+            "census",
+            "--out",
+            str(out_dir),
+            "--database-url",
+            f"sqlite:///{tmp_path / 'census.db'}",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert not (out_dir / "census.html").exists()
+    assert not (out_dir / "records.csv").exists()
+    assert (
+        "Census aborted: registry pagination failed at page 3 after 200 entries - "
+        "page 3: status 502, gave up after 3 attempts. Nothing written."
+    ) in result.output

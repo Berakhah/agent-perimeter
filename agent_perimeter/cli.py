@@ -278,6 +278,7 @@ def census(
     from sqlalchemy import create_engine, select
     from sqlalchemy.orm import Session
 
+    from agent_perimeter.census.fetch import PaginationTruncated
     from agent_perimeter.census.run import run_census
     from agent_perimeter.db.models import Base, CensusRecord
     from agent_perimeter.report.census_report import export_raw, render_census
@@ -292,7 +293,18 @@ def census(
     Base.metadata.create_all(engine)
 
     with httpx.Client() as client, Session(engine) as session:
-        run = run_census(session, client, endpoint=endpoint, tier2_n=tier2_n)
+        try:
+            run = run_census(session, client, endpoint=endpoint, tier2_n=tier2_n)
+        except PaginationTruncated as exc:
+            # run_census never committed - the session's exit rolls its
+            # CensusRun row back - so "Nothing written" is literally true
+            # for the database as well as for --out.
+            typer.echo(
+                f"Census aborted: registry pagination failed at page {exc.page} after "
+                f"{exc.entries_seen} entries - {exc.detail}. Nothing written.",
+                err=True,
+            )
+            raise typer.Exit(code=1) from exc
         # Read while the session is still open - CensusRun's attributes are
         # expired by the commit inside run_census, and refreshing them after
         # the session closes below would raise DetachedInstanceError.

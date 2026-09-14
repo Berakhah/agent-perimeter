@@ -30,13 +30,15 @@ USER_AGENT = (
 _TIMEOUT_S = 10.0
 
 # ponytail: fixed delay before the next pypistats.org call, not a token bucket.
-# pypistats rate-limits aggressively (429 after ~2 rapid requests, confirmed
-# live 2026-09-03) and a ~200-package tier-2 pass will hit it regardless. This
-# only reduces how often that happens; a throttled entry still comes back
-# UNAVAILABLE rather than raising, so there is nothing here worth a full
-# retry/backoff system like fetch.py's paginate. Swap for a token bucket if a
+# pypistats rate-limits aggressively: the 2026-09-14 dry run saw 429 on 3 of 6
+# probes at a 0.3s interval with no retry, which ranked most PyPI entries
+# UNAVAILABLE and kept them out of tier 2 for a reason that had nothing to do
+# with their downloads. The interval is now 1.0s and a 429 is retried with the
+# backoff below; only a 429 on the final attempt is UNAVAILABLE. A throttled
+# entry still never raises out of rank(). Swap for a token bucket if a
 # published Retry-After ever demands more than a fixed wait.
-MIN_INTERVAL_S = 0.3
+MIN_INTERVAL_S = 1.0  # was 0.3; pypistats.org 429'd 3 of 6 probes at 0.3s on 2026-09-14
+PYPI_429_BACKOFF_S: tuple[float, ...] = (2.0, 5.0, 10.0)
 
 SELECTION_METHOD = (
     "The registry API itself carries no popularity, download, star, or "
@@ -65,10 +67,15 @@ class RankedEntry:
 
 def _pypi_downloads(client: httpx.Client, name: str) -> int | None:
     url = PYPI_DOWNLOADS.format(name=name)
-    try:
-        response = client.get(url, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_S)
-    except httpx.HTTPError:
-        return None
+    for attempt in range(len(PYPI_429_BACKOFF_S) + 1):
+        try:
+            response = client.get(url, headers={"User-Agent": USER_AGENT}, timeout=_TIMEOUT_S)
+        except httpx.HTTPError:
+            return None
+        if response.status_code == 429 and attempt < len(PYPI_429_BACKOFF_S):
+            time.sleep(PYPI_429_BACKOFF_S[attempt])
+            continue
+        break
     if response.status_code != 200:
         return None
     try:
@@ -112,9 +119,7 @@ def rank(client: httpx.Client, entries: list[RegistryEntry]) -> list[RankedEntry
     for entry in entries:
         coords = entry.coords
         if coords is None:
-            out.append(
-                RankedEntry(entry=entry, downloads=None, rank_source=RankSource.UNAVAILABLE)
-            )
+            out.append(RankedEntry(entry=entry, downloads=None, rank_source=RankSource.UNAVAILABLE))
             continue
 
         # Ecosystem (model/census.py) only ever has these two members today, so
