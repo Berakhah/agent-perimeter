@@ -15,3 +15,5 @@ dist/
 build/
 *.egg-info/
 .claude/settings.local.json
+graphify-out/
+vault/
