@@ -1,9 +1,19 @@
 import httpx
+import pytest
 
+from agent_perimeter.census import sample
 from agent_perimeter.census.fetch import RegistryEntry
 from agent_perimeter.census.sample import RankSource, rank, top_n
 from agent_perimeter.model.census import Ecosystem, PackageCoords
 from tests.census.factories import ranked
+
+
+@pytest.fixture(autouse=True)
+def no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """rank() paces pypistats at MIN_INTERVAL_S and backs off seconds on 429;
+    neither wait belongs in a unit test. Tests that measure the backoff
+    re-patch sleep with a recorder."""
+    monkeypatch.setattr(sample.time, "sleep", lambda _s: None)
 
 
 def test_selection_is_deterministic() -> None:
@@ -72,6 +82,48 @@ def test_a_pypistats_429_is_unavailable_not_a_crash() -> None:
     result = rank(client, [_entry("astro", Ecosystem.PYPI)])
     assert result[0].downloads is None
     assert result[0].rank_source is RankSource.UNAVAILABLE
+
+
+def _sequenced_client(responses: list[httpx.Response]) -> httpx.Client:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        i = calls["n"]
+        calls["n"] += 1
+        return responses[min(i, len(responses) - 1)]
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_pypi_429_is_retried_with_backoff_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pypistats.org 429'd 3 of 6 probes on 2026-09-14 with no retry, so most PyPI
+    entries ranked UNAVAILABLE and could never enter tier 2. A throttle is a wait,
+    not a verdict."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(sample.time, "sleep", sleeps.append)
+    client = _sequenced_client(
+        [
+            httpx.Response(429),
+            httpx.Response(429),
+            httpx.Response(200, json={"data": {"last_month": 123}, "package": "pkg"}),
+        ]
+    )
+    assert sample._pypi_downloads(client, "pkg") == 123
+    assert sleeps == list(sample.PYPI_429_BACKOFF_S[:2])
+
+
+def test_pypi_429_on_every_attempt_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr(sample.time, "sleep", sleeps.append)
+    client = _sequenced_client([httpx.Response(429)] * (1 + len(sample.PYPI_429_BACKOFF_S)))
+    assert sample._pypi_downloads(client, "pkg") is None
+    # Every backoff step was used and no sleep follows the final refusal.
+    assert sleeps == list(sample.PYPI_429_BACKOFF_S)
+
+
+def test_pypi_interval_and_backoff_are_the_2026_09_14_values() -> None:
+    assert sample.MIN_INTERVAL_S == 1.0
+    assert sample.PYPI_429_BACKOFF_S == (2.0, 5.0, 10.0)
 
 
 def test_an_npm_response_with_no_downloads_key_is_unavailable() -> None:

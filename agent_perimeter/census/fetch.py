@@ -36,6 +36,17 @@ PAGE_LIMIT = 100
 MIN_INTERVAL_S = 0.5
 
 
+class PaginationTruncated(RuntimeError):
+    """A page failed after every retry. The entries read so far are a prefix of
+    the population, not the population - never report them as one."""
+
+    def __init__(self, page: int, entries_seen: int, detail: str) -> None:
+        super().__init__(f"page {page}: {detail} (after {entries_seen} entries)")
+        self.page = page
+        self.entries_seen = entries_seen
+        self.detail = detail
+
+
 @dataclass(slots=True)
 class Outcome:
     status: FetchStatus
@@ -168,48 +179,68 @@ def _get_page(
     log: FetchLog,
     page: int,
     max_retries: int,
-) -> dict[str, object] | None:
+) -> tuple[dict[str, object] | None, str | None]:
+    """Return (body, None) on success or (None, detail) after recording the failure.
+
+    The detail travels back explicitly so paginate can raise with it rather than
+    reading the log's tail and hoping this function recorded exactly one line.
+    """
     headers = {"User-Agent": USER_AGENT}
+
+    def _fail(status: FetchStatus, detail: str) -> tuple[None, str]:
+        log.record(status, detail)
+        return None, detail
+
     for attempt in range(max_retries):
         try:
             response = client.get(endpoint, params=params, headers=headers, timeout=10.0)
         except httpx.TimeoutException:
             if attempt + 1 >= max_retries:
-                log.record(
+                return _fail(
                     FetchStatus.TIMEOUT,
                     f"page {page}: timed out, gave up after {max_retries} attempts",
                 )
-                return None
+            time.sleep(MIN_INTERVAL_S * 2**attempt)
             continue
 
         if response.status_code == 429:
             if attempt + 1 >= max_retries:
-                log.record(
+                return _fail(
                     FetchStatus.THROTTLED,
                     f"page {page}: throttled, gave up after {max_retries} attempts",
                 )
-                return None
             time.sleep(_retry_after_seconds(response.headers.get("Retry-After")))
             continue
 
+        if response.status_code >= 500:
+            # Transient on the registry's side; treated like a timeout. A 5xx
+            # on page 3 of 40 used to end pagination silently and the prefix
+            # was recorded as the population - see PaginationTruncated.
+            if attempt + 1 >= max_retries:
+                return _fail(
+                    FetchStatus.PARSE_ERROR,
+                    f"page {page}: status {response.status_code}, "
+                    f"gave up after {max_retries} attempts",
+                )
+            time.sleep(MIN_INTERVAL_S * 2**attempt)
+            continue
+
         if response.status_code != 200:
-            log.record(
+            return _fail(
                 FetchStatus.PARSE_ERROR, f"page {page}: unexpected status {response.status_code}"
             )
-            return None
 
         try:
             body = response.json()
         except ValueError:
-            log.record(FetchStatus.PARSE_ERROR, f"page {page}: response body was not valid JSON")
-            return None
+            return _fail(FetchStatus.PARSE_ERROR, f"page {page}: response body was not valid JSON")
         if not isinstance(body, dict):
-            log.record(FetchStatus.PARSE_ERROR, f"page {page}: response body was not a JSON object")
-            return None
-        return body
+            return _fail(
+                FetchStatus.PARSE_ERROR, f"page {page}: response body was not a JSON object"
+            )
+        return body, None
 
-    log.record(FetchStatus.TIMEOUT, f"page {page}: gave up after {max_retries} attempts")
-    return None
+    return _fail(FetchStatus.TIMEOUT, f"page {page}: gave up after {max_retries} attempts")
 
 
 def paginate(
@@ -227,9 +258,12 @@ def paginate(
         params: dict[str, str | int] = {"limit": PAGE_LIMIT, "version": "latest"}
         if cursor:
             params["cursor"] = cursor
-        body = _get_page(client, endpoint, params, log, page, max_retries)
+        body, failure = _get_page(client, endpoint, params, log, page, max_retries)
         if body is None:
-            return
+            # Returning here would hand the caller a prefix that looks exactly
+            # like a complete population. Raise instead; nothing downstream
+            # may count, rank or publish a truncated read.
+            raise PaginationTruncated(page, len(seen_names), failure or f"page {page} failed")
 
         raw_servers = body.get("servers")
         items = raw_servers if isinstance(raw_servers, list) else []
@@ -251,12 +285,12 @@ def paginate(
                 # cursor read (metadata key renamed, envelope reshaped) than a
                 # registry that happens to hold exactly PAGE_LIMIT entries. Do
                 # not report this population as complete - report it as a bug.
-                log.record(
-                    FetchStatus.PARSE_ERROR,
+                detail = (
                     f"page 1 returned {len(items)} entries (== limit) with no nextCursor "
-                    "- treating as a suspected pagination bug, not an exhausted population",
+                    "- treating as a suspected pagination bug, not an exhausted population"
                 )
-                return
+                log.record(FetchStatus.PARSE_ERROR, detail)
+                raise PaginationTruncated(1, len(seen_names), detail)
             log.record(FetchStatus.OK, f"exhausted after {page} pages")
             return
         time.sleep(MIN_INTERVAL_S)
