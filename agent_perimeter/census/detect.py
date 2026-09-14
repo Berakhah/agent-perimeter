@@ -38,15 +38,15 @@ ARTIFACT_CONFIDENCE = 0.6
 # floor, source evidence is discarded: a package cannot serve what its pinned
 # dependency cannot express.
 #
-# PLACEHOLDER, NOT VERIFIED. This task ran without access to the real MCP SDK
-# changelogs, so these version numbers are illustrative stand-ins, not
-# confirmed facts - see docs/methodology.md "## SDK version floors" for the
-# explicit TBD markers. Every artifact-derived feature this module reports
-# moves if these are wrong, so verify against the real changelogs and update
-# both this dict and that table together before any number derived from it is
-# published. PARAM_HEADERS deliberately has no entry: it is a JSON Schema
-# annotation convention, not an API the SDK itself gates by version, so
-# source evidence for it stands on its own (see SOURCE_SIGNALS below).
+# Verified 2026-09-09 against the real MCP SDK release history - see
+# docs/methodology.md "## SDK version floors" for release dates and
+# changelog URLs. Both ecosystems ship all four gated features together in
+# their first 2.0.0 release: server/discover, resultType, CacheableResult,
+# and MRTR are wire-level parts of the same 2026-07-28 protocol revision, not
+# features an SDK adopts piecemeal. PARAM_HEADERS deliberately has no entry:
+# it is a JSON Schema annotation convention, not an API the SDK itself gates
+# by version, so source evidence for it stands on its own (see
+# SOURCE_SIGNALS below).
 SDK_FLOOR: dict[Feature, dict[Ecosystem, str]] = {
     Feature.SERVER_DISCOVER: {Ecosystem.PYPI: "2.0.0", Ecosystem.NPM: "2.0.0"},
     Feature.RESULT_TYPE: {Ecosystem.PYPI: "2.0.0", Ecosystem.NPM: "2.0.0"},
@@ -66,7 +66,19 @@ SOURCE_SIGNALS: dict[Feature, re.Pattern[str]] = {
 }
 
 _PY_SDK_NAMES = {"mcp", "modelcontextprotocol"}
-_JS_SDK_NAMES = {"@modelcontextprotocol/sdk"}
+# @modelcontextprotocol/sdk is the v1 monolithic package - frozen at 1.30.0,
+# it never shipped a 2.x release (checked against the npm registry
+# 2026-09-09). v2 split the SDK into packages that version together; a
+# server implementation depends on @modelcontextprotocol/server, and some
+# pin @modelcontextprotocol/core (its shared-schema dependency) directly.
+# Recognising both v1 and v2 names is what lets _apply_sdk_floor gate a
+# v1-pinned package correctly instead of treating an unrecognised package
+# name as "no pin, cannot rule out".
+_JS_SDK_NAMES = {
+    "@modelcontextprotocol/sdk",
+    "@modelcontextprotocol/server",
+    "@modelcontextprotocol/core",
+}
 
 _PY_SUFFIXES = {".py"}
 _JS_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"}
