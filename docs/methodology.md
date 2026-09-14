@@ -32,7 +32,7 @@ window, method hash, fetch failures and every limitation, and
 `docs/census/2026-09-14/` for the report, `records.csv` and
 `records.summary.json`. The figures in this section (the ~70% remote-only
 estimate, the "4,000+" population) are the 2026-09-03 pre-run observations;
-the dated entry carries the measured values (31,939 entries, 56% remote-only).
+the dated entry carries the measured values (31,953 entries, 56% remote-only).
 Tier 2 is a seeded uniform random sample of up to *n* packaged entries per
 ecosystem, not a download ranking.
 
