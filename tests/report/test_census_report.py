@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from agent_perimeter.db.models import CensusRecord
 from agent_perimeter.report.census_report import (
     TERM_DEFINITIONS,
+    Aggregate,
     aggregate,
     export_raw,
     render_census,
@@ -336,7 +337,9 @@ def test_report_and_summary_carry_the_population_distribution(tmp_path) -> None:
     assert 'data-testid="distribution-package_pypi">2<' in html
     assert 'data-testid="distribution-package_other">1<' in html
     assert 'data-testid="distribution-none">1<' in html
-    assert "packaged registry entries" in html
+    # Scope sentence names the npm+PyPI frame (final-review item 3), not "packaged".
+    assert "npm or PyPI package coordinates" in html
+    assert 'data-testid="eligible-count">4<' in html  # 2 npm + 2 pypi, package_other excluded
 
     export_raw(run, records, salt=b"test-salt", out=tmp_path)
     summary = json.loads((tmp_path / "records.summary.json").read_text(encoding="utf-8"))
@@ -451,6 +454,19 @@ def test_detection_limitations_are_stated_with_counts(tmp_path) -> None:  # type
             sdk_version="2.0.0",
             features=["server_discover"],
         ),
+        # Handler string but no pin at all: reported unknown (final-review
+        # item 2), so it is not a does-not-support under-count and must not
+        # be counted as a floor-dropped signal.
+        _record(
+            rid,
+            name="g",
+            ecosystem="pypi",
+            distribution="package_pypi",
+            sdk_version=None,
+            is_unknown=True,
+            caveat="source mentions server_discover but the artifact pins no SDK; a feature "
+            "cannot be asserted without a pin at or above its floor",
+        ),
     ]
     html = render_census(run, records)
     assert 'data-testid="pinned-without-handler-npm">1<' in html
@@ -472,3 +488,65 @@ def test_shares_render_to_one_decimal() -> None:
     run, records = census_fixture(supports=1, does_not_support=2, unknown=0)
     html = render_census(run, records)
     assert "50.0%" in html and "0.0%" in html and "33.3%" in html
+
+
+# --- Final review: the scope sentence counts npm+PyPI only, and every share
+# --- carries a Wilson 95% interval.
+
+
+def test_scope_sentence_counts_only_npm_and_pypi_as_eligible() -> None:
+    """`package_other` is not modelled, so it cannot be inside the frame Tier 2
+    samples from. The count in the scope sentence must exclude it."""
+    run, records = census_fixture(supports=2, does_not_support=1, unknown=1)
+    rid = run.id
+    assert rid is not None
+    records += [
+        _record(
+            rid,
+            name=f"oci-{i}",
+            ecosystem=None,
+            distribution="package_other",
+            fetch_status="not_attempted",
+            derivation=None,
+        )
+        for i in range(3)
+    ]
+    html = render_census(run, records)
+    assert 'data-testid="eligible-count">4<' in html
+    assert 'data-testid="package-other-count">3<' in html
+    assert "not eligible" in html
+
+
+def test_wilson_interval_matches_the_published_formula() -> None:
+    """Standard Wilson score interval, z = 1.959964. For 3 of 176 the
+    textbook value is (0.0058, 0.0489); the review note's 0.0036 lower bound
+    does not come from the Wilson formula at this n."""
+    agg = Aggregate(supports=3, does_not_support=173, unknown=0)
+    ci = agg.wilson95
+    assert ci is not None
+    lo, hi = ci
+    assert abs(lo - 0.0058) < 1e-3
+    assert abs(hi - 0.0489) < 1e-3
+    assert Aggregate(supports=0, does_not_support=0, unknown=5).wilson95 is None
+    # Bounds never leave [0, 1]; a zero count still gets a positive upper bound.
+    zero = Aggregate(supports=0, does_not_support=10, unknown=0).wilson95
+    assert zero is not None and zero[0] == 0.0 and 0.0 < zero[1] < 0.35
+
+
+def test_shares_render_with_a_wilson_interval_and_the_summary_carries_it(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import json
+
+    # npm: idx0 supports, idx2 dns -> 1 of 2; pypi: idx1 dns -> 0 of 1; pooled 1 of 3.
+    run, records = census_fixture(supports=1, does_not_support=2, unknown=0)
+    html = render_census(run, records)
+    assert "50.0% (95% CI 9.5–90.5%)" in html
+    assert "33.3% (95% CI 6.1–79.2%)" in html
+
+    export_raw(run, records, salt=b"test-salt", out=tmp_path)
+    summary = json.loads((tmp_path / "records.summary.json").read_text(encoding="utf-8"))
+    npm = summary["artifact"]["by_ecosystem"]["npm"]
+    assert npm["share"] == 0.5
+    assert abs(npm["wilson95"][0] - 0.0945) < 1e-3
+    assert abs(npm["wilson95"][1] - 0.9055) < 1e-3
+    assert summary["artifact"]["pooled"]["wilson95"] is not None
+    assert summary["live_discover"] is None

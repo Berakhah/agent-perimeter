@@ -59,7 +59,7 @@ def _zip_of(
             zf.writestr(member_name, data)
         for member_name, target in (symlinks or {}).items():
             info = zipfile.ZipInfo(member_name)
-            info.external_attr = (0o120777 << 16)  # S_IFLNK
+            info.external_attr = 0o120777 << 16  # S_IFLNK
             zf.writestr(info, target)
     return path
 

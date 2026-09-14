@@ -82,9 +82,7 @@ def _recompute(csv_path: Path) -> dict[str, Any]:
             "pooled": _agg(artifact_total),
         },
         "live_discover": (
-            {"n_sampled": sum(probe_total.values()), **_agg(probe_total)}
-            if probe_total
-            else None
+            {"n_sampled": sum(probe_total.values()), **_agg(probe_total)} if probe_total else None
         ),
     }
 

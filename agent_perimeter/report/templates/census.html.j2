@@ -16,14 +16,15 @@ npm: of {{ by_ecosystem.npm.n_examined }} packages examined,
 {{ by_ecosystem.npm.aggregate.supports }} of {{ by_ecosystem.npm.aggregate.n }} show
 published-artifact evidence of support for <span class="mono">{{ revision }}</span>
 ({{ by_ecosystem.npm.aggregate.does_not_support }} show no such evidence,
-{{ by_ecosystem.npm.aggregate.unknown }} unknown).
+{{ by_ecosystem.npm.aggregate.unknown }} unknown) — {{ share_ci(by_ecosystem.npm.aggregate) }}.
 PyPI: of {{ by_ecosystem.pypi.n_examined }} packages examined,
 {{ by_ecosystem.pypi.aggregate.supports }} of {{ by_ecosystem.pypi.aggregate.n }} show such
 evidence ({{ by_ecosystem.pypi.aggregate.does_not_support }} show no such evidence,
-{{ by_ecosystem.pypi.aggregate.unknown }} unknown).
+{{ by_ecosystem.pypi.aggregate.unknown }} unknown) — {{ share_ci(by_ecosystem.pypi.aggregate) }}.
 <em>Pooled across both ecosystems, for reference only</em> — the registry's npm:PyPI split
 means this figure does not describe either ecosystem: of {{ artifact_n_examined }} examined,
-{{ artifact_agg.supports }} of {{ artifact_agg.n }} ({{ artifact_agg.unknown }} unknown).</p>
+{{ artifact_agg.supports }} of {{ artifact_agg.n }} ({{ artifact_agg.unknown }} unknown) —
+{{ share_ci(artifact_agg) }}.</p>
 
 {% if probe_agg is none %}
 <p><strong>Live-discover stratum.</strong> Tier 3 remote-stratum sample: not yet run. This
@@ -57,12 +58,15 @@ combined with the other, and neither stands in for "the MCP ecosystem" as a whol
 <tr><td class="mono">{{ name }}</td><td class="num" data-testid="distribution-{{ name }}">{{ count }}</td></tr>
 {% endfor %}
 </table>
-<p class="deriv"><strong>Scope.</strong> Tier 2 samples only from the {{ packaged_count }}
-packaged registry entries (<span class="mono">package_npm</span> and
-<span class="mono">package_pypi</span> are fetchable; <span class="mono">package_other</span>
-ecosystems are not modelled). The {{ remote_only_count }} remote-only entries carry no
-fetchable artifact and are unexamined by construction — every artifact-stratum figure below
-is a statement about packaged entries, never about the population as a whole.</p>
+<p class="deriv"><strong>Scope.</strong> Tier 2 samples only from the
+<span data-testid="eligible-count">{{ eligible_count }}</span> registry entries
+with npm or PyPI package coordinates (<span class="mono">package_npm</span> and
+<span class="mono">package_pypi</span> are fetchable). The
+<span data-testid="package-other-count">{{ package_other_count }}</span>
+<span class="mono">package_other</span> entries name an ecosystem this census does not model
+and are not eligible. The {{ remote_only_count }} remote-only entries carry no fetchable
+artifact and are unexamined by construction — every artifact-stratum figure below is a
+statement about npm and PyPI packaged entries, never about the population as a whole.</p>
 
 <h3>Fetch failures</h3>
 <p data-testid="fetch-failures">Fetch failures: {{ run.fetch_failures }}
@@ -104,7 +108,7 @@ and is listed here as part of the sample, never as an unknown.</p>
   <td class="num">{{ row.aggregate.supports }}</td>
   <td class="num">{{ row.aggregate.does_not_support }}</td>
   <td class="num">{{ row.aggregate.unknown }} unknown</td>
-  <td class="num">{{ "n/a" if row.aggregate.share is none else "%.1f%%"|format(row.aggregate.share * 100) }}</td>
+  <td class="num">{{ share_ci(row.aggregate) }}</td>
 </tr>
 {% endfor %}
 <tr>
@@ -114,9 +118,12 @@ and is listed here as part of the sample, never as an unknown.</p>
   <td class="num">{{ artifact_agg.supports }}</td>
   <td class="num">{{ artifact_agg.does_not_support }}</td>
   <td class="num">{{ artifact_agg.unknown }} unknown</td>
-  <td class="num">{{ "n/a" if artifact_agg.share is none else "%.1f%%"|format(artifact_agg.share * 100) }}</td>
+  <td class="num">{{ share_ci(artifact_agg) }}</td>
 </tr>
 </table>
+<p class="deriv">Share is supports over n (unknowns excluded), with a Wilson score 95%
+confidence interval — a statement about the seeded random sample's precision within its
+ecosystem, not about deployments.</p>
 <p class="deriv">Tier-2 target n is per ecosystem, not pooled: up to
 <span data-testid="tier2-n">{{ run.tier2_n }}</span> npm packages and up to {{ run.tier2_n }}
 PyPI packages are independently drawn at random (seed {{ run.sample_seed }}) within each

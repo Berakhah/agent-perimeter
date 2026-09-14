@@ -1,14 +1,21 @@
+import io
 import json
+import shutil
+import tarfile
 from pathlib import Path
+
+import httpx
+import pytest
 
 from agent_perimeter._contracts import Derivation
 from agent_perimeter.census import detect
+from agent_perimeter.census.artifacts import fetch_artifact
 from agent_perimeter.census.detect import (
     ARTIFACT_CONFIDENCE,
     detect_features,
     detect_sdk_pin,
 )
-from agent_perimeter.model.census import Ecosystem
+from agent_perimeter.model.census import Ecosystem, FetchStatus, PackageCoords
 from agent_perimeter.model.feature import Feature
 from agent_perimeter.transport.revision import LIVE_PROBE_CONFIDENCE
 
@@ -152,3 +159,167 @@ def test_ecosystem_is_detected_under_the_package_directory(tmp_path: Path) -> No
     (tmp_path / "package").mkdir()
     (tmp_path / "package" / "package.json").write_text("{}", encoding="utf-8")
     assert detect._ecosystem_of(tmp_path) is Ecosystem.NPM
+
+
+# --- Final review: the pin is the lowest lower bound, never a cap. `packaging`
+# normalises specifier sets so `>=1.9.0,<2.0.0` serialises as `<2.0.0,>=1.9.0`,
+# and setuptools writes Requires-Dist that way; the first version-looking
+# token is then the cap, which is how run #2 recorded a "3.x" Python SDK pin
+# that has never been released.
+
+
+@pytest.mark.parametrize(
+    ("requirement", "expected"),
+    [
+        ("mcp<2.0.0,>=1.9.0", "1.9.0"),
+        ("mcp (>=1.2.0,<2.0.0)", "1.2.0"),
+        ('mcp[cli]>=1.2; python_version >= "3.10"', "1.2"),
+        ("mcp<3", None),
+        ("mcp~=1.4", "1.4"),
+        ("mcp==2.0.1", "2.0.1"),
+        ("MCP >= 1.0", "1.0"),
+        ("mcp>=1.9.0,>=1.2.0", "1.2.0"),
+        ("httpx>=1.0", None),
+        ("mcp >= not-a-version", None),
+    ],
+)
+def test_python_requirement_pin_is_the_lowest_lower_bound(
+    requirement: str, expected: str | None
+) -> None:
+    assert detect._pin_from_requirement(requirement, detect._PY_SDK_NAMES) == expected
+
+
+@pytest.mark.parametrize(
+    ("spec", "expected"),
+    [
+        (">=1.0.0 <2.0.0", "1.0.0"),
+        ("^1.12.0", "1.12.0"),
+        ("~2.0.0", "2.0.0"),
+        ("1.30.0", "1.30.0"),
+        ("<2.0.0", None),
+        ("<=2.0.0", None),
+        (">=2.1.0 <3.0.0 || >=1.0.0 <2.0.0", "1.0.0"),
+    ],
+)
+def test_npm_range_pin_is_the_lowest_lower_bound(
+    tmp_path: Path, spec: str, expected: str | None
+) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps({"dependencies": {"@modelcontextprotocol/sdk": spec}}), encoding="utf-8"
+    )
+    assert detect.detect_sdk_pin(tmp_path) == expected
+
+
+def test_a_normalised_pkg_info_requires_dist_records_the_floor_not_the_cap(
+    tmp_path: Path,
+) -> None:
+    d = tmp_path / "x-1.0"
+    d.mkdir()
+    (d / "PKG-INFO").write_text("Name: x\nRequires-Dist: mcp<2.0.0,>=1.9.0\n", encoding="utf-8")
+    assert detect.detect_sdk_pin(tmp_path) == "1.9.0"
+
+
+# --- Final review: the two-signals rule is literal. A handler string in
+# source without an SDK pin cannot be "supports" - the report says a pin at
+# or above the floor AND the handler string are both required.
+
+
+def test_source_signal_without_any_sdk_pin_is_unknown_not_supports(tmp_path: Path) -> None:
+    (tmp_path / "server.py").write_text('HANDLERS = {"server/discover": None}\n', encoding="utf-8")
+    fp = detect_features(tmp_path)
+    assert fp.sdk_version is None
+    assert Feature.SERVER_DISCOVER not in fp.features
+    assert fp.is_unknown
+    assert "server_discover" in (fp.claim.caveat or "")
+    assert "pins no SDK" in (fp.claim.caveat or "")
+
+
+def test_a_floorless_feature_survives_without_a_pin(tmp_path: Path) -> None:
+    """PARAM_HEADERS has no SDK_FLOOR entry (a schema annotation convention,
+    not an SDK API), so its source evidence stands on its own."""
+    (tmp_path / "server.py").write_text(
+        'SCHEMA = {"x-mcp-header": True, "server/discover": 1}\n', encoding="utf-8"
+    )
+    fp = detect_features(tmp_path)
+    assert fp.features == frozenset({Feature.PARAM_HEADERS})
+    assert not fp.is_unknown
+    assert "server_discover" in (fp.claim.caveat or "")
+
+
+# --- Final review: fetch -> detect end to end, through the real manifest
+# layouts (npm `package/`, PyPI `<name>-<version>/`). Run #1 misclassified
+# 94% of artifacts because no test crossed this seam.
+
+
+def _tar_bytes(tmp_path: Path, files: dict[str, bytes]) -> bytes:
+    path = tmp_path / "archive.tar.gz"
+    with tarfile.open(path, mode="w:gz") as tf:
+        for member_name, data in files.items():
+            info = tarfile.TarInfo(member_name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return path.read_bytes()
+
+
+def _routed_client(routes: dict[str, httpx.Response]) -> httpx.Client:
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = routes.get(str(request.url))
+        if response is None:
+            raise AssertionError(f"unexpected request: {request.url}")
+        return response
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_fetched_npm_tarball_yields_the_pin_under_package_dir(tmp_path: Path) -> None:
+    manifest = json.dumps({"dependencies": {"@modelcontextprotocol/sdk": "^1.12.0"}}).encode()
+    tar = _tar_bytes(tmp_path, {"package/package.json": manifest, "package/index.js": b"//\n"})
+    meta_url = "https://registry.npmjs.org/widget"
+    tarball_url = "https://registry.npmjs.org/widget/-/widget-2.0.0.tgz"
+    client = _routed_client(
+        {
+            meta_url: httpx.Response(
+                200,
+                json={
+                    "dist-tags": {"latest": "2.0.0"},
+                    "versions": {"2.0.0": {"dist": {"tarball": tarball_url}}},
+                },
+            ),
+            tarball_url: httpx.Response(200, content=tar),
+        }
+    )
+    result = fetch_artifact(client, PackageCoords(ecosystem=Ecosystem.NPM, name="widget"))
+    assert result.status is FetchStatus.OK
+    assert result.root is not None
+    try:
+        assert detect_features(result.root).sdk_version == "1.12.0"
+    finally:
+        shutil.rmtree(result.root, ignore_errors=True)
+
+
+def test_fetched_pypi_sdist_yields_the_lower_bound_from_pkg_info(tmp_path: Path) -> None:
+    pkg_info = b"Name: x\nVersion: 1.0\nRequires-Dist: mcp<2.0.0,>=1.9.0\n"
+    tar = _tar_bytes(tmp_path, {"x-1.0/PKG-INFO": pkg_info, "x-1.0/x.py": b"# not run\n"})
+    meta_url = "https://pypi.org/pypi/x/json"
+    sdist_url = "https://files.pythonhosted.org/packages/x-1.0.tar.gz"
+    client = _routed_client(
+        {
+            meta_url: httpx.Response(
+                200,
+                json={
+                    "info": {"version": "1.0"},
+                    "releases": {
+                        "1.0": [{"packagetype": "sdist", "url": sdist_url, "filename": "x.tar.gz"}]
+                    },
+                },
+            ),
+            sdist_url: httpx.Response(200, content=tar),
+        }
+    )
+    result = fetch_artifact(client, PackageCoords(ecosystem=Ecosystem.PYPI, name="x"))
+    assert result.status is FetchStatus.OK
+    assert result.root is not None
+    try:
+        assert detect_features(result.root).sdk_version == "1.9.0"
+    finally:
+        shutil.rmtree(result.root, ignore_errors=True)

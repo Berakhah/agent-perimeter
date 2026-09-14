@@ -17,8 +17,13 @@ from agent_perimeter.model.census import Ecosystem, FetchStatus, PackageCoords
 from agent_perimeter.model.feature import Feature
 
 
-def _entry(registry_id: str, *, remotes: tuple[str, ...] = (), coords: PackageCoords | None = None,
-           has_unmodeled_package: bool = False) -> RegistryEntry:
+def _entry(
+    registry_id: str,
+    *,
+    remotes: tuple[str, ...] = (),
+    coords: PackageCoords | None = None,
+    has_unmodeled_package: bool = False,
+) -> RegistryEntry:
     return RegistryEntry(
         registry_id=registry_id,
         name=registry_id,
@@ -93,8 +98,11 @@ def test_tier3_reuses_fetchs_user_agent_rather_than_duplicating_one() -> None:
 
 def test_remote_only_stratum_excludes_entries_with_a_package_or_unmodeled_package() -> None:
     entries = [
-        _entry("has-coords", remotes=("https://x.example.invalid/mcp",),
-               coords=PackageCoords(ecosystem=Ecosystem.PYPI, name="x")),
+        _entry(
+            "has-coords",
+            remotes=("https://x.example.invalid/mcp",),
+            coords=PackageCoords(ecosystem=Ecosystem.PYPI, name="x"),
+        ),
         _entry(
             "has-unmodeled", remotes=("https://y.example.invalid/mcp",), has_unmodeled_package=True
         ),
@@ -277,9 +285,11 @@ def test_rate_limit_is_not_applied_when_no_request_was_made(
     monkeypatch.setattr(tier3.time, "sleep", lambda s: calls.append(s))
 
     entry = _entry("srv/a", remotes=("https://a.example.invalid/mcp",))
-    client = httpx.Client(transport=httpx.MockTransport(lambda r: (_ for _ in ()).throw(
-        AssertionError("no request expected")
-    )))
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda r: (_ for _ in ()).throw(AssertionError("no request expected"))
+        )
+    )
     tier3.probe_host(client, entry, opt_out_hosts=frozenset({"a.example.invalid"}))
     assert calls == []
 

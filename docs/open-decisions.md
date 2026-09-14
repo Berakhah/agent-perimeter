@@ -57,6 +57,28 @@ already what `agent_perimeter/census/sample.py`/`run.py` do end to end. Not
 attempting to match Trend Micro's 19,000-server, multi-directory sweep — see
 decision 1.
 
+*Addendum, 2026-09-14 (human-partner decision).* Tier 1 remains a full
+census. Tier 2 changed from top-N-by-downloads to a seeded uniform random
+sample of up to n npm+PyPI packaged entries per ecosystem
+(`census/sample.py`): ranking all 12,243 npm+PyPI entries via
+pypistats.org / api.npmjs.org took hours and pypistats throttled most calls,
+so the download-ranked frame was never actually attainable inside a
+collection window. The seed is recorded on the `CensusRun` row and
+published in the report and in `records.summary.json`. This trades the
+popularity-weighted frame for an unbiased estimate of the ecosystem share
+with a statable confidence interval (Wilson 95%, rendered next to each
+share). The objection in the original text above was to *unrecorded*
+selection — a choice made after seeing the data that a reader cannot
+reproduce — and a published seed answers it: anyone can redraw the same
+sample from the same population snapshot. Run #2 (2026-09-14) is
+superseded for a second reason unrelated to sampling: its SDK-pin detector
+took the first version token of a requirement, which for setuptools'
+normalised `Requires-Dist: mcp<2.0.0,>=1.9.0` is the *cap*, so it recorded
+"3.x" Python SDK pins that do not exist. The detector now records the lowest
+lower bound and drops floor-gated source signals when there is no pin at
+all; the method hash changed accordingly and run #3 carries the corrected
+figures.
+
 **6. Publish own false-positive rate? — Answered: yes.**
 `docs/methodology.md`'s precision/recall table is live, CI-regenerated, and
 non-optional per its own text ("If this table is stale, CI is broken"). No
