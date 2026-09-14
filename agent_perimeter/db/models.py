@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -177,6 +178,10 @@ class CensusRun(Base):
     # this is pre-release data with no backfill story, not because a salt is
     # ever optional for a run going forward.
     salt: Mapped[bytes | None] = mapped_column(nullable=True)
+    # Tier-2 sample seed (`census/sample.py::select`): the same population and
+    # seed reproduce the same draw, so the seed is part of the published
+    # method. Nullable for the same pre-release reason as `salt`.
+    sample_seed: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class CensusRecord(Base):

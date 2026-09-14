@@ -268,6 +268,10 @@ def census(
         str,
         typer.Option(help="SQLAlchemy DSN. Defaults to this project's Postgres (see alembic.ini)."),
     ] = DEFAULT_DATABASE_URL,
+    seed: Annotated[
+        int | None,
+        typer.Option(help="Tier-2 sample seed; generated and printed when omitted."),
+    ] = None,
 ) -> None:
     """Collect a passive census of the public MCP registry.
 
@@ -292,9 +296,18 @@ def census(
     engine = create_engine(os.path.expandvars(database_url))
     Base.metadata.create_all(engine)
 
-    with httpx.Client() as client, Session(engine) as session:
+    # Progress goes to stderr so stdout stays the parseable summary; the
+    # timeout bounds every registry page and artifact download individually.
+    with httpx.Client(timeout=30.0) as client, Session(engine) as session:
         try:
-            run = run_census(session, client, endpoint=endpoint, tier2_n=tier2_n)
+            run = run_census(
+                session,
+                client,
+                endpoint=endpoint,
+                tier2_n=tier2_n,
+                seed=seed,
+                progress=lambda m: typer.echo(m, err=True),
+            )
         except PaginationTruncated as exc:
             # run_census never committed - the session's exit rolls its
             # CensusRun row back - so "Nothing written" is literally true
@@ -310,6 +323,7 @@ def census(
         # the session closes below would raise DetachedInstanceError.
         typer.echo(f"Population size: {run.population_size}")
         typer.echo(f"Tier-2 n:        {run.tier2_n}")
+        typer.echo(f"Sample seed:     {run.sample_seed}")
         # Printed unconditionally, zero included - B10: a number that only
         # shows up when it's bad is a number nobody trusts.
         typer.echo(f"Fetch failures:  {run.fetch_failures}")

@@ -1,9 +1,9 @@
 """Tests for census orchestration: method_hash, run_census, temp-dir cleanup,
 and distribution-column population.
 
-Registry pagination and tier-2 ranking go through a single httpx.MockTransport
-dispatched by host, mirroring the real hosts fetch.py/sample.py talk to.
-`artifacts.fetch_artifact` is monkeypatched to isolate orchestration
+Registry pagination goes through an httpx.MockTransport dispatched by host,
+mirroring the one host fetch.py talks to; tier-2 selection (sample.py) makes no
+network call at all. `artifacts.fetch_artifact` is monkeypatched to isolate orchestration
 (the cleanup guarantee, fetch_status/failure bookkeeping, distribution) from
 archive-download/extraction mechanics already covered by test_artifacts.py;
 `detect.detect_features` runs for real against a small on-disk tree so the
@@ -50,10 +50,10 @@ def _page(items: list[dict[str, object]], *, next_cursor: str | None = None) -> 
 
 def _handler(
     pages: dict[str | None, dict[str, object]],
-    downloads: dict[tuple[str, str], int],
 ) -> Callable[[httpx.Request], httpx.Response]:
-    """Dispatch by host: registry pagination (keyed by cursor) and the two
-    download-count endpoints rank() calls for every entry with coords."""
+    """Registry pagination keyed by cursor. Any other host is a test failure:
+    the only network the orchestrator may touch here is the registry itself
+    (artifact fetches are monkeypatched, and selection needs no network)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
@@ -63,18 +63,6 @@ def _handler(
             if page is None:
                 return httpx.Response(500)
             return httpx.Response(200, json=page)
-        if host == "pypistats.org":
-            name = request.url.path.split("/")[3]
-            count = downloads.get(("pypi", name))
-            if count is None:
-                return httpx.Response(404)
-            return httpx.Response(200, json={"data": {"last_month": count}})
-        if host == "api.npmjs.org":
-            name = request.url.path.rsplit("/", 1)[-1]
-            count = downloads.get(("npm", name))
-            if count is None:
-                return httpx.Response(404)
-            return httpx.Response(200, json={"downloads": count})
         raise AssertionError(f"unexpected host in test: {host}")
 
     return handler
@@ -102,7 +90,7 @@ def test_method_hash_is_a_stable_hex_string() -> None:
 
 def test_run_census_persists_a_run_with_the_right_summary_fields() -> None:
     items = [_server_item("pkg/bare-one")]
-    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)}, {})))
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)})))
     engine = _engine()
     with Session(engine) as session:
         run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
@@ -126,7 +114,7 @@ def test_run_census_persists_a_run_with_the_right_summary_fields() -> None:
 def test_run_census_paginates_across_multiple_pages() -> None:
     page1 = _page([_server_item("pkg/one")], next_cursor="c2")
     page2 = _page([_server_item("pkg/two")])
-    client = httpx.Client(transport=httpx.MockTransport(_handler({None: page1, "c2": page2}, {})))
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: page1, "c2": page2})))
     engine = _engine()
     with Session(engine) as session:
         run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
@@ -154,8 +142,7 @@ def test_distribution_is_populated_for_every_case() -> None:
         _server_item("pkg/remote-one", remotes=[{"url": "https://example.invalid/mcp"}]),
         _server_item("pkg/bare-one"),
     ]
-    downloads = {("npm", "npm-one"): 100, ("pypi", "pypi-one"): 50}
-    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)}, downloads)))
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)})))
     engine = _engine()
     with Session(engine) as session:
         # tier2_n=0: no artifact fetch is attempted for anyone, isolating the
@@ -184,9 +171,10 @@ def test_distribution_is_populated_for_every_case() -> None:
     # at all (remote-only, bare) - the pseudonym has to cover every record,
     # not just the ones with a package.
     assert all(r.coords_digest for r in records)
-    assert by_id["pkg/npm-one:1.0.0"].rank_metric == 100
-    assert by_id["pkg/pypi-one:1.0.0"].rank_metric == 50
-    assert by_id["pkg/bare-one:1.0.0"].rank_metric is None
+    # No download ranking exists any more: rank_metric is always None, and
+    # with tier2_n=0 nothing was selected so no record carries a source.
+    assert all(r.rank_metric is None for r in records)
+    assert all(r.rank_metric_source is None for r in records)
 
 
 # --- temp-dir cleanup -------------------------------------------------------
@@ -212,8 +200,7 @@ def test_temp_dir_is_removed_after_a_successful_tier2_fetch(
             packages=[{"registryType": "npm", "identifier": "npm-one", "version": "1.0.0"}],
         )
     ]
-    downloads = {("npm", "npm-one"): 999}
-    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)}, downloads)))
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)})))
 
     from agent_perimeter.census.artifacts import ArtifactResult
 
@@ -253,8 +240,7 @@ def test_temp_dir_is_removed_even_when_no_source_features_are_found(
             packages=[{"registryType": "npm", "identifier": "npm-two", "version": "1.0.0"}],
         )
     ]
-    downloads = {("npm", "npm-two"): 5}
-    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)}, downloads)))
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)})))
 
     from agent_perimeter.census.artifacts import ArtifactResult
 
@@ -283,8 +269,7 @@ def test_fetch_failures_counts_artifact_failures(monkeypatch: pytest.MonkeyPatch
             packages=[{"registryType": "npm", "identifier": "npm-one", "version": "1.0.0"}],
         )
     ]
-    downloads = {("npm", "npm-one"): 10}
-    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)}, downloads)))
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)})))
 
     from agent_perimeter.census.artifacts import ArtifactResult
 
@@ -322,7 +307,7 @@ def test_a_truncated_pagination_aborts_the_run_and_commits_nothing(
     # page 1 points at a cursor whose page the handler doesn't have -> the
     # handler's 500 branch fires on every retry.
     page1 = _page(items, next_cursor="missing")
-    client = httpx.Client(transport=httpx.MockTransport(_handler({None: page1}, {})))
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: page1})))
 
     engine = _engine()
     with Session(engine) as session, pytest.raises(fetch.PaginationTruncated) as excinfo:
@@ -346,7 +331,7 @@ def test_the_salt_used_for_coords_digest_is_persisted_on_the_run() -> None:
     or to verify the DB's digests against later. `run.salt` must now carry
     the exact bytes used, both in memory and once persisted."""
     items = [_server_item("pkg/bare-one")]
-    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)}, {})))
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)})))
     engine = _engine()
     with Session(engine) as session:
         run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
@@ -373,8 +358,7 @@ def test_export_raw_digest_matches_the_records_own_coords_digest(tmp_path: Path)
             packages=[{"registryType": "npm", "identifier": "npm-one", "version": "1.0.0"}],
         )
     ]
-    downloads = {("npm", "npm-one"): 100}
-    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)}, downloads)))
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)})))
     engine = _engine()
     with Session(engine) as session:
         # tier2_n=0: no artifact fetch, so feature_set_json stays {} - this
@@ -398,7 +382,7 @@ def test_export_raw_digest_matches_the_records_own_coords_digest(tmp_path: Path)
 def test_fetch_failures_is_printed_even_when_zero() -> None:
     """B10: a number that only appears when it's bad is a number nobody trusts."""
     items = [_server_item("pkg/bare-one")]
-    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)}, {})))
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(items)})))
     engine = _engine()
     with Session(engine) as session:
         run = run_census(session, client, endpoint=REGISTRY, tier2_n=5)
@@ -407,3 +391,110 @@ def test_fetch_failures_is_printed_even_when_zero() -> None:
         # has to special-case before printing it.
         assert isinstance(run.fetch_failures, int)
     engine.dispose()
+
+
+# --- tier-2 seeded selection (Task 7) ---------------------------------------
+
+
+def _mixed_items() -> list[dict[str, object]]:
+    """3 npm, 1 PyPI, 1 remote-only, 1 bare: at tier2_n=2 the seeded draw
+    selects 2 npm + 1 PyPI = 3 packaged entries, whatever the seed."""
+    return [
+        _server_item(
+            f"pkg/npm-{i}",
+            packages=[{"registryType": "npm", "identifier": f"npm-{i}", "version": "1.0.0"}],
+        )
+        for i in range(3)
+    ] + [
+        _server_item(
+            "pkg/pypi-one",
+            packages=[{"registryType": "pypi", "identifier": "pypi-one", "version": "1.0.0"}],
+        ),
+        _server_item("pkg/remote-one", remotes=[{"url": "https://example.invalid/mcp"}]),
+        _server_item("pkg/bare-one"),
+    ]
+
+
+@pytest.fixture
+def no_artifact_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Selected entries have their artifact fetched; stub that stage so these
+    tests exercise selection bookkeeping, not archive downloads."""
+    from agent_perimeter.census.artifacts import ArtifactResult
+
+    def not_found(client: httpx.Client, coords: object) -> ArtifactResult:
+        return ArtifactResult(status=FetchStatus.NOT_FOUND, detail="stub", root=None, version=None)
+
+    monkeypatch.setattr("agent_perimeter.census.artifacts.fetch_artifact", not_found)
+
+
+def _records(session: Session, run: CensusRun) -> list[CensusRecord]:
+    return list(
+        session.execute(select(CensusRecord).where(CensusRecord.census_run_id == run.id))
+        .scalars()
+        .all()
+    )
+
+
+def test_run_persists_the_seed_and_marks_selected_records(no_artifact_fetch: None) -> None:
+    from agent_perimeter.census import sample
+
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(_mixed_items())})))
+    engine = _engine()
+    with Session(engine) as session:
+        run = run_census(session, client, endpoint=REGISTRY, tier2_n=2, seed=99)
+        records = _records(session, run)
+        assert run.sample_seed == 99
+        stored = session.execute(select(CensusRun).where(CensusRun.id == run.id)).scalar_one()
+        assert stored.sample_seed == 99
+    engine.dispose()
+
+    selected = [r for r in records if r.rank_metric_source == sample.SELECTION_SOURCE]
+    assert len(selected) == 3
+    assert {r.ecosystem for r in selected} == {"npm", "pypi"}
+    assert all(r.rank_metric is None for r in records)
+    # Selection is the only thing that triggers an artifact fetch.
+    assert all(r.fetch_status != "not_attempted" for r in selected)
+    assert all(r.fetch_status == "not_attempted" for r in records if r.rank_metric_source is None)
+
+
+def test_same_seed_reproduces_the_same_selection(no_artifact_fetch: None) -> None:
+    from agent_perimeter.census import sample
+
+    def selected_ids(seed: int) -> set[str]:
+        client = httpx.Client(
+            transport=httpx.MockTransport(_handler({None: _page(_mixed_items())}))
+        )
+        engine = _engine()
+        with Session(engine) as session:
+            run = run_census(session, client, endpoint=REGISTRY, tier2_n=1, seed=seed)
+            ids = {
+                r.registry_id
+                for r in _records(session, run)
+                if r.rank_metric_source == sample.SELECTION_SOURCE
+            }
+        engine.dispose()
+        return ids
+
+    assert selected_ids(5) == selected_ids(5)
+
+
+def test_run_generates_a_seed_when_none_is_given(no_artifact_fetch: None) -> None:
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(_mixed_items())})))
+    engine = _engine()
+    with Session(engine) as session:
+        run = run_census(session, client, endpoint=REGISTRY, tier2_n=2)
+        assert isinstance(run.sample_seed, int)
+    engine.dispose()
+
+
+def test_run_reports_progress(no_artifact_fetch: None) -> None:
+    lines: list[str] = []
+    client = httpx.Client(transport=httpx.MockTransport(_handler({None: _page(_mixed_items())})))
+    engine = _engine()
+    with Session(engine) as session:
+        run_census(session, client, endpoint=REGISTRY, tier2_n=2, progress=lines.append)
+    engine.dispose()
+
+    assert any("population" in line for line in lines)
+    assert any("artifact" in line for line in lines)
+    assert any("seed" in line for line in lines)

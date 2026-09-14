@@ -55,8 +55,8 @@ TERM_DEFINITIONS: dict[str, str] = {
         "be resolved."
     ),
     "sample": (
-        "Tier 1 is the whole population. Tier 2 is the top n by download count within "
-        "each ecosystem, selected as described under Method."
+        "Tier 1 is the whole population. Tier 2 is a seeded uniform random sample of up "
+        "to n packaged entries within each ecosystem, selected as described under Method."
     ),
     "supports 2026-07-28": (
         "The package's published artifact pins an MCP SDK at or above the version that "
@@ -269,6 +269,7 @@ def export_raw(run: CensusRun, records: Sequence[CensusRecord], *, salt: bytes, 
     summary = {
         "tool_version": run.tool_version,
         "method_hash": run.method_hash,
+        "sample_seed": run.sample_seed,
         "revision": REVISION,
         "artifact": {
             "n_examined": len(artifact_records),

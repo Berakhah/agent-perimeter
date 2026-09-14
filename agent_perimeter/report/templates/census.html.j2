@@ -38,6 +38,7 @@ combined with the other, and neither stands in for "the MCP ecosystem" as a whol
 <tr><th>Started</th><td class="mono">{{ run.started_at.isoformat() }}</td></tr>
 <tr><th>Finished</th><td class="mono">{{ run.finished_at.isoformat() if run.finished_at else "in progress" }}</td></tr>
 <tr><th>Population</th><td class="num" data-testid="population-size">{{ run.population_size }}</td></tr>
+<tr><th>Sample seed</th><td class="num" data-testid="sample-seed">{{ run.sample_seed }}</td></tr>
 </table>
 <p data-testid="fetch-failures">Fetch failures: {{ run.fetch_failures }}</p>
 
@@ -70,8 +71,8 @@ combined with the other, and neither stands in for "the MCP ecosystem" as a whol
 </table>
 <p class="deriv">Tier-2 target n is per ecosystem, not pooled: up to
 <span data-testid="tier2-n">{{ run.tier2_n }}</span> npm packages and up to {{ run.tier2_n }}
-PyPI packages are independently selected, by download count within each ecosystem, before any
-artifact is fetched.</p>
+PyPI packages are independently drawn at random (seed {{ run.sample_seed }}) within each
+ecosystem before any artifact is fetched.</p>
 
 <h2>Live-discover stratum</h2>
 {% if probe_agg is none %}

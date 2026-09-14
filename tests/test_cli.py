@@ -233,6 +233,7 @@ def _stub_census_run(**overrides: object) -> SimpleNamespace:
         "finished_at": datetime(2026, 9, 1, tzinfo=UTC),
         "population_size": 0,
         "tier2_n": 200,
+        "sample_seed": 7,
         "fetch_failures": 0,
         "tool_version": "0.1.0",
         "method_hash": "deadbeef00000000",
@@ -272,7 +273,7 @@ def test_census_defaults_to_the_project_postgres_not_sqlite(
     monkeypatch.setattr("sqlalchemy.create_engine", fake_create_engine)
     monkeypatch.setattr(
         "agent_perimeter.census.run.run_census",
-        lambda session, client, *, endpoint, tier2_n: _stub_census_run(),
+        lambda session, client, **kwargs: _stub_census_run(),
     )
 
     result = runner.invoke(app, ["census", "--out", str(tmp_path / "out")])
@@ -293,7 +294,7 @@ def test_census_database_url_can_be_overridden_without_a_live_postgres(
     """
     monkeypatch.setattr(
         "agent_perimeter.census.run.run_census",
-        lambda session, client, *, endpoint, tier2_n: _stub_census_run(population_size=3),
+        lambda session, client, **kwargs: _stub_census_run(population_size=3),
     )
     db_path = tmp_path / "override.db"
 
@@ -325,7 +326,7 @@ def test_census_out_writes_the_html_report_and_raw_export(
     """
     monkeypatch.setattr(
         "agent_perimeter.census.run.run_census",
-        lambda session, client, *, endpoint, tier2_n: _stub_census_run(),
+        lambda session, client, **kwargs: _stub_census_run(),
     )
     out_dir = tmp_path / "out"
 
@@ -356,7 +357,7 @@ def test_census_exits_nonzero_and_writes_nothing_when_pagination_is_truncated(
     for a complete census."""
     from agent_perimeter.census.fetch import PaginationTruncated
 
-    def boom(session: object, client: object, *, endpoint: str, tier2_n: int) -> object:
+    def boom(session: object, client: object, **kwargs: object) -> object:
         raise PaginationTruncated(3, 200, "page 3: status 502, gave up after 3 attempts")
 
     monkeypatch.setattr("agent_perimeter.census.run.run_census", boom)
@@ -380,3 +381,66 @@ def test_census_exits_nonzero_and_writes_nothing_when_pagination_is_truncated(
         "Census aborted: registry pagination failed at page 3 after 200 entries - "
         "page 3: status 502, gave up after 3 attempts. Nothing written."
     ) in result.output
+
+
+def test_census_seed_flag_reaches_run_census_and_is_printed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--seed` is what makes a published tier-2 sample reproducible: the
+    value must reach run_census untouched and be echoed so the operator can
+    record it. Also proves the CLI hands over a progress callback, so a long
+    run is never a black box."""
+    captured: dict[str, object] = {}
+
+    def fake_run_census(session: object, client: object, **kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return _stub_census_run(sample_seed=kwargs["seed"])
+
+    monkeypatch.setattr("agent_perimeter.census.run.run_census", fake_run_census)
+
+    result = runner.invoke(
+        app,
+        [
+            "census",
+            "--seed",
+            "5",
+            "--out",
+            str(tmp_path / "out"),
+            "--database-url",
+            f"sqlite:///{tmp_path / 'census.db'}",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert captured["seed"] == 5
+    assert callable(captured["progress"])
+    assert "Sample seed:     5" in result.stdout
+
+
+def test_census_client_has_a_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A registry or CDN request that hangs must not hang the census: the
+    client the command builds carries a default timeout."""
+    import httpx
+
+    seen: list[httpx.Client] = []
+
+    def fake_run_census(session: object, client: httpx.Client, **kwargs: object) -> SimpleNamespace:
+        seen.append(client)
+        return _stub_census_run()
+
+    monkeypatch.setattr("agent_perimeter.census.run.run_census", fake_run_census)
+
+    result = runner.invoke(
+        app,
+        [
+            "census",
+            "--out",
+            str(tmp_path / "out"),
+            "--database-url",
+            f"sqlite:///{tmp_path / 'census.db'}",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    (client,) = seen
+    assert client.timeout == httpx.Timeout(30.0)

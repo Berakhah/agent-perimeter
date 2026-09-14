@@ -1,42 +1,26 @@
-"""Test factory for RankedEntry populations used by tier-2 sampling tests."""
+"""Test factory for RegistryEntry populations used by tier-2 sampling tests."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 from agent_perimeter.census.fetch import RegistryEntry
-from agent_perimeter.census.sample import RankedEntry, RankSource
 from agent_perimeter.model.census import Ecosystem, PackageCoords
 
-_SOURCE_BY_ECOSYSTEM = {
-    Ecosystem.PYPI: RankSource.PYPI_RECENT_DOWNLOADS,
-    Ecosystem.NPM: RankSource.NPM_LAST_MONTH_DOWNLOADS,
-}
+
+def entry(name: str, ecosystem: Ecosystem | None) -> RegistryEntry:
+    """One RegistryEntry. `ecosystem=None` builds a remote-only entry with no
+    package coordinates, which tier-2 selection must never pick."""
+    coords = PackageCoords(ecosystem=ecosystem, name=name) if ecosystem is not None else None
+    remotes = ("https://example.invalid/mcp",) if ecosystem is None else ()
+    return RegistryEntry(
+        registry_id=name, name=name, coords=coords, repository_url=None, remotes=remotes
+    )
 
 
-def ranked(
-    specs: Sequence[tuple[str, int | None] | tuple[str, int | None, str]],
-) -> list[RankedEntry]:
-    """Build a RankedEntry population from (name, downloads[, ecosystem]) tuples.
-
-    `ecosystem` defaults to "pypi" when omitted - most `top_n` tests only care
-    about ranking within a single ecosystem and would otherwise have to spell
-    it out on every row.
-    """
-    out: list[RankedEntry] = []
-    for spec in specs:
-        match spec:
-            case (name, downloads, eco_str):
-                pass
-            case (name, downloads):
-                eco_str = "pypi"
-        eco = Ecosystem(eco_str)
-        entry = RegistryEntry(
-            registry_id=name,
-            name=name,
-            coords=PackageCoords(ecosystem=eco, name=name),
-            repository_url=None,
-        )
-        source = RankSource.UNAVAILABLE if downloads is None else _SOURCE_BY_ECOSYSTEM[eco]
-        out.append(RankedEntry(entry=entry, downloads=downloads, rank_source=source))
+def entries(*, npm: int = 0, pypi: int = 0, remote_only: int = 0) -> list[RegistryEntry]:
+    """A population with distinct registry_ids: `npm` npm entries, `pypi` PyPI
+    entries and `remote_only` entries with no coords, in that order."""
+    out: list[RegistryEntry] = []
+    out.extend(entry(f"npm-{i:03d}", Ecosystem.NPM) for i in range(npm))
+    out.extend(entry(f"pypi-{i:03d}", Ecosystem.PYPI) for i in range(pypi))
+    out.extend(entry(f"remote-{i:03d}", None) for i in range(remote_only))
     return out
