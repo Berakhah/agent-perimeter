@@ -1,0 +1,8 @@
+{
+  "name": "demo-js-mcp-server-v2-split",
+  "version": "0.1.0",
+  "description": "Synthetic fixture package for detect.py's tests, not a real package. Pins the v2 split package (@modelcontextprotocol/server) instead of the v1 monolithic @modelcontextprotocol/sdk, which never shipped a 2.x release.",
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.1.0"
+  }
+}

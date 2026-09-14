@@ -74,3 +74,16 @@ def test_a_javascript_artifact_is_detected_via_token_scan() -> None:
     assert fp.sdk_version == "2.1.0"
     assert Feature.RESULT_TYPE in fp.features
     assert Feature.CACHEABLE_RESULT in fp.features
+
+
+def test_a_v2_split_package_pin_is_recognised_not_just_the_v1_monolith() -> None:
+    """@modelcontextprotocol/sdk (v1) never shipped a 2.x release - it is
+    frozen at 1.30.0. v2 split the SDK into @modelcontextprotocol/server et
+    al, which is what a real server artifact pins. A package.json naming
+    only the new package must still be read as a valid, above-floor pin."""
+    assert detect_sdk_pin(FIXTURES / "js_v2_split") == "2.1.0"
+    fp = detect_features(FIXTURES / "js_v2_split")
+    assert fp.sdk_version == "2.1.0"
+    assert Feature.RESULT_TYPE in fp.features
+    assert Feature.CACHEABLE_RESULT in fp.features
+    assert "sdk pin" not in (fp.claim.caveat or "")

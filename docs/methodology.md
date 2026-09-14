@@ -78,26 +78,41 @@ feature claims: a package pinned to an SDK release below a feature's floor
 cannot be credited with that feature, whatever its source mentions. Every
 number the artifact census reports moves if a floor below is wrong.
 
-**Status: TBD - none of the rows below are verified.** They were written
-during Task 4's implementation without live access to the real MCP SDK
-changelogs (sandboxed environment, no network egress). The version numbers
-are illustrative placeholders chosen only so the comparison logic in
-`detect.py` has something parseable to run against in tests - they are not
-claims about the real `mcp` or `@modelcontextprotocol/sdk` release history.
-**Do not cite these numbers, and do not run the registry scan for
-publication, until every row is verified against the live changelog and this
-table is updated with real dates and URLs.**
+**Status: verified 2026-09-09**, against the real `python-sdk` and
+`typescript-sdk` release history (GitHub releases API + PyPI/npm registry
+metadata — not assumed from a plan). `server/discover`, `resultType`,
+`CacheableResult` (`ttlMs`/`cacheScope`), and MRTR (`InputRequiredResult`)
+are wire-level parts of the same 2026-07-28 protocol revision (per the
+[official spec changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog)),
+not features an SDK adopts one at a time — both SDKs' first `2.0.0` release
+is therefore the correct floor for all four, confirmed by both SDKs'
+`v2.0.0` release notes explicitly stating they "speak the 2026-07-28
+revision."
+
+**npm package rename — a real detection bug, not just a stale number.**
+`@modelcontextprotocol/sdk`, the v1 monolithic package, never shipped a 2.x
+release: it is frozen at `1.30.0` on the npm registry (checked 2026-09-09).
+v2 split the SDK into separately-published packages
+(`@modelcontextprotocol/server`, `/client`, `/core`, `/node`, `/hono`,
+`/fastify`, `/express`) that "version together" per the
+[`@modelcontextprotocol/server@2.0.0` release notes](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/%40modelcontextprotocol%2Fserver%402.0.0).
+A real server implementation depends on `@modelcontextprotocol/server`, not
+`@modelcontextprotocol/sdk` — so before this fix, `detect.py` could never
+have recognised *any* v2 npm artifact's SDK pin at all, regardless of the
+version number in `SDK_FLOOR`. `_JS_SDK_NAMES` now recognises both the v1
+and v2 package names, so a v1 pin is still correctly gated below the floor
+instead of falling through to "no recognised pin, cannot rule out."
 
 | Feature | Ecosystem | Floor version | Release date | Changelog URL | Date checked |
 |---|---|---|---|---|---|
-| `server_discover` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
-| `server_discover` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
-| `result_type` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
-| `result_type` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
-| `cacheable_result` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
-| `cacheable_result` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
-| `mrtr` | pypi (`mcp`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
-| `mrtr` | npm (`@modelcontextprotocol/sdk`) | 2.0.0 (placeholder) | TBD | TBD — verify against real changelog before publication | not checked |
+| `server_discover` | pypi (`mcp`) | 2.0.0 | 2026-07-28 | [python-sdk v2.0.0](https://github.com/modelcontextprotocol/python-sdk/releases/tag/v2.0.0) | 2026-09-09 |
+| `server_discover` | npm (`@modelcontextprotocol/server`) | 2.0.0 | 2026-07-27 | [server@2.0.0](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/%40modelcontextprotocol%2Fserver%402.0.0) | 2026-09-09 |
+| `result_type` | pypi (`mcp`) | 2.0.0 | 2026-07-28 | [python-sdk v2.0.0](https://github.com/modelcontextprotocol/python-sdk/releases/tag/v2.0.0) | 2026-09-09 |
+| `result_type` | npm (`@modelcontextprotocol/server`) | 2.0.0 | 2026-07-27 | [server@2.0.0](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/%40modelcontextprotocol%2Fserver%402.0.0) | 2026-09-09 |
+| `cacheable_result` | pypi (`mcp`) | 2.0.0 | 2026-07-28 | [python-sdk v2.0.0](https://github.com/modelcontextprotocol/python-sdk/releases/tag/v2.0.0) | 2026-09-09 |
+| `cacheable_result` | npm (`@modelcontextprotocol/server`) | 2.0.0 | 2026-07-27 | [server@2.0.0](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/%40modelcontextprotocol%2Fserver%402.0.0) | 2026-09-09 |
+| `mrtr` | pypi (`mcp`) | 2.0.0 | 2026-07-28 | [python-sdk v2.0.0](https://github.com/modelcontextprotocol/python-sdk/releases/tag/v2.0.0) | 2026-09-09 |
+| `mrtr` | npm (`@modelcontextprotocol/server`) | 2.0.0 | 2026-07-27 | [server@2.0.0](https://github.com/modelcontextprotocol/typescript-sdk/releases/tag/%40modelcontextprotocol%2Fserver%402.0.0) | 2026-09-09 |
 
 `param_headers` has no floor row: it is a JSON Schema annotation convention
 (`x-mcp-header`) that any source can carry regardless of which SDK version is
