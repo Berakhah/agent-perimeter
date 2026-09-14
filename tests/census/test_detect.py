@@ -1,11 +1,14 @@
+import json
 from pathlib import Path
 
 from agent_perimeter._contracts import Derivation
+from agent_perimeter.census import detect
 from agent_perimeter.census.detect import (
     ARTIFACT_CONFIDENCE,
     detect_features,
     detect_sdk_pin,
 )
+from agent_perimeter.model.census import Ecosystem
 from agent_perimeter.model.feature import Feature
 from agent_perimeter.transport.revision import LIVE_PROBE_CONFIDENCE
 
@@ -87,3 +90,65 @@ def test_a_v2_split_package_pin_is_recognised_not_just_the_v1_monolith() -> None
     assert Feature.RESULT_TYPE in fp.features
     assert Feature.CACHEABLE_RESULT in fp.features
     assert "sdk pin" not in (fp.claim.caveat or "")
+
+
+# --- Task 8: real npm/PyPI artifacts keep manifests one directory down, not
+# at the extraction root; the first full census run misclassified 94% of
+# artifacts "unknown" because of this.
+
+
+def test_npm_pin_is_found_under_the_package_directory(tmp_path: Path) -> None:
+    (tmp_path / "package").mkdir()
+    (tmp_path / "package" / "package.json").write_text(
+        json.dumps({"dependencies": {"@modelcontextprotocol/sdk": "^1.12.0"}}), encoding="utf-8"
+    )
+    assert detect.detect_sdk_pin(tmp_path) == "1.12.0"
+
+
+def test_pypi_pin_is_found_in_a_versioned_sdist_directory(tmp_path: Path) -> None:
+    d = tmp_path / "mcp_server_x-2026.8.18"
+    d.mkdir()
+    (d / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["mcp>=1.2.0"]\n', encoding="utf-8"
+    )
+    assert detect.detect_sdk_pin(tmp_path) == "1.2.0"
+
+
+def test_pypi_pin_is_read_from_sdist_pkg_info(tmp_path: Path) -> None:
+    d = tmp_path / "x-1.0"
+    d.mkdir()
+    (d / "PKG-INFO").write_text(
+        "Name: x\nRequires-Dist: httpx\nRequires-Dist: mcp>=2.1\n", encoding="utf-8"
+    )
+    assert detect.detect_sdk_pin(tmp_path) == "2.1"
+
+
+def test_pypi_pin_is_read_from_wheel_metadata(tmp_path: Path) -> None:
+    d = tmp_path / "x-1.0.dist-info"
+    d.mkdir()
+    (d / "METADATA").write_text(
+        'Name: x\nRequires-Dist: mcp>=2.0.0; python_version >= "3.10"\n', encoding="utf-8"
+    )
+    assert detect.detect_sdk_pin(tmp_path) == "2.0.0"
+
+
+def test_environment_marker_version_is_not_mistaken_for_the_pin(tmp_path: Path) -> None:
+    d = tmp_path / "x-1.0"
+    d.mkdir()
+    (d / "PKG-INFO").write_text('Requires-Dist: mcp; python_version >= "3.10"\n', encoding="utf-8")
+    assert detect.detect_sdk_pin(tmp_path) is None
+
+
+def test_manifest_search_is_one_level_deep_only(tmp_path: Path) -> None:
+    deep = tmp_path / "a" / "b"
+    deep.mkdir(parents=True)
+    (deep / "package.json").write_text(
+        json.dumps({"dependencies": {"@modelcontextprotocol/sdk": "1.0.0"}}), encoding="utf-8"
+    )
+    assert detect.detect_sdk_pin(tmp_path) is None
+
+
+def test_ecosystem_is_detected_under_the_package_directory(tmp_path: Path) -> None:
+    (tmp_path / "package").mkdir()
+    (tmp_path / "package" / "package.json").write_text("{}", encoding="utf-8")
+    assert detect._ecosystem_of(tmp_path) is Ecosystem.NPM
