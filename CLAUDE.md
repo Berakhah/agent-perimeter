@@ -78,4 +78,4 @@ Brief §12, ten items. The week-4 deliverable is a working scanner **and** a pub
 
 ## Before planning
 
-Brief §13 has 7 open decisions; `00` §12 has 7 more. None are answered yet. Do not assume them — ask.
+Brief §13 has 7 open decisions; `00` §12 has 7 more. All 14 are answered as of 2026-09-14 — see `docs/open-decisions.md`. Notably: the competitive inventory (B8) was done late, after most of Weeks 1–4 was already built, not before as the brief instructed — it changed the claimed differentiators (enterprise-deployment-posture dropped; data-path injection simulation kept as lead; evidence-graded reporting narrowed to reproducibility, not raw census size) without forcing a full re-scope.

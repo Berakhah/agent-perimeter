@@ -150,18 +150,72 @@ MCPTox: not run (dataset not present; set AP_MCPTOX_PATH to include it).
 
 ## Competitive claim verification
 
-Recorded in Week 1. Repository, commit SHA, retrieval date, and what was
-searched for.
+Per brief `01` §13 Q1 (B8): "inventory what exists, what each covers, and
+what each misses… before writing a line." This was not done before Week 1
+implementation started — it is recorded now, 2026-09-14, after most of the
+build. The gap is a known process failure, not a deliberate skip; it did not
+surface a reason to stop, but it did change the claimed differentiators
+below.
 
-| Tool | Commit SHA | Retrieved | Revision-aware? | Evidence |
+**Method deviation from the original plan:** most competitors here are
+commercial platforms or hosted products, not standalone repos to pin at a
+commit SHA — the "Commit SHA / revision-aware?" columns only apply to the
+open-source entries. Retrieved via web search, 2026-09-14; sources cited
+per row. This is weaker evidence than a direct repo clone + static read (the
+census pipeline's own standard), and should be re-verified against primary
+sources — vendor docs, the actual repo — before this table is cited in any
+published report.
+
+| Tool | Type | What it covers | Repo / commit (if OSS) | Evidence |
 |---|---|---|---|---|
-| _pending Week 1_ | | | | |
+| mcp-scan (Invariant Labs) | OSS, now under Snyk (`snyk/agent-scan`) | Static tool-poisoning/rug-pull/cross-origin scan + runtime proxy guardrails, hash-based tool pinning | github.com/snyk/agent-scan (SHA not pinned this pass) | [Invariant blog](https://invariantlabs.ai/blog/introducing-mcp-scan), [snyk/agent-scan](https://github.com/snyk/agent-scan) |
+| Cisco mcp-scanner | Commercial | Pre-deploy governance, policy, audit across agentic AI | — | [Cisco vs Snyk vs Pipelock comparison](https://pipelab.org/blog/mcp-scanner-comparison-2026/) |
+| Akto | Commercial | Full-lifecycle: agent/MCP discovery, continuous red-teaming, runtime enforcement, agent-to-system interaction mapping | — | [Akto MCP Security](https://www.akto.io/mcp-security) |
+| Wiz / Astrix / Endor Labs / GitGuardian | Commercial | Cloud/CNAPP-adjacent MCP visibility, credential/secrets scanning, SCA — adjacent to, not competing with, this project's core thesis | — | [Astrix: State of MCP Server Security 2025](https://astrix.security/learn/blog/state-of-mcp-server-security-2025/) |
+| Enkrypt AI | Published report | Registry census: 1,000 servers scanned, 33% with critical vulns | — | [Enkrypt AI](https://www.enkryptai.com/blog/we-scanned-1-000-mcp-servers-33-had-critical-vulnerabilities) |
+| Trend Micro | Published report | Registry census: 19,000 servers, AI-powered sweep | — | [Trend Micro](https://www.trendmicro.com/vinfo/us/security/news/vulnerabilities-and-exploits/hunt-them-all-an-ai-powered-vulnerability-sweep-of-19-000-mcp-servers) |
+| Independent July-2026 census | Published report | 4 directories crawled, 9,695 unique servers, 5,832 with weaknesses | — | [bex.co](https://bex.co/blog/2026/07/09/mcp-vulnerability-census-server-security-checklist) |
+| MCP-BiFlow, MCPGuard, MCPTox, MindGuard | Academic | Bidirectional data-flow analysis, automated vuln detection, tool-poisoning/anomaly detection; MCP-BiFlow reports 93.8% recall on a 32-case benchmark | arXiv preprints | [MCPGuard](https://arxiv.org/pdf/2510.23673), [Unsafe by Flow](https://arxiv.org/pdf/2605.07836) |
+
+**Verdict, and the resulting re-scope decision (2026-09-14):** the brief's
+three candidate differentiators (§13 Q1 / B8) do not all survive contact
+with reality.
+
+- **(a) Enterprise deployment posture — dropped as a differentiator.** Akto
+  and Cisco already cover this, with more runtime/enforcement depth than a
+  static+active scanner offers. Continuing to claim this ground would be the
+  "fourteenth scanner" the brief warns against.
+- **(b) Data-path injection simulation driving a live agent — kept, lead
+  differentiator.** Nothing found does this specifically; existing tools do
+  static analysis or runtime proxy monitoring, not "instrument a target and
+  drive a bundled minimal agent through the injection path to prove
+  reachability." `agent_perimeter/checks/injection/agent_adapter.py` is
+  this project's implementation of exactly that.
+- **(c) Evidence-graded reporting with published precision/recall —
+  narrowed, not dropped.** Several parties already publish large-N registry
+  census numbers (1,000–19,000 servers). The remaining gap is not "nobody
+  publishes numbers," it is that none of those numbers are independently
+  reproducible: no fixture corpus, no golden SARIF, no CI regenerating the
+  table on every commit and failing the build if it drifts. This project's
+  differentiator is **reproducibility/auditability**, not volume — its
+  registry census will necessarily be smaller than Trend Micro's 19,000, and
+  should not try to compete on N.
 
 ## Model provider inventory
 
 Per `00` §12 Q3 and spec §9. Not blocking for weeks 1–4 — this project makes
 no model calls until the `llm_judge` escalation lands.
 
+**Decided 2026-09-14 (human-partner answer):** no paid provider account
+exists yet — free-tier only. `checks/descriptions/llm_judge` therefore runs
+in its degraded/disabled lane by default; the rules-based detectors it would
+escalate from must stand on their own until a provider account is
+provisioned. This is consistent with R4 ($0 recurring cost) and with
+`test_degraded_mode_still_produces_findings`'s ≥90% floor — `llm_judge` is
+the *only* checker gated on a model per CLAUDE.md's determinism budget, so
+running with it permanently disabled is a valid, tested configuration, not a
+degraded fallback of last resort.
+
 | Provider | Reachable | trains_on_data | commercial_use | Limits | structured_output | Live model ids | Terms URL + retrieved |
 |---|---|---|---|---|---|---|---|
-| _pending_ | | | | | | | |
+| _none provisioned — free-tier only, decided 2026-09-14_ | | | | | | | |
