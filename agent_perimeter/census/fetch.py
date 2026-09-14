@@ -20,9 +20,9 @@ from agent_perimeter.model.census import Ecosystem, FetchStatus, PackageCoords
 
 USER_AGENT = (
     f"agent-perimeter/{__version__} "
-    # Same placeholder repo path as agent_perimeter.cli.DEFAULT_CONTACT_URL - not
-    # imported from there to avoid pulling the CLI's typer/transport dependency
-    # graph into a read-only fetch module for one string.
+    # Contact URL for registry operators; the same value the transports send
+    # (see transport/streamable_http.py). Kept as a literal so this read-only
+    # fetch module does not import the CLI's typer/transport dependency graph.
     "(+https://github.com/Berakhah/agent-perimeter/blob/main/docs/security.md)"
 )
 
