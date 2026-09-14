@@ -28,6 +28,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -50,6 +51,14 @@ SUPPORT_FEATURE = "server_discover"
 
 ARTIFACT_DERIVATION = "artifact"
 PROBE_DERIVATION = "probe"
+
+# Two-sided 95% normal quantile, for Aggregate.wilson95.
+WILSON_Z = 1.959964
+
+# The Tier 2 sampling frame: every `distribution` value that names a package
+# ecosystem census/artifacts.py can fetch. `package_other` is a package
+# coordinate too, but no fetcher is modelled for it, so it is not eligible.
+ELIGIBLE_DISTRIBUTIONS: tuple[str, ...] = ("package_npm", "package_pypi")
 
 TERM_DEFINITIONS: dict[str, str] = {
     "population": (
@@ -74,7 +83,10 @@ TERM_DEFINITIONS: dict[str, str] = {
     ),
     "unknown": (
         "The artifact was fetched and extracted, but it carries no SDK pin and no "
-        "parseable source, so neither signal of the two-signals rule is available. "
+        "parseable source, so neither signal of the two-signals rule is available; or "
+        "it carries no SDK pin at all, in which case any handler string in its source "
+        "is dropped with a caveat, because a feature cannot be asserted without a pin "
+        "at or above its floor. "
         "Reported separately and never folded into a denominator. Fetch failures are "
         "not unknowns: they are reported separately under the sample description and "
         "never enter the examined or unknown counts."
@@ -107,6 +119,22 @@ class Aggregate:
     @property
     def share(self) -> float | None:
         return None if self.n == 0 else self.supports / self.n
+
+    @property
+    def wilson95(self) -> tuple[float, float] | None:
+        """Wilson score interval for `share` at 95% (z = 1.959964), or None
+        when n == 0. Wilson rather than Wald because several cells are small
+        and near zero, where Wald collapses to a zero-width or negative
+        interval."""
+        if self.n == 0:
+            return None
+        n = self.n
+        p = self.supports / n
+        z2 = WILSON_Z * WILSON_Z
+        denominator = 1 + z2 / n
+        centre = (p + z2 / (2 * n)) / denominator
+        half_width = WILSON_Z * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / denominator
+        return (max(0.0, centre - half_width), min(1.0, centre + half_width))
 
 
 def _feature_list(feature_set_json: dict[str, object]) -> list[str]:
@@ -165,12 +193,18 @@ def aggregate(records: Sequence[CensusRecord]) -> dict[str, Aggregate]:
 
 
 def _agg_dict(agg: Aggregate) -> dict[str, object]:
-    """JSON-friendly view of an Aggregate: its three fields plus the two
-    derived properties, so the summary sidecar is self-describing and a
-    reader (or `analysis/census_analysis.py`) can cross-check n/share
-    without re-deriving the property formulas.
+    """JSON-friendly view of an Aggregate: its three fields plus the derived
+    properties, so the summary sidecar is self-describing and a reader (or
+    `analysis/census_analysis.py`) can cross-check n/share without
+    re-deriving the property formulas. `wilson95` is `[lo, hi]` or null.
     """
-    return {**asdict(agg), "n": agg.n, "share": agg.share}
+    ci = agg.wilson95
+    return {
+        **asdict(agg),
+        "n": agg.n,
+        "share": agg.share,
+        "wilson95": None if ci is None else [ci[0], ci[1]],
+    }
 
 
 def _by_derivation(records: Sequence[CensusRecord], derivation: str) -> list[CensusRecord]:
@@ -233,7 +267,12 @@ FETCH_FAILURE_CAUSES: tuple[tuple[str, str], ...] = (
 )
 OTHER_CAUSE = "other"
 NOT_ATTEMPTED_STATUS = "not_attempted"
+# detect.py attaches two "source mentions ..." caveats. Only the one where a
+# *present* pin predates the floor is a does-not-support under-count; the
+# other ("pins no SDK") marks a row that is reported as unknown, never as
+# does-not-support, so it is not a limitation of the same kind.
 FLOOR_DROPPED_CAVEAT_PREFIX = "source mentions "
+FLOOR_DROPPED_CAVEAT_MARKER = "predates it"
 
 
 def population_distribution(records: Sequence[CensusRecord]) -> dict[str, int]:
@@ -320,12 +359,24 @@ def detection_limitations(artifact_records: Sequence[CensusRecord]) -> dict[str,
         if classified[1] == "does_not_support" and _pin_at_or_above_floor(record):
             pinned[record.ecosystem] += 1
         caveat = record.feature_set_json.get("caveat")
-        if isinstance(caveat, str) and caveat.startswith(FLOOR_DROPPED_CAVEAT_PREFIX):
+        if (
+            isinstance(caveat, str)
+            and caveat.startswith(FLOOR_DROPPED_CAVEAT_PREFIX)
+            and FLOOR_DROPPED_CAVEAT_MARKER in caveat
+        ):
             dropped[record.ecosystem] += 1
     return {
         "pinned_at_floor_without_handler": {**pinned, "total": sum(pinned.values())},
         "floor_dropped_source_signal": {**dropped, "total": sum(dropped.values())},
     }
+
+
+def share_with_ci(agg: Aggregate) -> str:
+    """`1.7% (95% CI 0.4–4.9%)`, or `n/a` when there is no denominator."""
+    share, ci = agg.share, agg.wilson95
+    if share is None or ci is None:
+        return "n/a"
+    return f"{share * 100:.1f}% (95% CI {ci[0] * 100:.1f}–{ci[1] * 100:.1f}%)"
 
 
 def _ecosystem_breakdown(artifact_records: Sequence[CensusRecord]) -> dict[str, dict[str, object]]:
@@ -352,20 +403,22 @@ def render_census(run: CensusRun, records: Sequence[CensusRecord]) -> str:
     probe_agg = aggregate(probe_records)[REVISION] if probe_records else None
 
     distribution = population_distribution(records)
-    packaged = sum(v for k, v in distribution.items() if k.startswith("package_"))
+    eligible = sum(distribution.get(k, 0) for k in ELIGIBLE_DISTRIBUTIONS)
     return template.render(
         css=(TEMPLATES / "report.css").read_text(encoding="utf-8"),
         run=run,
         revision=REVISION,
         term_definitions=TERM_DEFINITIONS,
         selection_method=SELECTION_METHOD,
+        share_ci=share_with_ci,
         artifact_agg=artifact_agg,
         artifact_n_examined=len(artifact_records),
         by_ecosystem=_ecosystem_breakdown(artifact_records),
         probe_agg=probe_agg,
         probe_n=len(probe_records),
         distribution=distribution,
-        packaged_count=packaged,
+        eligible_count=eligible,
+        package_other_count=distribution.get("package_other", 0),
         remote_only_count=distribution.get("remote_only", 0),
         fetch_failures=fetch_failure_breakdown(run, records),
         limitations=detection_limitations(artifact_records),

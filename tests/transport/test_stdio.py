@@ -46,9 +46,7 @@ def test_hardened_seccomp_is_the_default() -> None:
     default = " ".join(docker_args(LaunchSpec(image="i", command=["c"])))
     assert f"seccomp={SECCOMP_PROFILE}" in default
 
-    permissive = " ".join(
-        docker_args(LaunchSpec(image="i", command=["c"], hardened_seccomp=False))
-    )
+    permissive = " ".join(docker_args(LaunchSpec(image="i", command=["c"], hardened_seccomp=False)))
     assert "seccomp=" not in permissive
 
 

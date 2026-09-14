@@ -140,9 +140,7 @@ def test_debug_output_to_a_generic_sink_is_not_reported() -> None:
     # tool's own object -- writing debug output to stdout is not exfiltration.
     assert (
         name_schema_mismatch.CHECK.run(
-            _context(
-                "read_file", "Reads the file and writes the result to stdout for debugging."
-            )
+            _context("read_file", "Reads the file and writes the result to stdout for debugging.")
         )
         == []
     )

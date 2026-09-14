@@ -1,11 +1,17 @@
 """Derive a FeatureSet from a published artifact's source. Never run it.
 
-Two independent signals must agree before a feature is asserted: the pinned
-MCP SDK version (a package pinned to an SDK release predating the 2026-07-28
-revision cannot serve it, regardless of what its own source says) and a scan
-of the source for the handlers that revision requires. Where the two
-disagree, the lower wins and a caveat is attached - a claim that hedges is
-worth more than a claim that is wrong.
+Two independent signals must both be present before a feature is asserted:
+the pinned MCP SDK version (a package pinned to an SDK release predating the
+2026-07-28 revision cannot serve it, regardless of what its own source says)
+and a scan of the source for the handlers that revision requires. Where the
+two disagree, the lower wins and a caveat is attached; where the artifact
+pins no SDK at all, source evidence for any floor-gated feature is dropped
+and the artifact is reported unknown - a claim that hedges is worth more
+than a claim that is wrong.
+
+The pin recorded is the *lowest lower bound* of the requirement, never a
+cap: `mcp<2.0.0,>=1.9.0` (the order setuptools writes `Requires-Dist:` in)
+is 1.9.0, and `mcp<3` is no pin at all.
 
 Detection reads text only: an `ast` parse for Python (parse, never compile or
 run) and a plain token scan for JavaScript. Nothing here imports, compiles,
@@ -24,6 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from packaging.requirements import InvalidRequirement, Requirement
 from packaging.version import InvalidVersion, Version
 
 from agent_perimeter._contracts import Claim, Derivation, Method
@@ -83,8 +90,17 @@ _JS_SDK_NAMES = {
 _PY_SUFFIXES = {".py"}
 _JS_SUFFIXES = {".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"}
 
-_REQ_NAME_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)")
-_VERSION_RE = re.compile(r"\d+(?:\.\d+){1,2}")
+# Specifier operators that state a lower bound. `<`, `<=` and `!=` bound from
+# above (or exclude a point) and say nothing about the oldest SDK a package
+# accepts, which is the only thing SDK_FLOOR compares against.
+_LOWER_BOUND_OPERATORS = frozenset({">=", "==", "~=", ">", "==="})
+
+# npm range grammar: an optional comparator followed by a version. `^`, `~`
+# and a bare version are lower bounds; `<` and `<=` are caps.
+_NPM_TOKEN_RE = re.compile(
+    r"(>=|<=|>|<|=|\^|~)?\s*(?<![\w.-])v?(\d+(?:\.\d+){0,2})(?:[-+][0-9A-Za-z.-]*)?"
+)
+_NPM_CAP_OPERATORS = frozenset({"<", "<="})
 
 
 @dataclass(slots=True, frozen=True)
@@ -100,9 +116,28 @@ class ArtifactFingerprint:
         return not self.features and self.sdk_version is None
 
 
-def _bare_version(spec: str) -> str | None:
-    match = _VERSION_RE.search(spec)
-    return match.group(0) if match else None
+def _lowest(candidates: list[str]) -> str | None:
+    """The original text of the smallest parseable version in `candidates`."""
+    parsed: list[tuple[Version, str]] = []
+    for text in candidates:
+        try:
+            parsed.append((Version(text), text))
+        except InvalidVersion:
+            continue
+    return min(parsed)[1] if parsed else None
+
+
+def _npm_lower_bound(spec: str) -> str | None:
+    """Lowest version token of an npm range whose comparator is not a cap.
+
+    `^1.12.0` -> 1.12.0, `>=1.0.0 <2.0.0` -> 1.0.0, `<2.0.0` -> None. A
+    `||` union is treated as one flat token list: its lowest lower bound is
+    still the oldest SDK the package accepts.
+    """
+    floors = [
+        m.group(2) for m in _NPM_TOKEN_RE.finditer(spec) if m.group(1) not in _NPM_CAP_OPERATORS
+    ]
+    return _lowest(floors)
 
 
 _PY_MANIFESTS = ("pyproject.toml", "requirements.txt", "PKG-INFO")
@@ -118,14 +153,21 @@ def _manifest_dirs(root: Path) -> list[Path]:
 
 
 def _pin_from_requirement(requirement: str, names: set[str]) -> str | None:
-    requirement = requirement.split(";", 1)[0]
-    match = _REQ_NAME_RE.match(requirement.strip())
-    if match is None:
+    """Lowest lower bound of a PEP 508 requirement naming one of `names`.
+
+    `packaging` handles extras, markers and parentheses; it also normalises
+    specifier order, which is exactly why the first version-looking token
+    must never be taken - `>=1.9.0,<2.0.0` round-trips as `<2.0.0,>=1.9.0`.
+    """
+    try:
+        req = Requirement(requirement)
+    except InvalidRequirement:
         return None
-    normalized = match.group(1).lower().replace("_", "-")
+    normalized = req.name.lower().replace("_", "-")
     if normalized not in {n.lower().replace("_", "-") for n in names}:
         return None
-    return _bare_version(requirement[match.end() :])
+    floors = [s.version for s in req.specifier if s.operator in _LOWER_BOUND_OPERATORS]
+    return _lowest(floors)
 
 
 def _pin_from_pyproject(pyproject: Path) -> str | None:
@@ -173,7 +215,7 @@ def _pin_from_package_json(package_json: Path) -> str | None:
         for name in _JS_SDK_NAMES:
             spec = deps.get(name)
             if isinstance(spec, str):
-                pin = _bare_version(spec)
+                pin = _npm_lower_bound(spec)
                 if pin is not None:
                     return pin
     return None
@@ -277,13 +319,16 @@ def _apply_sdk_floor(
 ) -> tuple[set[Feature], set[Feature]]:
     """Split `observed` into (kept, dropped) against SDK_FLOOR.
 
-    A feature is dropped only when there is a floor to compare against and the
-    pin is both parseable and strictly below it. No pin, no floor entry, or an
-    unparseable version all mean "cannot rule it out" - the source evidence
-    stands.
+    A floor-gated feature is dropped when the pin is strictly below its floor,
+    or when there is no pin at all: "supports" requires a pin at or above the
+    floor AND the source signal, so an unpinned artifact cannot assert any
+    feature that has a floor. Features with no floor entry (PARAM_HEADERS)
+    stand on source evidence alone, and an unparseable pin is treated as
+    "cannot rule it out".
     """
     if pin is None:
-        return set(observed), set()
+        kept_unpinned = {f for f in observed if f not in SDK_FLOOR}
+        return kept_unpinned, set(observed) - kept_unpinned
     try:
         pin_version = Version(pin)
     except InvalidVersion:
@@ -340,7 +385,13 @@ def detect_features(root: Path) -> ArtifactFingerprint:
     caveat = None
     if dropped:
         names = ", ".join(sorted(f.value for f in dropped))
-        caveat = f"source mentions {names} but the sdk pin ({pin}) predates it; sdk pin wins"
+        if pin is None:
+            caveat = (
+                f"source mentions {names} but the artifact pins no SDK; a feature cannot "
+                "be asserted without a pin at or above its floor"
+            )
+        else:
+            caveat = f"source mentions {names} but the sdk pin ({pin}) predates it; sdk pin wins"
     features = frozenset(kept)
     return ArtifactFingerprint(
         features=features,

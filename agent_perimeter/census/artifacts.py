@@ -146,9 +146,7 @@ def _extract_tar(archive: Path, resolved_dest: Path) -> list[Path]:
             target = _member_target(resolved_dest, member.name)
             if member.isreg():
                 if member.size > MAX_FILE_BYTES:
-                    raise ArchiveRejected(
-                        f"member exceeds {MAX_FILE_BYTES} bytes: {member.name}"
-                    )
+                    raise ArchiveRejected(f"member exceeds {MAX_FILE_BYTES} bytes: {member.name}")
                 total += member.size
                 if total > MAX_UNCOMPRESSED_BYTES:
                     raise ArchiveRejected(f"uncompressed size exceeds {MAX_UNCOMPRESSED_BYTES}")
@@ -208,9 +206,7 @@ def _extract_zip(archive: Path, resolved_dest: Path) -> list[Path]:
                         )
                     total += len(chunk)
                     if total > MAX_UNCOMPRESSED_BYTES:
-                        raise ArchiveRejected(
-                            f"uncompressed size exceeds {MAX_UNCOMPRESSED_BYTES}"
-                        )
+                        raise ArchiveRejected(f"uncompressed size exceeds {MAX_UNCOMPRESSED_BYTES}")
                     dst.write(chunk)
             written.append(target)
     return written
