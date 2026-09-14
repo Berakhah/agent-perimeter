@@ -27,8 +27,54 @@
       "unknown": 71
     }
   },
+  "fetch_failures": {
+    "artifact": 13,
+    "by_cause": {
+      "archive rejected: member exceeds the per-file size cap": 2,
+      "declared size exceeds the archive cap": 1,
+      "no downloadable artifact": 8,
+      "package not found": 2
+    },
+    "by_ecosystem_status": {
+      "npm": {
+        "not_found": 2,
+        "ok": 196,
+        "parse_error": 1,
+        "too_large": 1
+      },
+      "pypi": {
+        "not_found": 8,
+        "ok": 191,
+        "parse_error": 1
+      }
+    },
+    "registry_pagination": 0,
+    "total": 13
+  },
+  "limitations": {
+    "floor_dropped_source_signal": {
+      "npm": 9,
+      "pypi": 2,
+      "total": 11
+    },
+    "pinned_at_floor_without_handler": {
+      "npm": 4,
+      "pypi": 18,
+      "total": 22
+    }
+  },
   "live_discover": null,
   "method_hash": "449edc04f9c3decc",
+  "population": {
+    "distribution": {
+      "none": 456,
+      "package_npm": 8591,
+      "package_other": 1353,
+      "package_pypi": 3652,
+      "remote_only": 17887
+    },
+    "size": 31939
+  },
   "revision": "2026-07-28",
   "sample_seed": 4188178442,
   "tool_version": "0.1.0"
