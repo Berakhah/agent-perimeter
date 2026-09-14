@@ -39,7 +39,9 @@ First publication. Full census of the official MCP Registry
   of up to 200 packaged entries per ecosystem — not a download ranking.
   Sample seed 4188178442 (recorded in `records.summary.json`, printed by the
   run). 200 npm + 200 PyPI entries selected; artifacts fetched OK for npm
-  n = 196 and PyPI n = 191. Never pooled for the headline figure.
+  n = 196 and PyPI n = 191. The report's headline leads with the two
+  per-ecosystem figures; the pooled figure follows, labelled "pooled across
+  both ecosystems, for reference only".
   - Classification (from `records.summary.json`): npm — 3 supports, 173
     does_not_support, 20 unknown; n = 176 classified, share 1.7%. PyPI — 0
     supports, 140 does_not_support, 51 unknown; n = 140 classified, share
@@ -82,16 +84,32 @@ First publication. Full census of the official MCP Registry
   - "supports 2026-07-28" is a statement about a published artifact —
     SDK version floor plus static feature detection — not about any
     deployment's observed behaviour.
-  - **Two-signals rule under-count:** 24 sampled artifacts (7 npm, 17 PyPI)
-    pin a 2.x SDK but expose no `server/discover` handler string in shipped
-    source, so under the two-signals rule (pin AND source signal) they count
-    as `does_not_support`. If the SDK serves `server/discover` on the
-    package's behalf, each is a false does-not-support; the census cannot
-    tell from the artifact alone. This is a detection limitation, not a
-    finding about those packages, and it biases the reported share
-    downward.
+  - **Two-signals rule under-count, pin without handler:** 22 examined
+    artifacts (4 npm, 18 PyPI) pin an SDK at or above the `server/discover`
+    floor (2.0.0) but expose no `server/discover` handler string in shipped
+    source — 21 of them pin a 2.x SDK, one PyPI artifact pins 3.x — so under
+    the two-signals rule (pin AND source signal) they count as
+    `does_not_support`. If the SDK serves `server/discover` on the package's
+    behalf, each is a false does-not-support; the census cannot tell from the
+    artifact alone. This is a detection limitation, not a finding about those
+    packages, and it biases the reported share downward. Stated in the report
+    and in `records.summary.json` under `limitations`.
+  - **Two-signals rule under-count, floor-dropped source signal:** 11
+    examined artifacts (9 npm, 2 PyPI) mention a 2026-07-28 feature in
+    shipped source but pin a pre-2.0 SDK; the pin wins and they count as
+    `does_not_support` (detect.py's caveat "source mentions … but the sdk
+    pin predates it"). Also stated in the report and the summary.
   - The 13 fetch failures are excluded from *n* and listed above; the 71
-    `unknown` records are excluded from the share's denominator.
+    `unknown` records are excluded from the share's denominator. An
+    unfetchable artifact is a fetch failure, never an `unknown`: `unknown`
+    means fetched and extracted but no SDK pin and no parseable source.
+- **Report corrections in this entry's second commit** (same run, re-rendered
+  from the stored rows without re-fetching; `records.csv` byte-identical):
+  headline order per-ecosystem first with the pooled figure labelled; the
+  `unknown` term definition reworded to match the arithmetic above; the
+  population distribution, fetch-failure split and per-cause breakdown,
+  packaged-only scope statement and both detection limitations added to
+  `census.html` and `records.summary.json`; shares rendered to one decimal.
 
 Every future entry here states, at minimum:
 

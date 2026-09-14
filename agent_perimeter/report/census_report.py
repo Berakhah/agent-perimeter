@@ -11,8 +11,8 @@ percentage:
   (`census/tier3.py`, `Derivation.PROBE`).
   `CensusRecord.feature_set_json["derivation"] == "probe"`.
 
-Roughly 70% of registry entries have no fetchable package at all (only a
-`remotes` URL - see docs/methodology.md), so the artifact stratum alone
+A majority of registry entries (56% in the 2026-09-14 run) have no fetchable
+package at all (only a `remotes` URL - see docs/methodology.md), so the artifact stratum alone
 cannot answer "what fraction of the public MCP ecosystem supports X". Both
 strata get their own section, their own n, their own method sentence, and
 their own headline claim. Nothing here sums them.
@@ -33,10 +33,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from packaging.version import InvalidVersion, Version
 
+from agent_perimeter.census.detect import SDK_FLOOR
 from agent_perimeter.census.sample import SELECTION_METHOD
 from agent_perimeter.db.models import CensusRecord, CensusRun
-from agent_perimeter.model.census import Ecosystem, PackageCoords
+from agent_perimeter.model.census import Ecosystem, FetchStatus, PackageCoords
+from agent_perimeter.model.feature import Feature
 
 TEMPLATES = Path(__file__).parent / "templates"
 
@@ -70,9 +73,11 @@ TERM_DEFINITIONS: dict[str, str] = {
         "deployment is exposed."
     ),
     "unknown": (
-        "Coordinates could not be resolved, the artifact could not be fetched, or the "
-        "source could not be parsed. Reported separately and never folded into a "
-        "denominator."
+        "The artifact was fetched and extracted, but it carries no SDK pin and no "
+        "parseable source, so neither signal of the two-signals rule is available. "
+        "Reported separately and never folded into a denominator. Fetch failures are "
+        "not unknowns: they are reported separately under the sample description and "
+        "never enter the examined or unknown counts."
     ),
     "conformance gap": (
         "A server that claims a revision and does not exhibit a feature that revision "
@@ -189,6 +194,140 @@ def _digest_for(record: CensusRecord, salt: bytes) -> str:
     return hashlib.blake2b(payload, key=salt, digest_size=16).hexdigest()
 
 
+# --- Sample description: population distribution, fetch failures, limits --
+
+# Every `distribution` value census/run.py::_distribution can assign, in the
+# order the report lists them. Any other value a record carries is still
+# counted, appended after these.
+DISTRIBUTIONS: tuple[str, ...] = (
+    "remote_only",
+    "package_npm",
+    "package_pypi",
+    "package_other",
+    "none",
+)
+
+# `CensusRecord.fetch_detail` is free text from census/artifacts.py and can
+# embed a package name or URL. It is never rendered. Each failure is bucketed
+# by the first matching prefix below and reported under that fixed label only;
+# a detail matching nothing lands in "other". Order matters: more specific
+# prefixes first.
+FETCH_FAILURE_CAUSES: tuple[tuple[str, str], ...] = (
+    ("no downloadable artifact", "no downloadable artifact"),
+    ("package not found", "package not found"),
+    ("artifact not found", "artifact not found"),
+    ("artifact request throttled", "artifact request throttled"),
+    ("artifact request returned", "artifact request returned a non-200 status"),
+    ("artifact download timed out", "artifact download timed out"),
+    ("artifact download failed", "artifact download failed"),
+    ("declared size exceeds", "declared size exceeds the archive cap"),
+    ("download exceeds", "download exceeds the archive cap"),
+    ("archive rejected: member exceeds", "archive rejected: member exceeds the per-file size cap"),
+    ("archive rejected: member resolves outside", "archive rejected: path traversal member"),
+    ("archive rejected: symlink member", "archive rejected: symlink member"),
+    ("archive rejected: special file member", "archive rejected: special file member"),
+    ("archive rejected: archive exceeds", "archive rejected: archive exceeds the size cap"),
+    ("archive rejected: uncompressed size exceeds", "archive rejected: uncompressed size cap"),
+    ("archive rejected", "archive rejected: other"),
+    ("local filesystem error", "local filesystem error"),
+)
+OTHER_CAUSE = "other"
+NOT_ATTEMPTED_STATUS = "not_attempted"
+FLOOR_DROPPED_CAVEAT_PREFIX = "source mentions "
+
+
+def population_distribution(records: Sequence[CensusRecord]) -> dict[str, int]:
+    """Count of records per `distribution` value, every known value present
+    (zero included) so the table never silently omits a category."""
+    counts: dict[str, int] = dict.fromkeys(DISTRIBUTIONS, 0)
+    for record in records:
+        counts[record.distribution] = counts.get(record.distribution, 0) + 1
+    return counts
+
+
+def _failure_cause(detail: str | None) -> str:
+    text = detail or ""
+    for prefix, label in FETCH_FAILURE_CAUSES:
+        if text.startswith(prefix):
+            return label
+    return OTHER_CAUSE
+
+
+def fetch_failure_breakdown(run: CensusRun, records: Sequence[CensusRecord]) -> dict[str, object]:
+    """Split `run.fetch_failures` into registry-pagination vs artifact-fetch
+    failures, with the artifact failures bucketed by fixed cause label and
+    by ecosystem/status. `run.fetch_failures` is `log.failures + artifact
+    failures` (census/run.py), so the registry share is the remainder.
+    """
+    artifact_failed = [
+        r for r in records if r.fetch_status not in (FetchStatus.OK.value, NOT_ATTEMPTED_STATUS)
+    ]
+    by_cause: dict[str, int] = {}
+    for record in artifact_failed:
+        label = _failure_cause(record.fetch_detail)
+        by_cause[label] = by_cause.get(label, 0) + 1
+
+    by_ecosystem_status: dict[str, dict[str, int]] = {}
+    for record in records:
+        if record.ecosystem is None or record.fetch_status == NOT_ATTEMPTED_STATUS:
+            continue
+        row = by_ecosystem_status.setdefault(record.ecosystem, {})
+        row[record.fetch_status] = row.get(record.fetch_status, 0) + 1
+
+    artifact = len(artifact_failed)
+    return {
+        "total": run.fetch_failures,
+        "registry_pagination": max(run.fetch_failures - artifact, 0),
+        "artifact": artifact,
+        "by_cause": dict(sorted(by_cause.items())),
+        "by_ecosystem_status": {
+            eco: dict(sorted(statuses.items()))
+            for eco, statuses in sorted(by_ecosystem_status.items())
+        },
+    }
+
+
+def _pin_at_or_above_floor(record: CensusRecord) -> bool:
+    if record.sdk_version is None or record.ecosystem is None:
+        return False
+    floor = SDK_FLOOR.get(Feature(SUPPORT_FEATURE), {}).get(Ecosystem(record.ecosystem))
+    if floor is None:
+        return False
+    try:
+        return Version(record.sdk_version) >= Version(floor)
+    except InvalidVersion:
+        return False
+
+
+def detection_limitations(artifact_records: Sequence[CensusRecord]) -> dict[str, dict[str, int]]:
+    """Two known under-counts of the two-signals rule (pin AND source signal),
+    per ecosystem:
+
+    - `pinned_at_floor_without_handler`: the pin is at or above the
+      server/discover floor but no handler string appears in shipped source,
+      so the record counts as does_not_support. If the SDK serves the method
+      on the package's behalf, that is a false does-not-support the artifact
+      alone cannot resolve.
+    - `floor_dropped_source_signal`: source mentions a revision feature but
+      the pin predates the floor, so the pin wins (detect.py's caveat).
+    """
+    pinned = dict.fromkeys((e.value for e in Ecosystem), 0)
+    dropped = dict.fromkeys((e.value for e in Ecosystem), 0)
+    for record in artifact_records:
+        classified = _classify(record)
+        if classified is None or record.ecosystem not in pinned:
+            continue
+        if classified[1] == "does_not_support" and _pin_at_or_above_floor(record):
+            pinned[record.ecosystem] += 1
+        caveat = record.feature_set_json.get("caveat")
+        if isinstance(caveat, str) and caveat.startswith(FLOOR_DROPPED_CAVEAT_PREFIX):
+            dropped[record.ecosystem] += 1
+    return {
+        "pinned_at_floor_without_handler": {**pinned, "total": sum(pinned.values())},
+        "floor_dropped_source_signal": {**dropped, "total": sum(dropped.values())},
+    }
+
+
 def _ecosystem_breakdown(artifact_records: Sequence[CensusRecord]) -> dict[str, dict[str, object]]:
     breakdown: dict[str, dict[str, object]] = {}
     for eco in Ecosystem:
@@ -212,6 +351,8 @@ def render_census(run: CensusRun, records: Sequence[CensusRecord]) -> str:
     artifact_agg = aggregate(artifact_records)[REVISION]
     probe_agg = aggregate(probe_records)[REVISION] if probe_records else None
 
+    distribution = population_distribution(records)
+    packaged = sum(v for k, v in distribution.items() if k.startswith("package_"))
     return template.render(
         css=(TEMPLATES / "report.css").read_text(encoding="utf-8"),
         run=run,
@@ -223,6 +364,12 @@ def render_census(run: CensusRun, records: Sequence[CensusRecord]) -> str:
         by_ecosystem=_ecosystem_breakdown(artifact_records),
         probe_agg=probe_agg,
         probe_n=len(probe_records),
+        distribution=distribution,
+        packaged_count=packaged,
+        remote_only_count=distribution.get("remote_only", 0),
+        fetch_failures=fetch_failure_breakdown(run, records),
+        limitations=detection_limitations(artifact_records),
+        support_floor=SDK_FLOOR[Feature(SUPPORT_FEATURE)][Ecosystem.NPM],
     )
 
 
@@ -291,6 +438,14 @@ def export_raw(run: CensusRun, records: Sequence[CensusRecord], *, salt: bytes, 
             if probe_records
             else None
         ),
+        # Sample description, so the sidecar carries what the report's
+        # sample section states and a reader can diff the two.
+        "population": {
+            "size": run.population_size,
+            "distribution": population_distribution(records),
+        },
+        "fetch_failures": fetch_failure_breakdown(run, records),
+        "limitations": detection_limitations(artifact_records),
     }
     summary_path = out / "records.summary.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")

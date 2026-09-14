@@ -11,10 +11,19 @@
 
 <h2>Headline</h2>
 <div class="strip">
-<p data-testid="unknown-count"><strong>Artifact stratum.</strong> Of {{ artifact_n_examined }} npm/PyPI packages examined,
-{{ artifact_agg.supports }} of {{ artifact_agg.n }} show published-artifact evidence of support
-for <span class="mono">{{ revision }}</span> ({{ artifact_agg.does_not_support }} show no such
-evidence, {{ artifact_agg.unknown }} unknown).</p>
+<p data-testid="unknown-count"><strong>Artifact stratum, per ecosystem.</strong>
+npm: of {{ by_ecosystem.npm.n_examined }} packages examined,
+{{ by_ecosystem.npm.aggregate.supports }} of {{ by_ecosystem.npm.aggregate.n }} show
+published-artifact evidence of support for <span class="mono">{{ revision }}</span>
+({{ by_ecosystem.npm.aggregate.does_not_support }} show no such evidence,
+{{ by_ecosystem.npm.aggregate.unknown }} unknown).
+PyPI: of {{ by_ecosystem.pypi.n_examined }} packages examined,
+{{ by_ecosystem.pypi.aggregate.supports }} of {{ by_ecosystem.pypi.aggregate.n }} show such
+evidence ({{ by_ecosystem.pypi.aggregate.does_not_support }} show no such evidence,
+{{ by_ecosystem.pypi.aggregate.unknown }} unknown).
+<em>Pooled across both ecosystems, for reference only</em> — the registry's npm:PyPI split
+means this figure does not describe either ecosystem: of {{ artifact_n_examined }} examined,
+{{ artifact_agg.supports }} of {{ artifact_agg.n }} ({{ artifact_agg.unknown }} unknown).</p>
 
 {% if probe_agg is none %}
 <p><strong>Live-discover stratum.</strong> Tier 3 remote-stratum sample: not yet run. This
@@ -33,14 +42,53 @@ count.</p>
 combined with the other, and neither stands in for "the MCP ecosystem" as a whole.</p>
 </div>
 
-<h2>Collection window</h2>
+<h2>Collection window and sample</h2>
 <table>
 <tr><th>Started</th><td class="mono">{{ run.started_at.isoformat() }}</td></tr>
 <tr><th>Finished</th><td class="mono">{{ run.finished_at.isoformat() if run.finished_at else "in progress" }}</td></tr>
 <tr><th>Population</th><td class="num" data-testid="population-size">{{ run.population_size }}</td></tr>
 <tr><th>Sample seed</th><td class="num" data-testid="sample-seed">{{ run.sample_seed }}</td></tr>
 </table>
-<p data-testid="fetch-failures">Fetch failures: {{ run.fetch_failures }}</p>
+
+<h3>Population by distribution</h3>
+<table>
+<tr><th>Distribution</th><th class="num">Entries</th></tr>
+{% for name, count in distribution.items() %}
+<tr><td class="mono">{{ name }}</td><td class="num" data-testid="distribution-{{ name }}">{{ count }}</td></tr>
+{% endfor %}
+</table>
+<p class="deriv"><strong>Scope.</strong> Tier 2 samples only from the {{ packaged_count }}
+packaged registry entries (<span class="mono">package_npm</span> and
+<span class="mono">package_pypi</span> are fetchable; <span class="mono">package_other</span>
+ecosystems are not modelled). The {{ remote_only_count }} remote-only entries carry no
+fetchable artifact and are unexamined by construction — every artifact-stratum figure below
+is a statement about packaged entries, never about the population as a whole.</p>
+
+<h3>Fetch failures</h3>
+<p data-testid="fetch-failures">Fetch failures: {{ run.fetch_failures }}
+(<span data-testid="fetch-failures-registry">{{ fetch_failures.registry_pagination }}</span>
+registry pagination,
+<span data-testid="fetch-failures-artifact">{{ fetch_failures.artifact }}</span> artifact
+fetch). A failed artifact fetch is excluded from every examined count and every denominator,
+and is listed here as part of the sample, never as an unknown.</p>
+{% if fetch_failures.by_cause %}
+<table>
+<tr><th>Artifact-fetch failure cause</th><th class="num">Count</th></tr>
+{% for cause, count in fetch_failures.by_cause.items() %}
+<tr><td>{{ cause }}</td><td class="num">{{ count }}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+{% if fetch_failures.by_ecosystem_status %}
+<table>
+<tr><th>Ecosystem</th><th>Fetch status</th><th class="num">Count</th></tr>
+{% for eco, statuses in fetch_failures.by_ecosystem_status.items() %}
+{% for status, count in statuses.items() %}
+<tr><td class="mono">{{ eco }}</td><td class="mono">{{ status }}</td><td class="num">{{ count }}</td></tr>
+{% endfor %}
+{% endfor %}
+</table>
+{% endif %}
 
 <h2>Artifact stratum</h2>
 <p><strong>Method.</strong> {{ selection_method|safe }}</p>
@@ -56,7 +104,7 @@ combined with the other, and neither stands in for "the MCP ecosystem" as a whol
   <td class="num">{{ row.aggregate.supports }}</td>
   <td class="num">{{ row.aggregate.does_not_support }}</td>
   <td class="num">{{ row.aggregate.unknown }} unknown</td>
-  <td class="num">{{ "n/a" if row.aggregate.share is none else "%.0f%%"|format(row.aggregate.share * 100) }}</td>
+  <td class="num">{{ "n/a" if row.aggregate.share is none else "%.1f%%"|format(row.aggregate.share * 100) }}</td>
 </tr>
 {% endfor %}
 <tr>
@@ -66,13 +114,40 @@ combined with the other, and neither stands in for "the MCP ecosystem" as a whol
   <td class="num">{{ artifact_agg.supports }}</td>
   <td class="num">{{ artifact_agg.does_not_support }}</td>
   <td class="num">{{ artifact_agg.unknown }} unknown</td>
-  <td class="num">{{ "n/a" if artifact_agg.share is none else "%.0f%%"|format(artifact_agg.share * 100) }}</td>
+  <td class="num">{{ "n/a" if artifact_agg.share is none else "%.1f%%"|format(artifact_agg.share * 100) }}</td>
 </tr>
 </table>
 <p class="deriv">Tier-2 target n is per ecosystem, not pooled: up to
 <span data-testid="tier2-n">{{ run.tier2_n }}</span> npm packages and up to {{ run.tier2_n }}
 PyPI packages are independently drawn at random (seed {{ run.sample_seed }}) within each
-ecosystem before any artifact is fetched.</p>
+ecosystem before any artifact is fetched. The pooled row is for reference only.</p>
+
+<h3>Detection limitations</h3>
+<p class="deriv">"Supports" requires two signals in the published artifact: an SDK pin at or
+above <span class="mono">{{ support_floor }}</span> <em>and</em> a
+<span class="mono">server/discover</span> handler string in shipped source. Two known
+under-counts follow from that rule; both are limitations of the method, not findings about
+the packages concerned.</p>
+<table>
+<tr><th>Limitation</th><th class="num">npm</th><th class="num">PyPI</th><th class="num">Total</th></tr>
+<tr>
+  <td>Pinned at or above the floor, but no handler string in shipped source — counted as
+  does not support. If the SDK serves <span class="mono">server/discover</span> on the
+  package's behalf, each is a false does-not-support the artifact alone cannot resolve.</td>
+  <td class="num" data-testid="pinned-without-handler-npm">{{ limitations.pinned_at_floor_without_handler.npm }}</td>
+  <td class="num" data-testid="pinned-without-handler-pypi">{{ limitations.pinned_at_floor_without_handler.pypi }}</td>
+  <td class="num" data-testid="pinned-without-handler-total">{{ limitations.pinned_at_floor_without_handler.total }}</td>
+</tr>
+<tr>
+  <td>Source mentions a <span class="mono">{{ revision }}</span> feature, but the SDK pin
+  predates the floor — the pin wins and the record counts as does not support.</td>
+  <td class="num" data-testid="floor-dropped-npm">{{ limitations.floor_dropped_source_signal.npm }}</td>
+  <td class="num" data-testid="floor-dropped-pypi">{{ limitations.floor_dropped_source_signal.pypi }}</td>
+  <td class="num" data-testid="floor-dropped-total">{{ limitations.floor_dropped_source_signal.total }}</td>
+</tr>
+</table>
+<p class="deriv">Both bias the reported share downward. "Supports {{ revision }}" is a
+statement about a published artifact, not about any deployment's observed behaviour.</p>
 
 <h2>Live-discover stratum</h2>
 {% if probe_agg is none %}

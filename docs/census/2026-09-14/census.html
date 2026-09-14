@@ -48,10 +48,19 @@ footer { margin-top: 3rem; border-top: 1px solid var(--rule); padding-top: 1rem;
 
 <h2>Headline</h2>
 <div class="strip">
-<p data-testid="unknown-count"><strong>Artifact stratum.</strong> Of 387 npm/PyPI packages examined,
-3 of 316 show published-artifact evidence of support
-for <span class="mono">2026-07-28</span> (313 show no such
-evidence, 71 unknown).</p>
+<p data-testid="unknown-count"><strong>Artifact stratum, per ecosystem.</strong>
+npm: of 196 packages examined,
+3 of 176 show
+published-artifact evidence of support for <span class="mono">2026-07-28</span>
+(173 show no such evidence,
+20 unknown).
+PyPI: of 191 packages examined,
+0 of 140 show such
+evidence (140 show no such evidence,
+51 unknown).
+<em>Pooled across both ecosystems, for reference only</em> — the registry's npm:PyPI split
+means this figure does not describe either ecosystem: of 387 examined,
+3 of 316 (71 unknown).</p>
 
 
 <p><strong>Live-discover stratum.</strong> Tier 3 remote-stratum sample: not yet run. This
@@ -63,14 +72,81 @@ report does not estimate live, ecosystem-wide support from artifact evidence alo
 combined with the other, and neither stands in for "the MCP ecosystem" as a whole.</p>
 </div>
 
-<h2>Collection window</h2>
+<h2>Collection window and sample</h2>
 <table>
 <tr><th>Started</th><td class="mono">2026-09-14T20:34:16.441023+00:00</td></tr>
 <tr><th>Finished</th><td class="mono">2026-09-14T21:01:33.063316+00:00</td></tr>
 <tr><th>Population</th><td class="num" data-testid="population-size">31939</td></tr>
 <tr><th>Sample seed</th><td class="num" data-testid="sample-seed">4188178442</td></tr>
 </table>
-<p data-testid="fetch-failures">Fetch failures: 13</p>
+
+<h3>Population by distribution</h3>
+<table>
+<tr><th>Distribution</th><th class="num">Entries</th></tr>
+
+<tr><td class="mono">remote_only</td><td class="num" data-testid="distribution-remote_only">17887</td></tr>
+
+<tr><td class="mono">package_npm</td><td class="num" data-testid="distribution-package_npm">8591</td></tr>
+
+<tr><td class="mono">package_pypi</td><td class="num" data-testid="distribution-package_pypi">3652</td></tr>
+
+<tr><td class="mono">package_other</td><td class="num" data-testid="distribution-package_other">1353</td></tr>
+
+<tr><td class="mono">none</td><td class="num" data-testid="distribution-none">456</td></tr>
+
+</table>
+<p class="deriv"><strong>Scope.</strong> Tier 2 samples only from the 13596
+packaged registry entries (<span class="mono">package_npm</span> and
+<span class="mono">package_pypi</span> are fetchable; <span class="mono">package_other</span>
+ecosystems are not modelled). The 17887 remote-only entries carry no
+fetchable artifact and are unexamined by construction — every artifact-stratum figure below
+is a statement about packaged entries, never about the population as a whole.</p>
+
+<h3>Fetch failures</h3>
+<p data-testid="fetch-failures">Fetch failures: 13
+(<span data-testid="fetch-failures-registry">0</span>
+registry pagination,
+<span data-testid="fetch-failures-artifact">13</span> artifact
+fetch). A failed artifact fetch is excluded from every examined count and every denominator,
+and is listed here as part of the sample, never as an unknown.</p>
+
+<table>
+<tr><th>Artifact-fetch failure cause</th><th class="num">Count</th></tr>
+
+<tr><td>archive rejected: member exceeds the per-file size cap</td><td class="num">2</td></tr>
+
+<tr><td>declared size exceeds the archive cap</td><td class="num">1</td></tr>
+
+<tr><td>no downloadable artifact</td><td class="num">8</td></tr>
+
+<tr><td>package not found</td><td class="num">2</td></tr>
+
+</table>
+
+
+<table>
+<tr><th>Ecosystem</th><th>Fetch status</th><th class="num">Count</th></tr>
+
+
+<tr><td class="mono">npm</td><td class="mono">not_found</td><td class="num">2</td></tr>
+
+<tr><td class="mono">npm</td><td class="mono">ok</td><td class="num">196</td></tr>
+
+<tr><td class="mono">npm</td><td class="mono">parse_error</td><td class="num">1</td></tr>
+
+<tr><td class="mono">npm</td><td class="mono">too_large</td><td class="num">1</td></tr>
+
+
+
+<tr><td class="mono">pypi</td><td class="mono">not_found</td><td class="num">8</td></tr>
+
+<tr><td class="mono">pypi</td><td class="mono">ok</td><td class="num">191</td></tr>
+
+<tr><td class="mono">pypi</td><td class="mono">parse_error</td><td class="num">1</td></tr>
+
+
+</table>
+
 
 <h2>Artifact stratum</h2>
 <p><strong>Method.</strong> Tier 2 is a uniform random sample of up to n packaged entries within each ecosystem, drawn with a recorded seed so the same population and seed reproduce the same sample. Ecosystems are sampled separately because npm and PyPI are different populations. Entries with no fetchable package coordinates (remote-only, or a package type this tool does not model) are not eligible and are counted in the report. The registry itself carries no popularity signal, and this sample is not weighted by downloads, stars, or any proxy for use.</p>
@@ -86,7 +162,7 @@ combined with the other, and neither stands in for "the MCP ecosystem" as a whol
   <td class="num">0</td>
   <td class="num">140</td>
   <td class="num">51 unknown</td>
-  <td class="num">0%</td>
+  <td class="num">0.0%</td>
 </tr>
 
 <tr>
@@ -96,7 +172,7 @@ combined with the other, and neither stands in for "the MCP ecosystem" as a whol
   <td class="num">3</td>
   <td class="num">173</td>
   <td class="num">20 unknown</td>
-  <td class="num">2%</td>
+  <td class="num">1.7%</td>
 </tr>
 
 <tr>
@@ -106,13 +182,40 @@ combined with the other, and neither stands in for "the MCP ecosystem" as a whol
   <td class="num">3</td>
   <td class="num">313</td>
   <td class="num">71 unknown</td>
-  <td class="num">1%</td>
+  <td class="num">0.9%</td>
 </tr>
 </table>
 <p class="deriv">Tier-2 target n is per ecosystem, not pooled: up to
 <span data-testid="tier2-n">200</span> npm packages and up to 200
 PyPI packages are independently drawn at random (seed 4188178442) within each
-ecosystem before any artifact is fetched.</p>
+ecosystem before any artifact is fetched. The pooled row is for reference only.</p>
+
+<h3>Detection limitations</h3>
+<p class="deriv">"Supports" requires two signals in the published artifact: an SDK pin at or
+above <span class="mono">2.0.0</span> <em>and</em> a
+<span class="mono">server/discover</span> handler string in shipped source. Two known
+under-counts follow from that rule; both are limitations of the method, not findings about
+the packages concerned.</p>
+<table>
+<tr><th>Limitation</th><th class="num">npm</th><th class="num">PyPI</th><th class="num">Total</th></tr>
+<tr>
+  <td>Pinned at or above the floor, but no handler string in shipped source — counted as
+  does not support. If the SDK serves <span class="mono">server/discover</span> on the
+  package's behalf, each is a false does-not-support the artifact alone cannot resolve.</td>
+  <td class="num" data-testid="pinned-without-handler-npm">4</td>
+  <td class="num" data-testid="pinned-without-handler-pypi">18</td>
+  <td class="num" data-testid="pinned-without-handler-total">22</td>
+</tr>
+<tr>
+  <td>Source mentions a <span class="mono">2026-07-28</span> feature, but the SDK pin
+  predates the floor — the pin wins and the record counts as does not support.</td>
+  <td class="num" data-testid="floor-dropped-npm">9</td>
+  <td class="num" data-testid="floor-dropped-pypi">2</td>
+  <td class="num" data-testid="floor-dropped-total">11</td>
+</tr>
+</table>
+<p class="deriv">Both bias the reported share downward. "Supports 2026-07-28" is a
+statement about a published artifact, not about any deployment's observed behaviour.</p>
 
 <h2>Live-discover stratum</h2>
 
@@ -136,7 +239,7 @@ publication.</p>
 <dd>The published artifact pins an SDK below that floor, or contains no such handler. It does not mean the software is insecure, and it does not mean a deployment is exposed.</dd>
 
 <dt><strong>unknown</strong></dt>
-<dd>Coordinates could not be resolved, the artifact could not be fetched, or the source could not be parsed. Reported separately and never folded into a denominator.</dd>
+<dd>The artifact was fetched and extracted, but it carries no SDK pin and no parseable source, so neither signal of the two-signals rule is available. Reported separately and never folded into a denominator. Fetch failures are not unknowns: they are reported separately under the sample description and never enter the examined or unknown counts.</dd>
 
 <dt><strong>conformance gap</strong></dt>
 <dd>A server that claims a revision and does not exhibit a feature that revision requires. Measurable only against a live authorised target, so it appears in scan reports and never in this census.</dd>
