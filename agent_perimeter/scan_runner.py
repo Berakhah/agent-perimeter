@@ -36,7 +36,7 @@ from agent_perimeter.transport.revision import Fingerprint, fingerprint
 from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
 from agent_perimeter.transport.streamable_http import StreamableHttpTransport
 
-DEFAULT_CONTACT_URL = "https://github.com/USER/agent-perimeter"
+DEFAULT_CONTACT_URL = "https://github.com/Berakhah/agent-perimeter"
 
 # Same DSN alembic.ini's `sqlalchemy.url` uses (migrations/env.py expands
 # ${POSTGRES_PASSWORD}/${POSTGRES_HOST} the same way, at read time, since

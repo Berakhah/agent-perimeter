@@ -23,7 +23,7 @@ USER_AGENT = (
     # Same placeholder repo path as agent_perimeter.cli.DEFAULT_CONTACT_URL - not
     # imported from there to avoid pulling the CLI's typer/transport dependency
     # graph into a read-only fetch module for one string.
-    "(+https://github.com/USER/agent-perimeter/blob/main/docs/security.md)"
+    "(+https://github.com/Berakhah/agent-perimeter/blob/main/docs/security.md)"
 )
 
 # A page holds at most this many entries; also the signal the loud guard below

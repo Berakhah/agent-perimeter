@@ -57,7 +57,7 @@
       ],
       "tool": {
         "driver": {
-          "informationUri": "https://github.com/USER/agent-perimeter",
+          "informationUri": "https://github.com/Berakhah/agent-perimeter",
           "name": "agent-perimeter",
           "rules": [
             {

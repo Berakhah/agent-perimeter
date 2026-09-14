@@ -24,7 +24,7 @@ NPM_DOWNLOADS = "https://api.npmjs.org/downloads/point/last-month/{name}"
 
 USER_AGENT = (
     f"agent-perimeter/{__version__} "
-    "(+https://github.com/USER/agent-perimeter/blob/main/docs/security.md)"
+    "(+https://github.com/Berakhah/agent-perimeter/blob/main/docs/security.md)"
 )
 
 _TIMEOUT_S = 10.0
