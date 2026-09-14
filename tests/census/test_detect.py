@@ -234,16 +234,38 @@ def test_source_signal_without_any_sdk_pin_is_unknown_not_supports(tmp_path: Pat
     assert "pins no SDK" in (fp.claim.caveat or "")
 
 
-def test_a_floorless_feature_survives_without_a_pin(tmp_path: Path) -> None:
-    """PARAM_HEADERS has no SDK_FLOOR entry (a schema annotation convention,
-    not an SDK API), so its source evidence stands on its own."""
+def test_an_unpinned_artifact_is_unknown_even_with_a_floorless_signal(tmp_path: Path) -> None:
+    """Re-review residual 1: an unpinned artifact is unknown, full stop. Keeping
+    the floorless PARAM_HEADERS made is_unknown False and the report bucketed
+    the row as does_not_support, contradicting its own "unknown" definition."""
     (tmp_path / "server.py").write_text(
         'SCHEMA = {"x-mcp-header": True, "server/discover": 1}\n', encoding="utf-8"
     )
     fp = detect_features(tmp_path)
-    assert fp.features == frozenset({Feature.PARAM_HEADERS})
-    assert not fp.is_unknown
-    assert "server_discover" in (fp.claim.caveat or "")
+    assert fp.features == frozenset()
+    assert fp.is_unknown
+    caveat = fp.claim.caveat or ""
+    assert "pins no SDK" in caveat
+    assert "server_discover" in caveat and "param_headers" in caveat
+
+
+def test_a_wildcard_equality_pin_parses_to_its_prefix(tmp_path: Path) -> None:
+    """Re-review residual 2: `mcp==2.0.*` has specifier version `2.0.*`,
+    which Version() rejects; the pin is the prefix, not None."""
+    assert detect._pin_from_requirement("mcp==2.0.*", detect._PY_SDK_NAMES) == "2.0"
+    d = tmp_path / "x-1.0"
+    d.mkdir()
+    (d / "PKG-INFO").write_text("Requires-Dist: mcp==2.0.*\n", encoding="utf-8")
+    assert detect.detect_sdk_pin(tmp_path) == "2.0"
+
+
+def test_requirements_txt_inline_comments_are_stripped(tmp_path: Path) -> None:
+    """Re-review residual 3: pip strips `\\s+#.*$` from a requirements line;
+    `Requirement()` alone does not, and would reject the line."""
+    (tmp_path / "requirements.txt").write_text(
+        "httpx  # http client\nmcp>=1.0  # why this floor\n", encoding="utf-8"
+    )
+    assert detect.detect_sdk_pin(tmp_path) == "1.0"
 
 
 # --- Final review: fetch -> detect end to end, through the real manifest

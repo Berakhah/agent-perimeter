@@ -5,9 +5,9 @@ the pinned MCP SDK version (a package pinned to an SDK release predating the
 2026-07-28 revision cannot serve it, regardless of what its own source says)
 and a scan of the source for the handlers that revision requires. Where the
 two disagree, the lower wins and a caveat is attached; where the artifact
-pins no SDK at all, source evidence for any floor-gated feature is dropped
-and the artifact is reported unknown - a claim that hedges is worth more
-than a claim that is wrong.
+pins no SDK at all, every source signal is dropped (floor-gated or not) and
+the artifact is reported unknown - a claim that hedges is worth more than a
+claim that is wrong.
 
 The pin recorded is the *lowest lower bound* of the requirement, never a
 cap: `mcp<2.0.0,>=1.9.0` (the order setuptools writes `Requires-Dist:` in)
@@ -102,6 +102,9 @@ _NPM_TOKEN_RE = re.compile(
 )
 _NPM_CAP_OPERATORS = frozenset({"<", "<="})
 
+# requirements.txt inline comment, per pip: whitespace then `#` to end of line.
+_REQ_COMMENT_RE = re.compile(r"\s+#.*$")
+
 
 @dataclass(slots=True, frozen=True)
 class ArtifactFingerprint:
@@ -120,6 +123,9 @@ def _lowest(candidates: list[str]) -> str | None:
     """The original text of the smallest parseable version in `candidates`."""
     parsed: list[tuple[Version, str]] = []
     for text in candidates:
+        # `==2.0.*` is a legal specifier whose version part Version() rejects;
+        # the lower bound of that wildcard is its prefix.
+        text = text.removesuffix(".*")
         try:
             parsed.append((Version(text), text))
         except InvalidVersion:
@@ -192,7 +198,8 @@ def _pin_from_requirements_txt(requirements: Path) -> str | None:
     except OSError:
         return None
     for line in text.splitlines():
-        line = line.strip()
+        # pip's rule: a comment starts at whitespace followed by `#`.
+        line = _REQ_COMMENT_RE.sub("", line).strip()
         if not line or line.startswith("#"):
             continue
         pin = _pin_from_requirement(line, _PY_SDK_NAMES)
@@ -319,16 +326,16 @@ def _apply_sdk_floor(
 ) -> tuple[set[Feature], set[Feature]]:
     """Split `observed` into (kept, dropped) against SDK_FLOOR.
 
-    A floor-gated feature is dropped when the pin is strictly below its floor,
-    or when there is no pin at all: "supports" requires a pin at or above the
-    floor AND the source signal, so an unpinned artifact cannot assert any
-    feature that has a floor. Features with no floor entry (PARAM_HEADERS)
-    stand on source evidence alone, and an unparseable pin is treated as
-    "cannot rule it out".
+    A floor-gated feature is dropped when the pin is strictly below its floor.
+    With no pin at all, *every* observed feature is dropped, floorless ones
+    included: an unpinned artifact is unknown by definition, and keeping a
+    floorless signal would turn it into a does-not-support row in the report.
+    With a pin present, features with no floor entry (PARAM_HEADERS) stand on
+    source evidence alone, and an unparseable pin is treated as "cannot rule
+    it out".
     """
     if pin is None:
-        kept_unpinned = {f for f in observed if f not in SDK_FLOOR}
-        return kept_unpinned, set(observed) - kept_unpinned
+        return set(), set(observed)
     try:
         pin_version = Version(pin)
     except InvalidVersion:
