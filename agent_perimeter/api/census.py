@@ -30,5 +30,6 @@ def get_census_run(run_id: int, request: Request) -> dict[str, object]:
         "tool_version": run.tool_version,
         "method_hash": run.method_hash,
         "tier2_n": run.tier2_n,
+        "sample_seed": run.sample_seed,
         "registry_endpoint": run.registry_endpoint,
     }

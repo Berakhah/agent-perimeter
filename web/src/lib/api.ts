@@ -64,6 +64,7 @@ export interface CensusRun {
   tool_version: string;
   method_hash: string;
   tier2_n: number;
+  sample_seed: number | null;
   registry_endpoint: string;
 }
 

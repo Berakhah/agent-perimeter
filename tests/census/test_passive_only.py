@@ -172,10 +172,11 @@ _METHOD_RE = re.compile(r"^[a-z]+/[a-zA-Z]+$")
 def test_every_module_but_tier3_talks_only_to_the_allowed_hosts() -> None:
     """Tiers 1-2 are artifact-only: the host list is closed and literal.
 
-    `github.com` is allowed alongside the five hosts tiers 1-2 actually send
-    requests to: it never appears as a request target in this package, only
-    as the contact URL baked into every `USER_AGENT` constant (fetch.py,
-    artifacts.py, sample.py) per the registry-collection convention of
+    `github.com` is allowed alongside the three hosts tiers 1-2 actually send
+    requests to (tier-2 selection is a seeded draw and contacts nothing): it
+    never appears as a request target in this package, only as the contact
+    URL baked into every `USER_AGENT` constant (fetch.py, artifacts.py) per
+    the registry-collection convention of
     identifying the tool with a contact URL. A regex over raw source can't
     tell "host embedded in a header value" from "host requested," so it has
     to be told this one is the former.
@@ -184,8 +185,6 @@ def test_every_module_but_tier3_talks_only_to_the_allowed_hosts() -> None:
         "registry.modelcontextprotocol.io",
         "pypi.org",
         "registry.npmjs.org",
-        "pypistats.org",
-        "api.npmjs.org",
         "github.com",
     }
     src = "\n".join(

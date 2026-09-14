@@ -196,3 +196,22 @@ def test_probe_stratum_never_renders_a_bare_percentage() -> None:
     assert "%" not in section
     assert "5" in section and "7" in section  # unknown / sampled counts, stated as raw numbers
     assert "non-response" in section.lower()
+
+
+# --- Task 7: tier 2 is a seeded random draw, and the seed is published ------
+
+
+def test_the_report_and_summary_state_the_sample_seed(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A seeded draw is only reproducible if the seed is published with it:
+    the rendered report and the raw-data sidecar must both carry it."""
+    import json
+
+    run, records = census_fixture(sample_seed=8675309)
+    html = render_census(run, records)
+    assert 'data-testid="sample-seed">8675309<' in html
+    assert "seed 8675309" in html
+    assert "download count" not in html.lower()
+
+    export_raw(run, records, salt=b"test-salt", out=tmp_path)
+    summary = json.loads((tmp_path / "records.summary.json").read_text(encoding="utf-8"))
+    assert summary["sample_seed"] == 8675309

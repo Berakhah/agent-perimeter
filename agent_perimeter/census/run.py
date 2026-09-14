@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import secrets
 import shutil
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import httpx
@@ -15,7 +16,6 @@ from sqlalchemy.orm import Session
 from agent_perimeter import __version__
 from agent_perimeter.census import artifacts, detect, fetch, sample
 from agent_perimeter.census.fetch import RegistryEntry
-from agent_perimeter.census.sample import RankedEntry
 from agent_perimeter.db.models import CensusRecord, CensusRun
 from agent_perimeter.model.census import FetchStatus
 
@@ -61,10 +61,9 @@ def _digest_for(entry: RegistryEntry, salt: bytes) -> str:
 
 
 def _record_for(
-    run: CensusRun, entry: RegistryEntry, ranked_by_id: dict[str, RankedEntry], salt: bytes
+    run: CensusRun, entry: RegistryEntry, selected: set[str], salt: bytes
 ) -> CensusRecord:
     coords = entry.coords
-    ranked_entry = ranked_by_id.get(entry.registry_id)
     return CensusRecord(
         census_run_id=run.id,
         registry_id=entry.registry_id,
@@ -73,8 +72,12 @@ def _record_for(
         package_name=coords.name if coords is not None else None,
         distribution=_distribution(entry),
         fetch_status=NOT_ATTEMPTED,
-        rank_metric=ranked_entry.downloads if ranked_entry is not None else None,
-        rank_metric_source=ranked_entry.rank_source.value if ranked_entry is not None else None,
+        # No download ranking exists any more (Task 7): the column stays in
+        # the schema and is always None. rank_metric_source names the
+        # selection method for a tier-2 entry so a reader can tell "drawn"
+        # from "never eligible" without re-running the draw.
+        rank_metric=None,
+        rank_metric_source=sample.SELECTION_SOURCE if entry.registry_id in selected else None,
         collected_at=datetime.now(UTC),
     )
 
@@ -91,7 +94,22 @@ def _record_failures(session: Session, run: CensusRun) -> int:
     return sum(1 for status in statuses if status not in (FetchStatus.OK.value, NOT_ATTEMPTED))
 
 
-def run_census(session: Session, client: httpx.Client, *, endpoint: str, tier2_n: int) -> CensusRun:
+def run_census(
+    session: Session,
+    client: httpx.Client,
+    *,
+    endpoint: str,
+    tier2_n: int,
+    seed: int | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> CensusRun:
+    """Collect the census: paginate the registry, draw tier 2, fetch its artifacts.
+
+    `seed` is the tier-2 sample seed; generated (and persisted on the run) when
+    None so every run is reproducible from its own row. `progress` receives a
+    short line at each stage so a real run over ~32k entries is never a black box.
+    """
+    _say = progress or (lambda _m: None)
     started = datetime.now(UTC)
     log = fetch.FetchLog()
     run = CensusRun(
@@ -113,15 +131,21 @@ def run_census(session: Session, client: httpx.Client, *, endpoint: str, tier2_n
 
     entries = list(fetch.paginate(client, endpoint, log))
     run.population_size = len(entries)
+    _say(f"population: {len(entries)} entries")
 
-    ranked = sample.rank(client, entries)
-    ranked_by_id = {r.entry.registry_id: r for r in ranked}
-    tier2 = {r.entry.registry_id for r in sample.top_n(ranked, tier2_n)}
+    seed = secrets.randbits(32) if seed is None else seed
+    run.sample_seed = seed
+    selected = {e.registry_id for e in sample.select(entries, tier2_n, seed)}
+    _say(f"tier 2: selected {len(selected)} packaged entries with seed {seed}")
 
+    done = 0
     for entry in entries:
-        record = _record_for(run, entry, ranked_by_id, salt)
-        if entry.registry_id in tier2 and entry.coords is not None:
+        record = _record_for(run, entry, selected, salt)
+        if entry.registry_id in selected and entry.coords is not None:
             result = artifacts.fetch_artifact(client, entry.coords)
+            done += 1
+            if done % 25 == 0 or done == len(selected):
+                _say(f"artifacts: {done}/{len(selected)}")
             record.fetch_status = result.status.value
             record.fetch_detail = result.detail
             if result.root is not None:

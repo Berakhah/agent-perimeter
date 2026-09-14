@@ -144,7 +144,7 @@ def sample_frame(
     """Seeded random sample of `n` from the remote-only stratum.
 
     Deterministic given the same entries, seed, and already_contacted set -
-    same principle as sample.top_n's deterministic ranking. A registry_id in
+    same principle as sample.select's seeded draw. A registry_id in
     `already_contacted` is dropped from the eligible pool before the draw, so
     it can never be resampled: this is what makes "never contacted again,
     including on a re-run" hold once a caller feeds a prior UNREACHABLE

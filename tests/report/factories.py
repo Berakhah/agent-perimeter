@@ -51,12 +51,8 @@ def _artifact_record(
         },
         fetch_status=FetchStatus.OK.value,
         fetch_detail="",
-        rank_metric=1000 - idx,
-        rank_metric_source=(
-            "npm_last_month_downloads"
-            if ecosystem is Ecosystem.NPM
-            else "pypi_recent_downloads"
-        ),
+        rank_metric=None,
+        rank_metric_source="seeded_random",
         collected_at=_NOW,
     )
 
@@ -93,6 +89,7 @@ def census_fixture(
     unknown: int = 1,
     fetch_failures: int = 3,
     tier2_n: int = 200,
+    sample_seed: int | None = 42,
     probe_supports: int = 0,
     probe_unknown: int = 0,
 ) -> tuple[CensusRun, list[CensusRecord]]:
@@ -112,6 +109,7 @@ def census_fixture(
         tool_version="0.1.0",
         method_hash="deadbeefcafef00d",
         tier2_n=tier2_n,
+        sample_seed=sample_seed,
         registry_endpoint="https://registry.modelcontextprotocol.io/v0/servers",
     )
     assert run.id is not None
