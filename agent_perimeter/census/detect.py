@@ -105,7 +105,20 @@ def _bare_version(spec: str) -> str | None:
     return match.group(0) if match else None
 
 
+_PY_MANIFESTS = ("pyproject.toml", "requirements.txt", "PKG-INFO")
+
+
+def _manifest_dirs(root: Path) -> list[Path]:
+    """`root` plus its immediate subdirectories. npm tarballs extract to
+    `package/`, sdists to `<name>-<version>/`; one level covers both without
+    walking into vendored trees."""
+    if not root.is_dir():
+        return []
+    return [root, *sorted(p for p in root.iterdir() if p.is_dir())]
+
+
 def _pin_from_requirement(requirement: str, names: set[str]) -> str | None:
+    requirement = requirement.split(";", 1)[0]
     match = _REQ_NAME_RE.match(requirement.strip())
     if match is None:
         return None
@@ -166,27 +179,58 @@ def _pin_from_package_json(package_json: Path) -> str | None:
     return None
 
 
+def _pin_from_metadata(metadata: Path) -> str | None:
+    """`Requires-Dist:` lines of a wheel METADATA or sdist PKG-INFO."""
+    try:
+        text = metadata.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith("Requires-Dist:"):
+            pin = _pin_from_requirement(line.partition(":")[2], _PY_SDK_NAMES)
+            if pin is not None:
+                return pin
+    return None
+
+
 def detect_sdk_pin(root: Path) -> str | None:
-    """Pinned MCP SDK version, from pyproject.toml / requirements.txt / package.json.
+    """Pinned MCP SDK version.
+
+    Real artifacts don't keep manifests at the extraction root: npm tarballs
+    extract to `package/`, PyPI sdists to `<name>-<version>/`, and wheels keep
+    their requirements in `*.dist-info/METADATA`. Manifests are searched for
+    in `root` and its immediate subdirectories (one level only).
 
     Returns the bare version string (e.g. "2.1.0"), never the full requirement
     specifier - callers compare it against SDK_FLOOR, which is keyed the same way.
     """
-    pyproject = root / "pyproject.toml"
-    if pyproject.is_file():
-        pin = _pin_from_pyproject(pyproject)
-        if pin is not None:
-            return pin
+    for manifest_dir in _manifest_dirs(root):
+        pyproject = manifest_dir / "pyproject.toml"
+        if pyproject.is_file():
+            pin = _pin_from_pyproject(pyproject)
+            if pin is not None:
+                return pin
 
-    requirements = root / "requirements.txt"
-    if requirements.is_file():
-        pin = _pin_from_requirements_txt(requirements)
-        if pin is not None:
-            return pin
+        requirements = manifest_dir / "requirements.txt"
+        if requirements.is_file():
+            pin = _pin_from_requirements_txt(requirements)
+            if pin is not None:
+                return pin
 
-    package_json = root / "package.json"
-    if package_json.is_file():
-        pin = _pin_from_package_json(package_json)
+        pkg_info = manifest_dir / "PKG-INFO"
+        if pkg_info.is_file():
+            pin = _pin_from_metadata(pkg_info)
+            if pin is not None:
+                return pin
+
+        package_json = manifest_dir / "package.json"
+        if package_json.is_file():
+            pin = _pin_from_package_json(package_json)
+            if pin is not None:
+                return pin
+
+    for meta in root.glob("*.dist-info/METADATA"):
+        pin = _pin_from_metadata(meta)
         if pin is not None:
             return pin
 
@@ -194,9 +238,12 @@ def detect_sdk_pin(root: Path) -> str | None:
 
 
 def _ecosystem_of(root: Path) -> Ecosystem | None:
-    if (root / "pyproject.toml").is_file() or (root / "requirements.txt").is_file():
+    manifest_dirs = _manifest_dirs(root)
+    if any((d / name).is_file() for d in manifest_dirs for name in _PY_MANIFESTS):
         return Ecosystem.PYPI
-    if (root / "package.json").is_file():
+    if next(root.glob("*.dist-info"), None) is not None:
+        return Ecosystem.PYPI
+    if any((d / "package.json").is_file() for d in manifest_dirs):
         return Ecosystem.NPM
     return None
 
