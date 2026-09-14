@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability in Agent Perimeter
 
-If you discover a security vulnerability in Agent Perimeter, please report it directly to <security@USER-PLACEHOLDER.example>. We acknowledge receipt within 24 hours and will provide a clear timeline for remediation or a detailed explanation of why we assess it as not a vulnerability. You may use GitHub private advisories or PGP encryption if desired. Please do not disclose the issue publicly until we have released a fix or made a public statement.
+If you discover a security vulnerability in Agent Perimeter, please report it directly to <77killuazoldic@gmail.com>. We acknowledge receipt within 24 hours and will provide a clear timeline for remediation or a detailed explanation of why we assess it as not a vulnerability. You may use GitHub private advisories or PGP encryption if desired. Please do not disclose the issue publicly until we have released a fix or made a public statement.
 
 ## What we do when we find something in your server
 

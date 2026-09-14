@@ -244,7 +244,7 @@ def to_sarif(
                     "driver": {
                         "name": "agent-perimeter",
                         "version": tool_version,
-                        "informationUri": "https://github.com/USER/agent-perimeter",
+                        "informationUri": "https://github.com/Berakhah/agent-perimeter",
                         "rules": _rules(findings),
                     }
                 },
