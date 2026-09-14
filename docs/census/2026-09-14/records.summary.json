@@ -1,0 +1,35 @@
+{
+  "artifact": {
+    "by_ecosystem": {
+      "npm": {
+        "does_not_support": 173,
+        "n": 176,
+        "n_examined": 196,
+        "share": 0.017045454545454544,
+        "supports": 3,
+        "unknown": 20
+      },
+      "pypi": {
+        "does_not_support": 140,
+        "n": 140,
+        "n_examined": 191,
+        "share": 0.0,
+        "supports": 0,
+        "unknown": 51
+      }
+    },
+    "n_examined": 387,
+    "pooled": {
+      "does_not_support": 313,
+      "n": 316,
+      "share": 0.00949367088607595,
+      "supports": 3,
+      "unknown": 71
+    }
+  },
+  "live_discover": null,
+  "method_hash": "449edc04f9c3decc",
+  "revision": "2026-07-28",
+  "sample_seed": 4188178442,
+  "tool_version": "0.1.0"
+}

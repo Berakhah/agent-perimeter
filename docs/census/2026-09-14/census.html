@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent Perimeter — MCP ecosystem census</title>
+<style>/* Light-first editorial instrument. Prints in greyscale without losing meaning. */
+:root {
+  --paper: oklch(0.985 0.004 85);
+  --ink: oklch(0.22 0.012 85);
+  --rule: oklch(0.85 0.006 85);
+  --accent: oklch(0.72 0.16 68);
+}
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Geist, system-ui, sans-serif;
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: 2rem;
+}
+h1, h2 { font-family: Newsreader, Georgia, serif; }
+table { border-collapse: collapse; width: 100%; }
+/* Narrow viewports (00 §5.5, "usable at 375px"): scroll a wide table
+   within its own box rather than letting it push the whole page wider
+   than the viewport. */
+@media (max-width: 480px) {
+  table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+th, td { border-bottom: 1px solid var(--rule); padding: 0.4rem 0.6rem; text-align: left; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.sev { font-weight: 600; letter-spacing: 0.02em; }
+.sev::before { content: attr(data-glyph) " "; }
+.strip { border-left: 3px solid var(--accent); padding-left: 0.75rem; margin: 1rem 0; }
+.deriv { font-size: 0.85em; opacity: 0.8; }
+footer { margin-top: 3rem; border-top: 1px solid var(--rule); padding-top: 1rem; font-size: 0.9em; }
+@media print {
+  body { max-width: none; padding: 0; }
+  a::after { content: " (" attr(href) ")"; font-size: 0.8em; }
+  .sev { border: 1px solid var(--ink); padding: 0 0.3em; }
+  [data-testid="finding-row"] { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<h1>MCP ecosystem census</h1>
+<p class="mono">registry endpoint: https://registry.modelcontextprotocol.io/v0/servers</p>
+
+<h2>Headline</h2>
+<div class="strip">
+<p data-testid="unknown-count"><strong>Artifact stratum.</strong> Of 387 npm/PyPI packages examined,
+3 of 316 show published-artifact evidence of support
+for <span class="mono">2026-07-28</span> (313 show no such
+evidence, 71 unknown).</p>
+
+
+<p><strong>Live-discover stratum.</strong> Tier 3 remote-stratum sample: not yet run. This
+report does not estimate live, ecosystem-wide support from artifact evidence alone — when Tier
+3 runs, its result will appear here as its own, separately labelled figure.</p>
+
+
+<p>These are two different populations, measured by two different methods. Neither figure is
+combined with the other, and neither stands in for "the MCP ecosystem" as a whole.</p>
+</div>
+
+<h2>Collection window</h2>
+<table>
+<tr><th>Started</th><td class="mono">2026-09-14T20:34:16.441023+00:00</td></tr>
+<tr><th>Finished</th><td class="mono">2026-09-14T21:01:33.063316+00:00</td></tr>
+<tr><th>Population</th><td class="num" data-testid="population-size">31939</td></tr>
+<tr><th>Sample seed</th><td class="num" data-testid="sample-seed">4188178442</td></tr>
+</table>
+<p data-testid="fetch-failures">Fetch failures: 13</p>
+
+<h2>Artifact stratum</h2>
+<p><strong>Method.</strong> Tier 2 is a uniform random sample of up to n packaged entries within each ecosystem, drawn with a recorded seed so the same population and seed reproduce the same sample. Ecosystems are sampled separately because npm and PyPI are different populations. Entries with no fetchable package coordinates (remote-only, or a package type this tool does not model) are not eligible and are counted in the report. The registry itself carries no popularity signal, and this sample is not weighted by downloads, stars, or any proxy for use.</p>
+<table>
+<tr><th>Ecosystem</th><th class="num">Tier-2 target n</th><th class="num">Examined</th>
+    <th class="num">Supports</th><th class="num">Does not support</th><th class="num">Unknown</th>
+    <th class="num">Share</th></tr>
+
+<tr>
+  <td class="mono">pypi</td>
+  <td class="num">200</td>
+  <td class="num">191</td>
+  <td class="num">0</td>
+  <td class="num">140</td>
+  <td class="num">51 unknown</td>
+  <td class="num">0%</td>
+</tr>
+
+<tr>
+  <td class="mono">npm</td>
+  <td class="num">200</td>
+  <td class="num">196</td>
+  <td class="num">3</td>
+  <td class="num">173</td>
+  <td class="num">20 unknown</td>
+  <td class="num">2%</td>
+</tr>
+
+<tr>
+  <td class="mono"><strong>pooled (both ecosystems)</strong></td>
+  <td class="num">—</td>
+  <td class="num">387</td>
+  <td class="num">3</td>
+  <td class="num">313</td>
+  <td class="num">71 unknown</td>
+  <td class="num">1%</td>
+</tr>
+</table>
+<p class="deriv">Tier-2 target n is per ecosystem, not pooled: up to
+<span data-testid="tier2-n">200</span> npm packages and up to 200
+PyPI packages are independently drawn at random (seed 4188178442) within each
+ecosystem before any artifact is fetched.</p>
+
+<h2>Live-discover stratum</h2>
+
+<p>Tier 3 remote-stratum sample: not yet run. No live-discover records exist in this
+publication.</p>
+
+
+<h2>Terms</h2>
+<dl data-testid="term-definitions">
+
+<dt><strong>population</strong></dt>
+<dd>Every entry returned by the official MCP registry API between the collection window's start and end, including entries whose package coordinates could not be resolved.</dd>
+
+<dt><strong>sample</strong></dt>
+<dd>Tier 1 is the whole population. Tier 2 is a seeded uniform random sample of up to n packaged entries within each ecosystem, selected as described under Method.</dd>
+
+<dt><strong>supports 2026-07-28</strong></dt>
+<dd>The package's published artifact pins an MCP SDK at or above the version that introduced the revision's mandatory methods, and its source contains a handler for server/discover. This is a statement about a published artifact, not about any running deployment.</dd>
+
+<dt><strong>does not support 2026-07-28</strong></dt>
+<dd>The published artifact pins an SDK below that floor, or contains no such handler. It does not mean the software is insecure, and it does not mean a deployment is exposed.</dd>
+
+<dt><strong>unknown</strong></dt>
+<dd>Coordinates could not be resolved, the artifact could not be fetched, or the source could not be parsed. Reported separately and never folded into a denominator.</dd>
+
+<dt><strong>conformance gap</strong></dt>
+<dd>A server that claims a revision and does not exhibit a feature that revision requires. Measurable only against a live authorised target, so it appears in scan reports and never in this census.</dd>
+
+<dt><strong>live-discover sample</strong></dt>
+<dd>A random sample of remote-only registry entries (a remotes URL, no fetchable package), each sent exactly one unauthenticated server/discover request. A successful response confirms support; a non-response never confirms its absence, so this sample never reports a does-not-support count.</dd>
+
+</dl>
+
+<footer>
+<h2>Methodology</h2>
+<p>Tool version <span class="mono">0.1.0</span>, method hash
+<span class="mono">449edc04f9c3decc</span>. A changed collection method cannot silently
+reuse this label - see the changelog below.</p>
+<p>Raw data (digest-keyed, no names or URLs): <a href="records.csv">records.csv</a>. Reproduce
+every number above with <a href="../../../analysis/census_analysis.py">analysis/census_analysis.py records.csv</a> -
+no database, no salt, no API key required.</p>
+<p>Secrets or other sensitive findings from this collection are handled per the
+<a href="../../security.md">disclosure policy</a>, never published here.</p>
+<p>Results are versioned, never overwritten: see the
+<a href="../CHANGELOG.md">census changelog</a>.</p>
+</footer>
+</body>
+</html>

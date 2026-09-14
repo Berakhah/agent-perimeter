@@ -125,13 +125,15 @@ and reports the path, nothing more (hard constraint 7).
   (regenerated every commit, CI fails if it goes stale), sample/population
   definitions, and every known limitation including the project's own
   measured false-positive rate.
-- **The registry census report** — `docs/census/CHANGELOG.md` tracks it;
-  as of this release **no run has been published yet**. The first
-  publication is a full census of the official MCP Registry (every entry,
-  not a sample), with static artifact analysis of the top-N packages per
-  ecosystem by download count — never a live contact with a third-party
-  server. `analysis/census_analysis.py` reproduces every published figure
-  from the raw CSV alone once a run ships.
+- **The registry census report** —
+  [docs/census/2026-09-14/census.html](docs/census/2026-09-14/census.html),
+  first published 2026-09-14: a full census of the official MCP Registry
+  (every entry, not a sample), with static artifact analysis of a seeded
+  random sample of up to 200 packages per ecosystem — never a live contact
+  with a third-party server. `docs/census/CHANGELOG.md` records population,
+  window, sample seed, method hash and fetch failures per run;
+  `analysis/census_analysis.py` reproduces every published figure from
+  `records.csv` alone.
 - **[docs/open-decisions.md](docs/open-decisions.md)** — the 14 design
   decisions the briefs left open (hosted vs local, registry scan scope,
   disclosure embargo, licence, provider accounts, …), each closed with its
