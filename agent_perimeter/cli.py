@@ -322,6 +322,7 @@ def _resolve_operand(value: str, *, database_url: str) -> ToolSnapshot:
         return _read_snapshot(Path(value), flag="drift")
     scan_id = value.removeprefix("scan:")
     from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
     from sqlalchemy.orm import Session
 
     from agent_perimeter.api.drift import snapshot_from_scan
@@ -329,11 +330,15 @@ def _resolve_operand(value: str, *, database_url: str) -> ToolSnapshot:
 
     url = os.path.expandvars(database_url)
     try:
+        shown = make_url(url).render_as_string(hide_password=True)
+    except Exception:  # noqa: BLE001 - a malformed URL is only ever the unexpanded one below
+        shown = database_url
+    try:
         with Session(create_engine(url)) as session:
             scan = session.get(Scan, scan_id)
             if scan is None:
                 typer.echo(
-                    f"{value} is not a scan on record at {url}. "
+                    f"{value} is not a scan on record at {shown}. "
                     "Check the id, or pass --database-url."
                 )
                 raise typer.Exit(code=2)
@@ -342,7 +347,7 @@ def _resolve_operand(value: str, *, database_url: str) -> ToolSnapshot:
         raise
     except Exception as exc:  # noqa: BLE001 - any DBAPI failure is a usage-level refusal here
         typer.echo(
-            f"Could not resolve {value} from {url}: {exc}. "
+            f"Could not resolve {value} from {shown}: {type(exc).__name__}. "
             "Pass --database-url for a reachable database."
         )
         raise typer.Exit(code=2) from None
