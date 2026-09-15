@@ -129,6 +129,15 @@ def test_duplicate_names_are_keyed_positionally_so_every_copy_is_compared() -> N
     assert plain_name("x#2") == "x" and plain_name("x") == "x" and plain_name("a#b") == "a#b"
 
 
+def test_more_than_nine_duplicates_stay_in_listing_order() -> None:
+    # Lexical sort would put "x#10" before "x#2"; events must follow the
+    # listing position the key encodes.
+    before = snap(*(ToolRecord(name="x", description=f"v{i}") for i in range(11)))
+    after = snap(*(ToolRecord(name="x", description=f"w{i}") for i in range(11)))
+    keys = [e.tool_name for e in compare(before, after, now=NOW)]
+    assert keys == ["x"] + [f"x#{i}" for i in range(2, 12)]
+
+
 def test_cross_target_comparison_raises() -> None:
     a = snap(target="https://one.example.test")
     b = snap(target="https://two.example.test")

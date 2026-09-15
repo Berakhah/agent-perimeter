@@ -329,6 +329,7 @@ def _drift_finding() -> Finding:
 def test_drift_finding_matches_golden(tmp_path: Path) -> None:
     golden = Path(__file__).parent / "golden" / "drift_scan.sarif.json"
     rendered = _sarif(_drift_finding(), workspace=tmp_path)
+    jsonschema.validate(rendered, SCHEMA)
     if not golden.exists():
         golden.write_text(json.dumps(rendered, indent=2, sort_keys=True))
         pytest.skip("golden file created; re-run to compare")

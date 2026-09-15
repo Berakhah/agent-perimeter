@@ -44,6 +44,13 @@ def plain_name(key: str) -> str:
     return name if sep and index.isdigit() else key
 
 
+def key_order(key: str) -> tuple[str, int]:
+    """Sort key that keeps duplicates in listing order: `(name, position)`,
+    so `x#10` follows `x#9` rather than landing between `x` and `x#2`."""
+    name, sep, index = key.rpartition("#")
+    return (name, int(index)) if sep and index.isdigit() else (key, 1)
+
+
 def _side(field: DriftField, tool: SnapshotTool | None) -> tuple[str | None, str | None]:
     """(hash, value) for one side of an event; (None, None) when the tool is
     absent on that side. Added/removed events carry the description."""
@@ -93,7 +100,7 @@ def compare(baseline: ToolSnapshot, current: ToolSnapshot, *, now: datetime) -> 
     before = keyed_tools(baseline)
     after = keyed_tools(current)
     events: list[DriftEvent] = []
-    for key in sorted(before.keys() | after.keys()):
+    for key in sorted(before.keys() | after.keys(), key=key_order):
         old = before.get(key)
         new = after.get(key)
         if old is None:
