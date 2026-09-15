@@ -57,6 +57,7 @@ class DescriptionDriftCheck:
 
     def _finding(self, context: ScanContext, key: str, events: list[DriftEvent]) -> Finding:
         fields = ", ".join(e.field.value for e in events)
+        # SEVERITY_RANK is 0 for CRITICAL, so min() picks the *worst* field.
         severity = min((e.severity for e in events), key=lambda s: SEVERITY_RANK[s])
         value = "; ".join(
             f"{plain_name(key)} {e.field.value}:{_short(e.old_hash)}->{_short(e.new_hash)}"

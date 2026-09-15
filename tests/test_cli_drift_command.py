@@ -102,6 +102,7 @@ def test_scan_operands_resolve_from_the_database(tmp_path: Path) -> None:
             )
         )
         s.commit()
+    engine.dispose()
     result = runner.invoke(app, ["drift", "scan:base-1", "scan:cur-1", "--database-url", url])
     assert result.exit_code == 3, result.stdout
     assert "-old" in result.stdout and "+new" in result.stdout
@@ -109,7 +110,9 @@ def test_scan_operands_resolve_from_the_database(tmp_path: Path) -> None:
 
 def test_unresolvable_scan_operand_names_the_url(tmp_path: Path) -> None:
     url = f"sqlite:///{tmp_path / 'empty.db'}"
-    Base.metadata.create_all(create_engine(url))
+    engine = create_engine(url)
+    Base.metadata.create_all(engine)
+    engine.dispose()
     result = runner.invoke(app, ["drift", "scan:nope", "scan:nope2", "--database-url", url])
     assert result.exit_code == 2
     assert "scan:nope" in result.stdout and url in result.stdout

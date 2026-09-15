@@ -54,6 +54,14 @@ def test_for_terminal_escapes_ansi_and_controls_but_keeps_newlines() -> None:
     assert "\n" in out and "\t" in out
 
 
+def test_for_terminal_escapes_the_c1_control_range() -> None:
+    # U+0080..U+009F carry CSI (U+009B) and NEL (U+0085); none may pass raw.
+    out = for_terminal("a\x85b\x9bc\x9fd\xa0e")
+    assert "\x85" not in out and "\x9b" not in out and "\x9f" not in out
+    assert "\\u{85}" in out and "\\u{9B}" in out and "\\u{9F}" in out
+    assert "\xa0" in out  # U+00A0 is the first code point past the range
+
+
 def test_for_terminal_escapes_bidi_zero_width_and_tag_characters() -> None:
     raw = "a‮b​c\U000e0041d"
     out = for_terminal(raw)
@@ -79,6 +87,14 @@ def test_render_excerpt_for_a_description_is_a_marked_word_diff() -> None:
     assert "-a" in text and "+any" in text and "Read" in text
 
 
+def test_render_excerpt_over_the_cap_is_a_bracketed_summary() -> None:
+    old = " ".join(["w"] * (MAX_DIFF_TOKENS + 1))
+    excerpt = render_excerpt(_event(DriftField.DESCRIPTION, old, old + " x"))
+    assert excerpt.startswith("[") and excerpt.endswith("]")
+    assert f"{MAX_DIFF_TOKENS + 1} tokens" in excerpt
+    assert "w w w" not in excerpt
+
+
 def test_render_excerpt_for_schema_is_a_hash_summary() -> None:
     text = render_excerpt(_event(DriftField.INPUT_SCHEMA, "{}", '{"x":1}'))
     assert text == "input_schema: 000000000000 → 111111111111"
@@ -97,3 +113,12 @@ def test_render_events_groups_by_tool_and_sanitises() -> None:
     assert lines[0].startswith("== t — description — high")
     assert any(line.startswith("+") for line in lines)
     assert not any("\x1b" in line for line in lines)
+
+
+def test_render_events_over_the_cap_emits_one_summary_line() -> None:
+    from agent_perimeter.drift.render import render_events
+
+    old = " ".join(["w"] * (MAX_DIFF_TOKENS + 1))
+    lines = render_events([_event(DriftField.DESCRIPTION, old, old + " x")])
+    assert len(lines) == 2  # header + summary, not one line per token
+    assert lines[1].startswith("?") and "diff too large" in lines[1]

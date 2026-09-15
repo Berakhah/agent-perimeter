@@ -321,7 +321,7 @@ def _resolve_operand(value: str, *, database_url: str) -> ToolSnapshot:
     if not value.startswith("scan:"):
         return _read_snapshot(Path(value), flag="drift")
     scan_id = value.removeprefix("scan:")
-    from sqlalchemy import create_engine
+    from sqlalchemy import Engine, create_engine
     from sqlalchemy.engine import make_url
     from sqlalchemy.orm import Session
 
@@ -333,8 +333,10 @@ def _resolve_operand(value: str, *, database_url: str) -> ToolSnapshot:
         shown = make_url(url).render_as_string(hide_password=True)
     except Exception:  # noqa: BLE001 - a malformed URL is only ever the unexpanded one below
         shown = database_url
+    engine: Engine | None = None
     try:
-        with Session(create_engine(url)) as session:
+        engine = create_engine(url)
+        with Session(engine) as session:
             scan = session.get(Scan, scan_id)
             if scan is None:
                 typer.echo(
@@ -351,6 +353,11 @@ def _resolve_operand(value: str, *, database_url: str) -> ToolSnapshot:
             "Pass --database-url for a reachable database."
         )
         raise typer.Exit(code=2) from None
+    finally:
+        # One engine per operand; release its pool so the process does not
+        # exit holding an open connection (a ResourceWarning under -X dev).
+        if engine is not None:
+            engine.dispose()
 
 
 @app.command()
