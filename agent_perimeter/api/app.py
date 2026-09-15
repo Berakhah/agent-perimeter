@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
 
 from agent_perimeter.api import census, drift, scans
@@ -30,18 +31,29 @@ logger = logging.getLogger(__name__)
 # through one authorisation function, not each importing their own copy.
 
 
+def connect_args_for(url: str) -> dict[str, int]:
+    """A short connect_timeout bounds how long a database that is simply not
+    there (the common case for a bare `create_app()` in a test, or a
+    freshly-started deployment before docker-compose's Postgres is up) can
+    delay startup. A `?connect_timeout=` on the DSN wins over the default --
+    psycopg lets connect_args override the query string, so passing the
+    default unconditionally would silently discard the caller's value.
+    sqlite's DBAPI does not accept this kwarg at all."""
+    if not url.startswith("postgresql"):
+        return {}
+    given = make_url(os.path.expandvars(url)).query.get("connect_timeout")
+    if isinstance(given, str) and given.isdigit():
+        return {"connect_timeout": int(given)}
+    return {"connect_timeout": 5}
+
+
 def create_app(*, database_url: str | None = None) -> FastAPI:
     url = (
         database_url
         if database_url is not None
         else os.environ.get("AP_DATABASE_URL", DEFAULT_DATABASE_URL)
     )
-    # A short connect_timeout bounds how long a database that is simply not
-    # there (the common case for a bare `create_app()` in a test, or a
-    # freshly-started deployment before docker-compose's Postgres is up) can
-    # delay startup. sqlite's DBAPI does not accept this kwarg at all.
-    connect_args = {"connect_timeout": 5} if url.startswith("postgresql") else {}
-    engine = create_engine(os.path.expandvars(url), connect_args=connect_args)
+    engine = create_engine(os.path.expandvars(url), connect_args=connect_args_for(url))
     try:
         Base.metadata.create_all(engine)
     except Exception:

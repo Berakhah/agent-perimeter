@@ -4,6 +4,7 @@ The first route in this project that reads from the database (spec §7.4)."""
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -240,8 +241,21 @@ def test_drift_route_409s_while_the_scan_is_still_running(client: TestClient) ->
     assert response.json()["detail"] == "scan is still running"
 
 
+def test_connect_args_default_a_postgres_timeout_but_honour_the_dsn() -> None:
+    from agent_perimeter.api.app import connect_args_for
+
+    assert connect_args_for("postgresql+psycopg://u:p@h/db") == {"connect_timeout": 5}
+    assert connect_args_for("postgresql+psycopg://u:p@h/db?connect_timeout=1") == {
+        "connect_timeout": 1
+    }
+    assert connect_args_for("sqlite:///x.db") == {}
+
+
 def test_database_down_still_completes_the_scan_and_names_the_cause(stub: None) -> None:
     # A Postgres URL nothing listens on: create_all fails, the app still starts.
+    # The DSN's connect_timeout=1 must win over the default 5, so three
+    # connection attempts stay well under the old ~15 s.
+    started = time.monotonic()
     with TestClient(
         create_app(database_url="postgresql+psycopg://x:y@127.0.0.1:1/none?connect_timeout=1")
     ) as c:
@@ -249,3 +263,4 @@ def test_database_down_still_completes_the_scan_and_names_the_cause(stub: None) 
         events = c.get(f"/api/scans/{scan_id}/events").text
         assert "no_baseline" in events
         assert "database was unreachable" in events
+    assert time.monotonic() - started < 10
