@@ -27,6 +27,7 @@ from agent_perimeter.checks.descriptions import (
     unicode_anomaly,
 )
 from agent_perimeter.checks.descriptions.llm_judge import LlmJudgeCheck, Verdict
+from agent_perimeter.checks.drift import description_drift
 from agent_perimeter.checks.injection import agent_adapter, path_proof
 from agent_perimeter.checks.revision import (
     cache_scope,
@@ -105,6 +106,8 @@ ALL_CHECKS: tuple[Check, ...] = (
     # injection — 2
     path_proof.CHECK,
     agent_adapter.CHECK,
+    # drift — 1 (skipped NO_BASELINE unless the caller supplied one)
+    description_drift.CHECK,
     # policy — 2 (registered checks now, not a bolted-on evaluate() call)
     *POLICY_CHECKS,
 )

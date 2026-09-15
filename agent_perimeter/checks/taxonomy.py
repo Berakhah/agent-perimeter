@@ -135,6 +135,11 @@ CWE_TABLE: dict[str, CweEntry] = {
             "CWE-477", "Use of Obsolete Function", "https://cwe.mitre.org/data/definitions/477.html"
         ),
         CweEntry(
+            "CWE-494",
+            "Download of Code Without Integrity Check",
+            "https://cwe.mitre.org/data/definitions/494.html",
+        ),
+        CweEntry(
             "CWE-522",
             "Insufficiently Protected Credentials",
             "https://cwe.mitre.org/data/definitions/522.html",

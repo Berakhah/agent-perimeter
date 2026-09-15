@@ -48,3 +48,7 @@
   id: MCP10
   title: Insufficient Context and Session Management
   url: https://owasp.org/www-project-mcp-top-10/2025/MCP10-2025%E2%80%93Insufficient-Context-and-Session-Management
+- scheme: owasp-mcp
+  id: MCP03
+  title: Tool Poisoning
+  url: https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning
