@@ -144,7 +144,8 @@ across both documents.
 
 **7. How much time per week is actually available? — Answered
 2026-09-14: 10–15 hrs/week (part-time).** Plan remaining work — publishing
-the census, a genuine clean-machine verification, syncing 64 unpushed
+the census, a genuine clean-machine verification (done 2026-09-15 on a
+fresh GitHub-hosted VM — `docs/evidence/clean-machine.md`), syncing 64 unpushed
 commits and watching CI go green on the full codebase for the first time —
 as spread over roughly 2–3 real weeks, not calendar days. Do not assume a
 full-time pace when sequencing what comes next.

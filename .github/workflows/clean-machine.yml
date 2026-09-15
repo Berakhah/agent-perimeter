@@ -1,0 +1,85 @@
+name: clean-machine
+# The genuine clean-machine verification docs/evidence/clean-machine.md
+# records. Every run lands on a fresh GitHub-hosted VM with an empty Docker
+# build cache, does a literal `git clone` (no actions/checkout, no cache
+# actions -- the runner sees exactly what the README's Quickstart tells a
+# stranger to type), and runs that Quickstart verbatim. Dispatch-only: it
+# builds two images from scratch (~minutes) and proves deployment, not code,
+# so it is not part of the per-push `ci` workflow.
+on:
+  workflow_dispatch:
+  push:
+    paths: [".github/workflows/clean-machine.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  quickstart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Record the machine before anything is cloned or built
+        run: |
+          echo "## Runner" ; cat /etc/os-release | head -2 ; uname -srm
+          echo "## Docker" ; docker version --format 'Client {{.Client.Version}} / Server {{.Server.Version}}'
+          docker compose version
+          echo "## Images already present on this VM (should be no project images)"
+          docker image ls
+          echo "## Build cache before the run"
+          docker system df
+
+      # README.md "Quickstart", line for line. $GITHUB_SHA is pinned after
+      # the clone so the evidence record names one exact commit.
+      - name: README Quickstart, step 1 -- git clone
+        run: |
+          git clone https://github.com/${{ github.repository }}.git && cd agent-perimeter
+          git checkout --quiet "$GITHUB_SHA"
+          git log --oneline -1
+
+      - name: README Quickstart, step 2 -- cp .env.example .env
+        working-directory: agent-perimeter
+        run: cp .env.example .env
+
+      - name: README Quickstart, step 3 -- docker compose up -d --wait (timed)
+        working-directory: agent-perimeter
+        run: |
+          start=$(date +%s)
+          docker compose up -d --wait
+          end=$(date +%s)
+          echo "clone-to-healthy: $((end - start))s" | tee -a "$GITHUB_STEP_SUMMARY"
+          docker compose ps
+
+      - name: README Quickstart, step 4 -- ./scripts/smoke.sh (timed)
+        working-directory: agent-perimeter
+        run: |
+          start=$(date +%s)
+          ./scripts/smoke.sh
+          end=$(date +%s)
+          echo "smoke: $((end - start))s" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: README opt-in fixture -- docker compose --profile demo run --rm fixture
+        working-directory: agent-perimeter
+        run: |
+          echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+            | docker compose --profile demo run --rm -T fixture \
+            | tee fixture.out
+          grep -q '"tools"' fixture.out
+
+      - name: Service logs (only on failure)
+        if: failure()
+        working-directory: agent-perimeter
+        run: docker compose logs --no-color
+
+      - name: Record what the run built
+        if: always()
+        working-directory: agent-perimeter
+        run: |
+          docker compose ps -a
+          docker image ls
+          docker system df
+
+      - name: Tear down
+        if: always()
+        working-directory: agent-perimeter
+        run: docker compose --profile demo down -v --remove-orphans
