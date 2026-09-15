@@ -34,12 +34,15 @@ from types import ModuleType
 from agent_perimeter._contracts import Claim, Derivation, Method
 from agent_perimeter.checks.all_checks import ALL_CHECKS
 from agent_perimeter.checks.context import ScanContext
-from agent_perimeter.checks.registry import applicable
+from agent_perimeter.checks.registry import BaselineStatus, applicable
 from agent_perimeter.discover.enumerate import enumerate_tools
+from agent_perimeter.drift.compare import compare_tools
 from agent_perimeter.eval.corpus import CorpusCase
 from agent_perimeter.eval.mcptox import sample_tool
+from agent_perimeter.model.drift import DriftEvent
 from agent_perimeter.model.feature import BUNDLES, Revision
 from agent_perimeter.model.scope import ScopeFile
+from agent_perimeter.model.snapshot import ToolSnapshot
 from agent_perimeter.transport.base import TransportError, _reject_header_override
 from agent_perimeter.transport.revision import Fingerprint, fingerprint
 
@@ -175,7 +178,12 @@ def _fingerprint_for_sample() -> Fingerprint:
     )
 
 
-def _run(context: ScanContext, *, models_available: bool) -> set[str]:
+def _run(
+    context: ScanContext,
+    *,
+    models_available: bool,
+    baseline_status: BaselineStatus = BaselineStatus.NONE_ON_RECORD,
+) -> set[str]:
     runnable, _ = applicable(
         ALL_CHECKS,
         context.fingerprint.features,
@@ -183,6 +191,7 @@ def _run(context: ScanContext, *, models_available: bool) -> set[str]:
         target=context.target,
         today=date.today(),
         models_available=models_available,
+        baseline_status=baseline_status,
     )
     return {check.id for check in runnable if check.run(context)}
 
@@ -213,12 +222,31 @@ def run_case(case: CorpusCase, *, models_available: bool = False) -> set[str]:
     if case.flaw in _CONFIG_FLAWS:
         raw["_config"] = _CONFIG_FLAWS[case.flaw]
 
+    now = datetime.now(UTC)
+    tools = enumerate_tools(transport)
+    baseline: ToolSnapshot | None = None
+    drift_events: tuple[DriftEvent, ...] = ()
+    if case.baseline_flaw is not None:
+        baseline_transport = InProcessTransport(case.revision, case.baseline_flaw)
+        baseline = ToolSnapshot.from_tools(
+            target, enumerate_tools(baseline_transport), taken_at=now
+        )
+        drift_events = compare_tools(baseline, target, tools, now=now)
+
     context = ScanContext(
         target=target,
         transport=transport,
         fingerprint=fingerprint(transport),
-        tools=enumerate_tools(transport),
+        tools=tools,
         scope=scope,
         raw=raw,
+        baseline=baseline,
+        drift_events=drift_events,
     )
-    return _run(context, models_available=models_available)
+    return _run(
+        context,
+        models_available=models_available,
+        baseline_status=(
+            BaselineStatus.PRESENT if baseline is not None else BaselineStatus.NONE_ON_RECORD
+        ),
+    )

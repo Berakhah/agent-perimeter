@@ -21,6 +21,7 @@ class CorpusCase:
     id: str
     revision: str
     flaw: str
+    baseline_flaw: str | None = None
     expect_findings: tuple[str, ...] = ()
     expect_clean: tuple[str, ...] = ()
     note: str = ""
@@ -33,6 +34,7 @@ def _load(path: Path) -> tuple[str, list[CorpusCase]]:
             id=row["id"],
             revision=str(row["revision"]),
             flaw=row["flaw"],
+            baseline_flaw=row.get("baseline_flaw"),
             expect_findings=tuple(row.get("expect_findings", ())),
             expect_clean=tuple(row.get("expect_clean", ())),
             note=row.get("note", ""),
