@@ -1,10 +1,10 @@
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
+from tests.docker_build import build_image as build_docker_image
 
 IMAGE = "agent-perimeter-fixture:test"
 NODE_IMAGE = "agent-perimeter-fixture-node:test"
@@ -15,12 +15,8 @@ pytestmark = pytest.mark.skipif(shutil.which("docker") is None, reason="docker u
 
 @pytest.fixture(scope="module", autouse=True)
 def build_image() -> None:
-    subprocess.run(["docker", "build", "-t", IMAGE, str(FIXTURE)], check=True, capture_output=True)
-    subprocess.run(
-        ["docker", "build", "-t", NODE_IMAGE, "-f", str(FIXTURE / "Dockerfile.node"), str(FIXTURE)],
-        check=True,
-        capture_output=True,
-    )
+    build_docker_image(IMAGE, FIXTURE)
+    build_docker_image(NODE_IMAGE, FIXTURE, dockerfile=FIXTURE / "Dockerfile.node")
 
 
 @pytest.mark.parametrize("hardened_seccomp", [False, True])
