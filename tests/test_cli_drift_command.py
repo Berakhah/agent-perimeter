@@ -88,6 +88,7 @@ def test_scan_operands_resolve_from_the_database(tmp_path: Path) -> None:
         s.add(
             Tool(
                 scan_id="base-1",
+                position=1,
                 name="read_file",
                 description="old",
                 description_hash=sha256_text("old"),
@@ -96,6 +97,7 @@ def test_scan_operands_resolve_from_the_database(tmp_path: Path) -> None:
         s.add(
             Tool(
                 scan_id="cur-1",
+                position=1,
                 name="read_file",
                 description="new",
                 description_hash=sha256_text("new"),

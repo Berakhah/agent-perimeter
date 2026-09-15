@@ -38,7 +38,9 @@ def test_an_added_tool_event_persists_with_a_null_old_hash(tmp_path: Path) -> No
         cur = Scan(target_ref="t", mode="passive", tool_version="0.1.0", finished_at=now)
         session.add_all([base, cur])
         session.flush()
-        tool = Tool(scan_id=cur.id, name="new", description="Fresh.", description_hash="ab")
+        tool = Tool(
+            scan_id=cur.id, name="new", description="Fresh.", description_hash="ab", position=1
+        )
         session.add(tool)
         session.flush()
         session.add(

@@ -35,9 +35,7 @@ class BaselineLookup(NamedTuple):
 
 def snapshot_from_scan(session: Session, scan: Scan) -> ToolSnapshot:
     rows = (
-        session.execute(
-            select(Tool).where(Tool.scan_id == scan.id).order_by(Tool.first_seen_at, Tool.id)
-        )
+        session.execute(select(Tool).where(Tool.scan_id == scan.id).order_by(Tool.position))
         .scalars()
         .all()
     )
@@ -184,9 +182,7 @@ def get_drift(scan_id: str, request: Request) -> dict[str, object]:
         )
         baseline_id = events[0].baseline_scan_id if events else None
         current_rows = (
-            session.execute(
-                select(Tool).where(Tool.scan_id == scan_id).order_by(Tool.first_seen_at, Tool.id)
-            )
+            session.execute(select(Tool).where(Tool.scan_id == scan_id).order_by(Tool.position))
             .scalars()
             .all()
         )
@@ -203,9 +199,7 @@ def get_drift(scan_id: str, request: Request) -> dict[str, object]:
         if baseline_id is not None:
             baseline_rows = (
                 session.execute(
-                    select(Tool)
-                    .where(Tool.scan_id == baseline_id)
-                    .order_by(Tool.first_seen_at, Tool.id)
+                    select(Tool).where(Tool.scan_id == baseline_id).order_by(Tool.position)
                 )
                 .scalars()
                 .all()

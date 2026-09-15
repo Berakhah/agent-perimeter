@@ -243,9 +243,12 @@ def _persist(
             # two tools share a name.
             tool_ids: dict[str, str] = {}
             tool_keys = positional_keys(tool.name for tool in outcome.tools)
-            for key, tool in zip(tool_keys, outcome.tools, strict=True):
+            for position, (key, tool) in enumerate(
+                zip(tool_keys, outcome.tools, strict=True), start=1
+            ):
                 tool_row = Tool(
                     scan_id=scan_id,
+                    position=position,
                     name=tool.name,
                     description=tool.description,
                     description_hash=hashlib.sha256(tool.description.encode()).hexdigest(),
@@ -268,7 +271,7 @@ def _persist(
                             session.execute(
                                 select(Tool)
                                 .where(Tool.scan_id == baseline_id)
-                                .order_by(Tool.first_seen_at, Tool.id)
+                                .order_by(Tool.position)
                             )
                             .scalars()
                             .all()
