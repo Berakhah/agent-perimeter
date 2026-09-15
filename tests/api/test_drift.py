@@ -211,7 +211,9 @@ def test_drift_route_404s_for_an_unknown_scan(client: TestClient) -> None:
 
 def test_database_down_still_completes_the_scan_and_names_the_cause(stub: None) -> None:
     # A Postgres URL nothing listens on: create_all fails, the app still starts.
-    with TestClient(create_app(database_url="postgresql+psycopg://x:y@127.0.0.1:1/none")) as c:
+    with TestClient(
+        create_app(database_url="postgresql+psycopg://x:y@127.0.0.1:1/none?connect_timeout=1")
+    ) as c:
         scan_id = _scan(c)
         events = c.get(f"/api/scans/{scan_id}/events").text
         assert "no_baseline" in events

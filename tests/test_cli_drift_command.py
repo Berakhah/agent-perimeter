@@ -116,7 +116,7 @@ def test_unresolvable_scan_operand_names_the_url(tmp_path: Path) -> None:
 
 
 def test_database_credentials_never_reach_stdout(tmp_path: Path) -> None:
-    url = "postgresql+psycopg://user:s3cretpw@127.0.0.1:1/none"
+    url = "postgresql+psycopg://user:s3cretpw@127.0.0.1:1/none?connect_timeout=1"
     result = runner.invoke(app, ["drift", "scan:a", "scan:b", "--database-url", url])
     assert result.exit_code == 2
     assert "s3cretpw" not in result.stdout
