@@ -24,7 +24,9 @@ from pydantic import ValidationError
 
 from agent_perimeter._contracts import Severity
 from agent_perimeter.checks.registry import summarise_skips
+from agent_perimeter.drift.render import for_terminal
 from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile
+from agent_perimeter.model.snapshot import ToolSnapshot
 from agent_perimeter.scan_runner import DEFAULT_DATABASE_URL, ScanMode, run_scan
 
 DEFAULT_REGISTRY = "https://registry.modelcontextprotocol.io/v0/servers"
@@ -93,6 +95,20 @@ def _invocation_flags(
     return tuple(flags)
 
 
+DRIFT_CHECK_ID = "drift.description_drift"
+
+
+def _read_snapshot(path: Path, *, flag: str) -> ToolSnapshot:
+    try:
+        return ToolSnapshot.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError) as exc:
+        typer.echo(
+            f"Could not read {flag} snapshot {path}: {exc}. "
+            "Pass a file written by `agent-perimeter scan --snapshot`."
+        )
+        raise typer.Exit(code=2) from None
+
+
 app = typer.Typer(
     add_completion=False,
     help="MCP security posture scanner.",
@@ -131,6 +147,17 @@ def scan(
     agent_transcript: Annotated[
         Path | None, typer.Option(help="Agent transcript for injection claim B.")
     ] = None,
+    baseline: Annotated[
+        Path | None,
+        typer.Option(help="Snapshot from an earlier scan of this target to diff against."),
+    ] = None,
+    snapshot: Annotated[
+        Path | None, typer.Option(help="Write this scan's tool snapshot here.")
+    ] = None,
+    fail_on_drift: Annotated[
+        bool,
+        typer.Option("--fail-on-drift", help="Exit 3 if any tool changed since --baseline."),
+    ] = False,
 ) -> None:
     try:
         scope = ScopeFile.model_validate_json(scope_file.read_text()) if scope_file else None
@@ -138,6 +165,10 @@ def scan(
         typer.echo(f"Could not read scope file: {exc}")
         raise typer.Exit(code=2) from None
     env_dict = _parse_env(env)
+
+    baseline_snapshot = (
+        _read_snapshot(baseline, flag="--baseline") if baseline is not None else None
+    )
 
     # Validate --only before doing any real work (opening a transport,
     # launching a container) — a typo'd check id must fail loudly, not
@@ -193,6 +224,7 @@ def scan(
             checks=selected,
             extra_raw=extra_raw,
             invocation_flags=inv_flags,
+            baseline=baseline_snapshot,
         )
     except AuthorizationRequired as exc:
         typer.echo(str(exc))
@@ -207,18 +239,42 @@ def scan(
     typer.echo(f"Revision claimed:  {claimed}")
     typer.echo(f"Features observed: {observed}")
 
-    for finding in sorted(outcome.findings, key=lambda f: SEVERITY_RANK[f.severity]):
-        typer.echo(f"[{finding.severity.value}] {finding.check_id}: {finding.title}")
+    baseline_ref = shlex.quote(str(baseline)) if baseline is not None else "<baseline.json>"
+    current_ref = shlex.quote(str(snapshot)) if snapshot is not None else "<current.json>"
+    findings = [
+        f.model_copy(
+            update={
+                "reproduction": f.reproduction.replace("<baseline.json>", baseline_ref).replace(
+                    "<current.json>", current_ref
+                )
+            }
+        )
+        if f.check_id == DRIFT_CHECK_ID
+        else f
+        for f in outcome.findings
+    ]
+
+    for finding in sorted(findings, key=lambda f: SEVERITY_RANK[f.severity]):
+        typer.echo(for_terminal(f"[{finding.severity.value}] {finding.check_id}: {finding.title}"))
 
     summary = " ".join(
         part
         for part in (summarise_skips(outcome.skipped), summarise_errors(outcome.errored))
         if part
     )
-    if not outcome.findings:
+    if not findings:
         typer.echo("No findings for the checks that ran. " + summary)
     else:
-        typer.echo(f"{len(outcome.findings)} findings. " + summary)
+        typer.echo(f"{len(findings)} findings. " + summary)
+
+    if snapshot is not None:
+        snapshot.write_text(outcome.snapshot.model_dump_json(indent=2), encoding="utf-8")
+        typer.echo(f"Snapshot written to {snapshot}")
+    if fail_on_drift and baseline is None:
+        typer.echo(
+            "--fail-on-drift had no effect: no --baseline was given, so "
+            f"{DRIFT_CHECK_ID} was skipped."
+        )
 
     if sarif is not None:
         from agent_perimeter.report.sarif import to_sarif
@@ -227,7 +283,7 @@ def scan(
         sarif.write_text(
             json.dumps(
                 to_sarif(
-                    outcome.findings,
+                    findings,
                     target=target,
                     tool_version="0.1.0",
                     fingerprint=result,
@@ -245,7 +301,7 @@ def scan(
         published: list[CheckScore] = []
         html.write_text(
             render_report(
-                findings=outcome.findings,
+                findings=findings,
                 edges=outcome.edges,
                 fingerprint=result,
                 target=target,
@@ -255,6 +311,10 @@ def scan(
             encoding="utf-8",
         )
         typer.echo(f"Report written to {html}")
+
+    if fail_on_drift and any(f.check_id == DRIFT_CHECK_ID for f in findings):
+        typer.echo("drift gate tripped: at least one tool changed since the baseline (exit 3).")
+        raise typer.Exit(code=3)
 
 
 @app.command()
