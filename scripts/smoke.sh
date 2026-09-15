@@ -24,13 +24,16 @@ code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/api/scans \
   -d '{"target":"https://example.invalid/mcp","mode":"active"}')
 [ "$code" = "422" ] || fail "active scan without a scope file returned $code, expected 422"
 
-# Migration head is 0003 (migrations/versions/0003_census.py) -- task 17
-# ruling 2: the brief's own script shown here as `grep -q 0004` is stale,
-# same class of drift Task 1 already corrected once in this plan. Run
-# directly via `alembic`, not `uv run alembic`: the api image installs this
-# project with `pip install .` (Dockerfile), not as a uv-managed venv, so
-# `alembic` is already on PATH and `uv` itself is never installed in the
-# image.
-docker compose exec -T api alembic current | grep -q 0003 || fail "migrations not at head"
+# Assert "at head" by alembic's own marker rather than a hardcoded revision
+# number. The brief's shown script said `grep -q 0004`, task 17 corrected it
+# to `0003`, and the census work then moved the head to 0005 -- the first
+# genuine clean-machine run (docs/evidence/clean-machine.md) failed on
+# exactly that third drift. `alembic current` prints `<rev> (head)` only when
+# the database is at the latest revision, so this stays correct as
+# migrations are added. Run directly via `alembic`, not `uv run alembic`: the
+# api image installs this project with `pip install .` (Dockerfile), not as
+# a uv-managed venv, so `alembic` is already on PATH and `uv` itself is never
+# installed in the image.
+docker compose exec -T api alembic current | grep -q '(head)' || fail "migrations not at head"
 
 echo "OK: api, web, refusal path and migrations all verified"
