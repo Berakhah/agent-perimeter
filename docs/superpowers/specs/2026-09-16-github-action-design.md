@@ -86,9 +86,8 @@ branding: { icon: shield, color: yellow }
 
 | Output | Value |
 |---|---|
-| `sarif-file` | path passed as `sarif` |
+| `sarif-file` | path passed as `sarif` — written only when the file exists after the run, absent otherwise so the upload step's guard skips cleanly |
 | `snapshot-file` | path the snapshot was written to (`baseline` on a first run, `snapshot` otherwise) |
-| `sarif-file` note | written only when the file exists after the run; absent otherwise so the upload step's guard skips cleanly |
 | `baseline-created` | `true` on a first run, else `false` |
 | `drift` | `none` on a first run; else `true` iff the SARIF contains a `drift.description_drift` result, `false` otherwise. Derived from the SARIF, not the exit code, so it is meaningful with `fail-on-drift: false`. |
 | `finding-count` | `len(runs[0].results)` in the SARIF |
