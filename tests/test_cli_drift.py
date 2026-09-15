@@ -170,6 +170,32 @@ def test_fail_on_drift_without_a_baseline_is_named_as_inert(stub: None) -> None:
     assert "--fail-on-drift had no effect: no --baseline was given" in result.stdout
 
 
+def test_fail_on_drift_with_only_another_check_is_named_as_inert(
+    tmp_path: Path, stub: None
+) -> None:
+    # A baseline is given, but --only excludes the drift check, so the gate
+    # can never fire; say which condition made it inert.
+    base = _baseline_file(tmp_path, description="Changed.")
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--target",
+            TARGET,
+            "--baseline",
+            str(base),
+            "--fail-on-drift",
+            "--only",
+            "descriptions.unicode_anomaly",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert (
+        "--fail-on-drift had no effect: --only 'descriptions.unicode_anomaly' excluded "
+        "drift.description_drift" in result.stdout
+    )
+
+
 def test_baseline_for_another_target_refuses_before_scanning(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

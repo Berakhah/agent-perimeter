@@ -275,6 +275,11 @@ def scan(
             "--fail-on-drift had no effect: no --baseline was given, so "
             f"{DRIFT_CHECK_ID} was skipped."
         )
+    elif fail_on_drift and only is not None and only != DRIFT_CHECK_ID:
+        typer.echo(
+            f"--fail-on-drift had no effect: --only {only!r} excluded {DRIFT_CHECK_ID}, "
+            "so it did not run."
+        )
 
     if sarif is not None:
         from agent_perimeter.report.sarif import to_sarif
