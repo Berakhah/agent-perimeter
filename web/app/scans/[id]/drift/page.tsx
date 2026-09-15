@@ -7,19 +7,9 @@
  * and an empty state naming exactly what's missing when they don't. Never
  * fake data, never "coming soon" (ruling 4, CLAUDE.md copy rules).
  *
- * Ruling 1 -- the one genuine difference from every prior screen's ruling:
- * there is no live backend for this screen at all. `Tool.description_hash`
- * and `DriftEvent` are real DB columns, but no route in this project's
- * final API surface (Task 9's route list) ever reads scan history or drift
- * events back over HTTP, and no later task adds one. So unlike Screens 1-4
- * ("wired for real, just untested by this task's RED suite"), the
- * `!fixture` branch below isn't a forward reference to a real fetch -- it's
- * the same honest "not enough scan history" empty state, unconditionally,
- * because there's no backend capability yet to determine otherwise. A real
- * scan-history/drift endpoint is a bigger, separate decision for the human
- * partner (ruling 1) and is explicitly out of scope for this task.
- *
- * Live data: GET /api/scans/{id}/drift (agent_perimeter/api/drift.py).
+ * Live data: GET /api/scans/{id}/drift (agent_perimeter/api/drift.py),
+ * added by the drift-detection work (2026-09-15); before that this screen
+ * had no backend and rendered the empty state unconditionally.
  * ?fixture= replays canned data so Playwright stays hermetic.
  *
  * `?fixture=single-scan|changed-description` replays canned data
@@ -46,6 +36,11 @@ export default function DriftPage({
   const [live, setLive] = useState<DriftResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
+    // The route stays mounted across client-side navigation between ids
+    // and ?fixture= values; clear the previous fetch's result first so a
+    // stale error or body cannot render against the new params.
+    setLive(null);
+    setError(null);
     if (fixture) return;
     let cancelled = false;
     getDrift(id)
