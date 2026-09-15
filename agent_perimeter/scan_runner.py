@@ -19,18 +19,21 @@ import os
 import shlex
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from enum import StrEnum
 
 from agent_perimeter.checks.all_checks import ALL_CHECKS, CheckOutcome, run_checks
 from agent_perimeter.checks.base import Check
 from agent_perimeter.checks.context import ScanContext
-from agent_perimeter.checks.registry import Skipped, applicable
+from agent_perimeter.checks.registry import BaselineStatus, Skipped, applicable
 from agent_perimeter.discover.enumerate import ToolRecord, enumerate_tools
+from agent_perimeter.drift.compare import compare_tools
 from agent_perimeter.graph.build import build_graph
+from agent_perimeter.model.drift import DriftEvent
 from agent_perimeter.model.edge import CapabilityEdge
 from agent_perimeter.model.finding import Finding
 from agent_perimeter.model.scope import ScopeFile, require_scope
+from agent_perimeter.model.snapshot import ToolSnapshot
 from agent_perimeter.transport.base import Transport, TransportError
 from agent_perimeter.transport.revision import Fingerprint, fingerprint
 from agent_perimeter.transport.stdio import LaunchSpec, StdioTransport
@@ -137,6 +140,10 @@ class ScanOutcome:
     fingerprint: Fingerprint
     tools: list[ToolRecord]
     edges: list[CapabilityEdge]
+    snapshot: ToolSnapshot
+    """What this scan saw; the CLI writes it with --snapshot, the API
+    persists it as tool rows. Always present, even with nothing to compare."""
+    drift_events: tuple[DriftEvent, ...] = ()
 
 
 def run_scan(
@@ -151,6 +158,9 @@ def run_scan(
     extra_raw: dict[str, dict[str, object]] | None = None,
     invocation_flags: tuple[str, ...] = (),
     on_event: Callable[[EventFrame], None] | None = None,
+    baseline: ToolSnapshot | None = None,
+    baseline_source_unavailable: bool = False,
+    now: datetime | None = None,
 ) -> ScanOutcome:
     """Run the shared scan pipeline: refuse-if-unauthorised, connect,
     fingerprint, enumerate tools, decide which checks apply, run them.
@@ -165,6 +175,18 @@ def run_scan(
     """
     today = today if today is not None else date.today()
     env = env if env is not None else {}
+    now = now if now is not None else datetime.now(UTC)
+    if baseline is not None and baseline.target != target:
+        raise ValueError(
+            f"--baseline is a snapshot of {baseline.target!r}, not of {target!r}. "
+            "Pass the snapshot taken from this target, or omit --baseline."
+        )
+    if baseline is not None:
+        baseline_status = BaselineStatus.PRESENT
+    elif baseline_source_unavailable:
+        baseline_status = BaselineStatus.SOURCE_UNAVAILABLE
+    else:
+        baseline_status = BaselineStatus.NONE_ON_RECORD
 
     # The one call site for the top-level "active mode needs authorisation"
     # gate -- CLI and API both route through this, so they cannot drift
@@ -218,6 +240,11 @@ def run_scan(
         tools = enumerate_tools(transport)
         ambiguous = compute_ambiguous_tools(tools, target)
 
+        snapshot = ToolSnapshot.from_tools(target, tools, taken_at=now)
+        drift_events: tuple[DriftEvent, ...] = (
+            compare_tools(baseline, target, tools, now=now) if baseline is not None else ()
+        )
+
         context = ScanContext(
             target=target,
             transport=transport,
@@ -227,6 +254,8 @@ def run_scan(
             scope=scope,
             ambiguous_tools=ambiguous,
             invocation_flags=invocation_flags,
+            baseline=baseline,
+            drift_events=drift_events,
         )
 
         # No real model provider is wired anywhere in this plan yet
@@ -240,6 +269,7 @@ def run_scan(
             target=target,
             today=today,
             models_available=False,
+            baseline_status=baseline_status,
         )
 
         on_check = None
@@ -276,4 +306,6 @@ def run_scan(
         fingerprint=result,
         tools=tools,
         edges=edges,
+        snapshot=snapshot,
+        drift_events=drift_events,
     )
