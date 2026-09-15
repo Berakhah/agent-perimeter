@@ -104,8 +104,8 @@ cases:
     revision: "2026-07-28"
     flaw: drift_description
     baseline_flaw: none
-    expect_findings: [drift.description_drift]
-    note: same server, read_file's description gained an exfiltration instruction
+    expect_findings: [drift.description_drift, policy.confused_deputy]
+    note: same server, read_file's description gained an exfiltration instruction; that instruction is itself a read→network chain, so confused_deputy is expected too
   - id: drift_schema
     revision: "2026-07-28"
     flaw: drift_schema
