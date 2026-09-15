@@ -38,3 +38,44 @@ If your agent called a privileged tool after seeing the marker, you get a
 finding naming the tool and the call sequence. If it did not, you get nothing —
 which is the correct result, and is not the same as your agent being immune.
 A single negative run is one observation, not a guarantee.
+
+## Snapshots
+
+`--snapshot <path>` writes a `ToolSnapshot` — the portable record drift
+compares against — as JSON:
+
+    {
+      "version": 1,
+      "target": "https://mcp.example.test",
+      "taken_at": "2026-09-15T00:00:00Z",
+      "scan_id": "base-1",
+      "tools": [
+        {
+          "name": "read_file",
+          "description": "Read a file.",
+          "input_schema": {"...": "..."},
+          "annotations": {"...": "..."},
+          "description_hash": "...",
+          "schema_hash": "...",
+          "annotations_hash": "..."
+        }
+      ]
+    }
+
+`taken_at` is ISO-8601 UTC. Each entry in `tools[]` carries the tool's
+`name`, `description`, `input_schema` and `annotations` verbatim, plus a
+SHA-256 hash of each (`description_hash`, `schema_hash`, `annotations_hash`)
+— the values `drift.description_drift` and the `drift` command actually
+compare, so a byte-identical listing always hashes identically regardless of
+whether it came from a file or the database.
+
+`agent-perimeter drift scan:<id> scan:<id> --database-url <url>` reads the
+same `tool`/`drift_event` rows the API's `GET /api/scans/{id}/drift` route
+reads — a scan-id operand is not a separate code path, it resolves to a
+`ToolSnapshot` built from those rows and is compared exactly like a file.
+
+Target identity for matching a baseline to a current scan is the exact
+`target` string in the snapshot (what you passed to `--target`), never
+`--image` — two scans of the same stdio target through different container
+images still compare, and two scans of different targets never silently
+compare against each other's baseline.

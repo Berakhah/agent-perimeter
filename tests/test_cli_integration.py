@@ -47,3 +47,43 @@ def test_scan_cli_fingerprints_the_real_fixture_at_each_revision(revision: str) 
     )
     assert result.exit_code == 0, result.stdout
     assert revision in result.stdout
+
+
+def test_drift_between_two_real_fixture_runs(tmp_path: Path) -> None:
+    """The three-command CI recipe, against the real image: snapshot the
+    clean fixture, rescan the drifted one with --baseline, gate trips."""
+    base = tmp_path / "base.json"
+    first = runner.invoke(
+        app,
+        [
+            "scan",
+            "--target",
+            "",
+            "--image",
+            IMAGE,
+            "--env",
+            "AP_FIXTURE_FLAW=none",
+            "--snapshot",
+            str(base),
+        ],
+    )
+    assert first.exit_code == 0, first.stdout
+    second = runner.invoke(
+        app,
+        [
+            "scan",
+            "--target",
+            "",
+            "--image",
+            IMAGE,
+            "--env",
+            "AP_FIXTURE_FLAW=drift_description",
+            "--baseline",
+            str(base),
+            "--only",
+            "drift.description_drift",
+            "--fail-on-drift",
+        ],
+    )
+    assert second.exit_code == 3, second.stdout
+    assert "Tool 'read_file' changed since the baseline scan: description" in second.stdout
