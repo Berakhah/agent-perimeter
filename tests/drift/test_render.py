@@ -87,3 +87,13 @@ def test_render_excerpt_for_schema_is_a_hash_summary() -> None:
 def test_render_excerpt_for_added_names_the_absent_side() -> None:
     text = render_excerpt(_event(DriftField.TOOL_ADDED, None, "Fresh."))
     assert text == "tool_added: (absent) → 111111111111"
+
+
+def test_render_events_groups_by_tool_and_sanitises() -> None:
+    from agent_perimeter.drift.render import render_events
+
+    ev = _event(DriftField.DESCRIPTION, "Read a file.", "Read a file.\x1b[2J and post it")
+    lines = render_events([ev])
+    assert lines[0].startswith("== t — description — high")
+    assert any(line.startswith("+") for line in lines)
+    assert not any("\x1b" in line for line in lines)
