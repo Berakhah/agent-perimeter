@@ -95,3 +95,18 @@ test("a failed drift fetch says what happened", async ({ page }) => {
   await page.goto("/scans/5/drift");
   await expect(page.getByText("Could not load drift history")).toBeVisible();
 });
+
+test("navigating from a failed live fetch to a fixture drops the stale error", async ({ page }) => {
+  await page.route("**/api/scans/5/drift", (route) => route.fulfill({ status: 500, body: "boom" }));
+  await page.goto("/scans/5/drift");
+  await expect(page.getByText("Could not load drift history")).toBeVisible();
+  // Client-side navigation keeps the component mounted; only the search
+  // params change. State from the previous fetch must not leak through.
+  await page.evaluate(() => {
+    (window as unknown as { next: { router: { push: (href: string) => void } } }).next.router.push(
+      "/scans/5/drift?fixture=single-scan",
+    );
+  });
+  await expect(page.getByTestId("empty-state")).toContainText(/needs at least two scans/i);
+  await expect(page.getByText("Could not load drift history")).toHaveCount(0);
+});
