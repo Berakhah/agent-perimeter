@@ -11,6 +11,7 @@ from agent_perimeter.transport.stdio import (
     StdioTransport,
     docker_args,
 )
+from tests.docker_build import build_image as build_docker_image
 
 IMAGE = "agent-perimeter-hostile:test"
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "hostile"
@@ -20,7 +21,7 @@ pytestmark = pytest.mark.skipif(shutil.which("docker") is None, reason="docker u
 
 @pytest.fixture(scope="module", autouse=True)
 def build_image() -> None:
-    subprocess.run(["docker", "build", "-t", IMAGE, str(FIXTURE)], check=True, capture_output=True)
+    build_docker_image(IMAGE, FIXTURE)
 
 
 def _run(mode: str, timeout_s: int = 30) -> subprocess.CompletedProcess[str]:
