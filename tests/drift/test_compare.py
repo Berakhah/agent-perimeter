@@ -10,7 +10,13 @@ import pytest
 
 from agent_perimeter._contracts import Severity
 from agent_perimeter.discover.enumerate import ToolRecord
-from agent_perimeter.drift.compare import compare, compare_tools, keyed_tools, plain_name
+from agent_perimeter.drift.compare import (
+    compare,
+    compare_tools,
+    keyed_tools,
+    plain_name,
+    positional_keys,
+)
 from agent_perimeter.model.drift import DriftField
 from agent_perimeter.model.snapshot import ToolSnapshot
 
@@ -106,6 +112,12 @@ def test_output_is_ordered_by_tool_name_regardless_of_listing_order() -> None:
     before = snap(ToolRecord(name="b", description="1"), ToolRecord(name="a", description="1"))
     after = snap(ToolRecord(name="a", description="2"), ToolRecord(name="b", description="2"))
     assert [e.tool_name for e in compare(before, after, now=NOW)] == ["a", "b"]
+
+
+def test_positional_keys_numbers_duplicates_in_listing_order() -> None:
+    assert positional_keys(["x", "x", "y", "x"]) == ["x", "x#2", "y", "x#3"]
+    assert positional_keys(["a", "b", "c"]) == ["a", "b", "c"]
+    assert positional_keys([]) == []
 
 
 def test_duplicate_names_are_keyed_positionally_so_every_copy_is_compared() -> None:
