@@ -11,7 +11,9 @@ import shlex
 from dataclasses import dataclass, field
 
 from agent_perimeter.discover.enumerate import ToolRecord
+from agent_perimeter.model.drift import DriftEvent
 from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile
+from agent_perimeter.model.snapshot import ToolSnapshot
 from agent_perimeter.transport.base import Transport, has_header_override
 from agent_perimeter.transport.revision import Fingerprint
 
@@ -40,6 +42,11 @@ class ScanContext:
     them `--only secrets.config_scan` re-runs with no `--config` and finds
     nothing, and `--only revision.header_body_mismatch` re-runs in passive
     mode and reports NOT_AUTHORISED. Populated by cli.py's `scan`."""
+    baseline: ToolSnapshot | None = None
+    """The earlier snapshot of this target the runner compared against, if any."""
+    drift_events: tuple[DriftEvent, ...] = ()
+    """Computed once by the runner; `drift.description_drift` formats these,
+    it never re-computes them."""
 
     def reproduction(self, check_id: str) -> str:
         """The command a sceptic runs to reproduce one finding.
