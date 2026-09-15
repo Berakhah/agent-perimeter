@@ -1,139 +1,144 @@
-# Compose verification record
+# Clean-machine verification record
 
-**This is not a clean-machine run.** A genuine clean-machine verification —
-`git clone` on a fresh VM or a container with only Docker installed, nothing
-else — is still outstanding and is explicitly out of scope for the task that
-produced this record (see the scope boundary recorded in this plan's task-17
-brief/progress notes). What follows is a best-effort verification of the same
-`docker compose up -d --wait && ./scripts/smoke.sh` sequence run **inside the
-existing development sandbox** — the same machine and checkout every other
-task in this plan was implemented on, with Docker Desktop already installed,
-`uv`/`npm`/Python package registries already warm, and this repository's own
-`.venv`/`node_modules` present alongside (but not used by) the containers.
-Treat the numbers below as "the compose topology and healthchecks are
-internally correct" evidence, not as "a stranger with a bare VM will see
-this" evidence. That second claim needs an actual fresh VM run before it can
-be made honestly.
+**This is a genuine clean-machine run.** A fresh GitHub-hosted VM
+(`ubuntu-latest`) with nothing of this project on it — no checkout, no
+build cache, no `.venv`, no `node_modules` — did a literal `git clone` of
+the public repository and ran the README's Quickstart verbatim. It is
+reproducible by anyone with access to the repository: **Actions →
+clean-machine → Run workflow**, or `gh workflow run clean-machine.yml`.
+The workflow that ran it is `.github/workflows/clean-machine.yml`; it
+deliberately uses no `actions/checkout` and no cache actions, so the runner
+sees exactly what a stranger following the README sees.
 
-## Environment
+## The run
 
-- **Date:** 2026-09-07
-- **Host OS:** Windows 11 Home 10.0.26200 (Docker Desktop, WSL2 backend)
-- **Docker:** `Docker version 29.7.2, build a7dcaa6`
-- **Docker Compose:** `Docker Compose version v5.4.0`
-- **Repo state:** this task's own worktree/branch (`week4-census-ui`), working
-  tree clean before the run, `cp .env.example .env` performed exactly as the
-  README's quickstart instructs (no manual edits to the copied `.env`).
+- **Run:** <https://github.com/Berakhah/agent-perimeter/actions/runs/34942171856>
+  (workflow `clean-machine`, job `quickstart`, conclusion **success**)
+- **Commit verified:** `08e85f3` on branch `clean-machine-verification`
+  (pinned by `git checkout $GITHUB_SHA` after the clone, so the record
+  names one exact tree)
+- **Date:** 2026-09-15, 07:31:53Z → 07:33:15Z (**82 s** job wall-clock,
+  including runner setup and teardown)
+- **Runner:** Ubuntu 24.04.5 LTS, Linux 6.17.0-1022-azure x86_64
+- **Docker:** Client 28.0.4 / Server 28.0.4
+- **Docker Compose:** v2.38.2
 
-## What was run
+Note both Docker versions differ from the development sandbox's
+(29.8.0 / Compose v5.4.0, below) — the stack comes up green on both.
+
+### State of the VM before anything was cloned
+
+```
+REPOSITORY                                   TAG       SIZE
+ghcr.io/github/gh-aw-firewall/agent          latest    569MB
+ghcr.io/github/gh-aw-firewall/api-proxy      latest    231MB
+ghcr.io/github/gh-aw-mcpg                    latest    181MB
+ghcr.io/dependabot/dependabot-updater-core   latest    826MB
+ghcr.io/github/github-mcp-server             latest    46.8MB
+ghcr.io/github/gh-aw-firewall/squid          latest    43.1MB
+
+TYPE            TOTAL     ACTIVE    SIZE      RECLAIMABLE
+Images          6         0         1.88GB    1.88GB (100%)
+Containers      0         0         0B        0B
+Local Volumes   0         0         0B        0B
+Build Cache     0         0         0B        0B
+```
+
+Six GitHub-owned images are preloaded on every `ubuntu-latest` runner; none
+is a base image this project uses (`python:*`, `node:*`, `postgres:*`) and
+the **build cache was 0 B**, so the `api` and `web` image builds below were
+cold: every base layer pulled, every `pip install` / `npm ci` / `next build`
+layer executed from scratch.
+
+## What was run (README "Quickstart", line for line)
 
 ```bash
+git clone https://github.com/Berakhah/agent-perimeter.git && cd agent-perimeter
 cp .env.example .env
-docker compose up -d --build --wait
+docker compose up -d --wait
 ./scripts/smoke.sh
+```
+
+plus the README's opt-in fixture:
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  | docker compose --profile demo run --rm -T fixture
 ```
 
 ## Outcome: green
 
 ```
- Container week4-census-ui-db-1 Healthy
- Container week4-census-ui-api-1 Healthy
- Container week4-census-ui-web-1 Healthy
-```
-
-```
-$ docker compose exec -T api alembic current
-INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
-INFO  [alembic.runtime.migration] Will assume transactional DDL.
-0003 (head)
+ api  Built
+ web  Built
+ Container agent-perimeter-db-1   Healthy
+ Container agent-perimeter-api-1  Healthy
+ Container agent-perimeter-web-1  Healthy
+clone-to-healthy: 62s
 ```
 
 ```
 $ ./scripts/smoke.sh
-INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
-INFO  [alembic.runtime.migration] Will assume transactional DDL.
 OK: api, web, refusal path and migrations all verified
+smoke: 1s
 ```
 
-All three always-on services (`db`, `api`, `web`) reached `healthy` and the
-smoke script's four assertions (API liveness, web serving, the 422
-scope-file refusal on an active scan, migrations at head) all passed.
-
-The fourth compose service, `fixture` (the Week 1 parameterised MCP stdio
-fixture, gated behind `--profile demo` since it is a stdio server, not a
-daemon — see docker-compose.yml's comment on that service), was also built
-and exercised directly in this same sandbox run:
-
 ```
-$ docker compose --profile demo build fixture   # built clean
 $ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
     | docker compose --profile demo run --rm -T fixture
-{"jsonrpc": "2.0", "id": 1, "result": {"tools": [...]}}
+{"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "read_file", ...}], "resultType": "complete", ...}}
 ```
 
-## Timing (caveated — not a from-clean-clone number)
+All three always-on services reached `healthy`, the smoke script's four
+assertions (API liveness, web serving, `422` scope-file refusal on an active
+scan, migrations at head) passed, and the stdio fixture answered
+`tools/list`.
 
-A `docker compose up -d --build --wait` timed after removing this session's
-own previously-built `api`/`web` images (`docker compose down --rmi local`)
-completed in **38 seconds**, with the smoke script adding **2 more seconds**
-(40s total from `up` to a fully green smoke run). This number is not
-representative of a true cold clone-to-green time: Docker's *layer* cache
-(base images, and — critically — the `npm ci`/`pip install` layers
-themselves, which are content-addressed and were not evicted by removing the
-final image) was still warm from the same session's earlier build a few
-minutes prior, and the host's package registries were already reachable and
-recently used. The very first build in this session, with nothing at all
-cached, took roughly 82s for the `api` image (dominated by `pip install .`
-resolving and downloading ~35 wheels, ~74s of that alone) and roughly 133s
-for the `web` image (dominated by `npm ci`, ~60s, and `next build`, ~38s) —
-call it on the order of **3–4 minutes** wall-clock for a genuinely first-ever
-build on this sandbox, run as two separate sequential `docker compose build`
-invocations rather than the parallelised `docker compose up --build`. A real
-clean-machine run should be expected to land somewhere in that neighbourhood
-or a bit higher (slower disk, no local registry mirror, first-time Docker
-Desktop startup overhead) — this record does not attempt to be more precise
-than that about a machine nobody has actually run this on yet.
+## Timing
 
-## What this run did and did not need beyond the README
+| Stage | Wall-clock |
+|---|---|
+| `docker compose up -d --wait` — cold build of `api` (243 MB) and `web` (773 MB), pull `postgres:16-alpine`, migrate, three healthchecks | **62 s** |
+| `./scripts/smoke.sh` | **1 s** |
+| Whole job incl. runner setup, clone, fixture build+run, teardown | **82 s** |
 
-Nothing needed a step the README doesn't already state. `cp .env.example
-.env` followed by `docker compose up -d --wait` and `./scripts/smoke.sh`
-worked with no manual intervention, no undocumented environment variable, and
-no manual `docker` command outside the three shown above. (Per the brief's
-own instruction for this step: "if anything needed a step not in the README,
-add the step to the README rather than to the transcript" — nothing did, so
-nothing was added.)
+This is faster than the 3–4 minutes the earlier sandbox record estimated for
+a cold build: GitHub-hosted runners sit next to a registry mirror with very
+high download bandwidth, and the sandbox estimate was dominated by wheel and
+npm downloads. A laptop on ordinary broadband should expect the higher end.
 
-## Two real, verified bugs this run caught and fixed
+## What this run needed beyond the README
 
-Both are documented inline where they were fixed (`scripts/smoke.sh`,
-`docker-compose.yml`, `Dockerfile`, `alembic.ini`), noted here because they
-are exactly the class of thing a compose verification step exists to catch:
+Nothing. Each README step ran unmodified with no undocumented environment
+variable and no manual `docker` command. The first attempt at this run
+(<https://github.com/Berakhah/agent-perimeter/actions/runs/34941948403>)
+did fail — see below — and the fix went into `scripts/smoke.sh`, not into
+the README or a transcript.
 
-1. **Migration number.** The brief's own shown `smoke.sh` checked for
-   migration `0004`; the real migration head in this repository is `0003`
-   (`migrations/versions/0003_census.py`). Fixed in `scripts/smoke.sh`.
-2. **The refusal-path smoke assertion posted a stdio-shaped target
-   (`"python /server.py"`) to prove the scope-file refusal, but
-   `agent_perimeter/api/scans.py` classifies a target's transport *before*
-   checking for a scope file — a stdio target always gets `400
-   unsupported_target`, never `422`, regardless of whether the scope-file
-   refusal itself works.** This was caught by actually running the script
-   against the real API in this sandbox (it failed with `FAIL: active scan
-   without a scope file returned 400, expected 422`), not by static reading.
-   Fixed by posting an `https://` target instead, which is what the
-   assertion needs to actually exercise the 422 path (confirmed against
-   `tests/api/test_scans.py::test_a_stdio_target_is_refused_with_a_400_naming_the_cli`,
-   which independently documents the same classify-before-scope ordering).
+## Bug this run caught and fixed
 
-Neither bug would have been caught by re-reading the brief's script; both
-were only visible by actually executing it against a live stack, which is
-the entire point of doing even a best-effort sandbox run rather than skipping
-Step 3 outright.
+**Third occurrence of the pinned-migration-number drift.** The stack came up
+healthy on the first fresh-VM attempt, but `smoke.sh` failed with `FAIL:
+migrations not at head`: it still grepped `alembic current` for `0003`,
+while the census work had since added `0004_census_run_salt.py` and
+`0005_census_sample_seed.py`. The brief's own script had said `0004`; task
+17 corrected it to `0003`; the head then moved again. `scripts/smoke.sh` now
+asserts on alembic's own `(head)` marker, which stays correct as migrations
+are added. Nothing on the development sandbox would have caught this — its
+Postgres volume was already migrated and the smoke script had not been
+re-run since the census branch merged.
 
-## Outstanding
+## Prior record: sandbox run, 2026-09-07 (superseded)
 
-A genuine clean-machine (fresh VM / container with only Docker installed) run
-is still outstanding. Per the scope boundary for this task, it is explicitly
-not attempted here and is left for the human partner to run before Step 8's
-publish actions (also explicitly out of scope for this task) are taken.
+Before this run, the only evidence was a best-effort run of the same
+sequence inside the development sandbox (Windows 11, Docker Desktop 29.x /
+Compose v5.4.0, warm layer cache, project `.venv` and `node_modules`
+present). That run was green too, and caught two real bugs which are still
+documented inline where they were fixed: `smoke.sh` checking for migration
+`0004` when the head was `0003`, and the refusal-path assertion posting a
+stdio-shaped target that `agent_perimeter/api/scans.py` rejects with `400
+unsupported_target` before the scope-file check can produce the `422` the
+assertion exists to exercise (fixed by posting an `https://` target). The
+sandbox record's cold-build estimate of roughly 82 s (`api`) + 133 s
+(`web`) sequential is retained above only as the "ordinary broadband"
+upper bound; its "not a clean-machine run" caveat no longer applies.
