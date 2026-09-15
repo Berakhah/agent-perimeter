@@ -317,6 +317,73 @@ def scan(
         raise typer.Exit(code=3)
 
 
+def _resolve_operand(value: str, *, database_url: str) -> ToolSnapshot:
+    if not value.startswith("scan:"):
+        return _read_snapshot(Path(value), flag="drift")
+    scan_id = value.removeprefix("scan:")
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from agent_perimeter.api.drift import snapshot_from_scan
+    from agent_perimeter.db.models import Scan
+
+    url = os.path.expandvars(database_url)
+    try:
+        with Session(create_engine(url)) as session:
+            scan = session.get(Scan, scan_id)
+            if scan is None:
+                typer.echo(
+                    f"{value} is not a scan on record at {url}. "
+                    "Check the id, or pass --database-url."
+                )
+                raise typer.Exit(code=2)
+            return snapshot_from_scan(session, scan)
+    except typer.Exit:
+        raise
+    except Exception as exc:  # noqa: BLE001 - any DBAPI failure is a usage-level refusal here
+        typer.echo(
+            f"Could not resolve {value} from {url}: {exc}. "
+            "Pass --database-url for a reachable database."
+        )
+        raise typer.Exit(code=2) from None
+
+
+@app.command()
+def drift(
+    baseline: Annotated[str, typer.Argument(help="Snapshot file, or scan:<id>.")],
+    current: Annotated[str, typer.Argument(help="Snapshot file, or scan:<id>.")],
+    tool: Annotated[str | None, typer.Option(help="Only this tool.")] = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Emit events as JSON.")] = False,
+    database_url: Annotated[
+        str, typer.Option(help="Where scan:<id> operands are resolved from.")
+    ] = DEFAULT_DATABASE_URL,
+) -> None:
+    """Diff two tool snapshots. No network; the reproduction every drift finding cites."""
+    from datetime import UTC, datetime
+
+    from agent_perimeter.drift.compare import compare, plain_name
+    from agent_perimeter.drift.render import render_events
+
+    before = _resolve_operand(baseline, database_url=database_url)
+    after = _resolve_operand(current, database_url=database_url)
+    try:
+        events = compare(before, after, now=datetime.now(UTC))
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2) from None
+    if tool is not None:
+        events = [e for e in events if plain_name(e.tool_name) == tool]
+    if json_output:
+        typer.echo(json.dumps([json.loads(e.model_dump_json()) for e in events]))
+    elif not events:
+        typer.echo("No drift between the two snapshots.")
+    else:
+        for line in render_events(events):
+            typer.echo(line)
+    if events:
+        raise typer.Exit(code=3)
+
+
 @app.command()
 def census(
     endpoint: Annotated[str, typer.Option(help="Registry API base URL.")] = DEFAULT_REGISTRY,

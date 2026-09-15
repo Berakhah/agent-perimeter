@@ -7,7 +7,9 @@ prints it: an embedded `ESC[2J` must not repaint the operator's terminal.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from difflib import SequenceMatcher
+from itertools import groupby
 from typing import Literal
 
 from agent_perimeter._contracts import Severity
@@ -104,3 +106,25 @@ def render_excerpt(event: DriftEvent) -> str:
                 parts.append(f"[{text}]")
         return " ".join(parts)
     return f"{event.field.value}: {_short(event.old_hash)} → {_short(event.new_hash)}"
+
+
+def render_events(events: Sequence[DriftEvent]) -> list[str]:
+    """Terminal blocks, one per tool, every line sanitised."""
+    lines: list[str] = []
+    for key, group in groupby(events, key=lambda e: e.tool_name):
+        tool_events = list(group)
+        fields = ", ".join(e.field.value for e in tool_events)
+        worst = min(tool_events, key=lambda e: SEVERITY_RANK[e.severity]).severity.value
+        lines.append(for_terminal(f"== {key} — {fields} — {worst}"))
+        for event in tool_events:
+            if (
+                event.field is DriftField.DESCRIPTION
+                and event.old_value is not None
+                and event.new_value is not None
+            ):
+                for kind, text in word_diff(event.old_value, event.new_value):
+                    prefix = {"equal": " ", "delete": "-", "insert": "+"}.get(kind, "?")
+                    lines.append(for_terminal(f"{prefix}{text}"))
+            else:
+                lines.append(for_terminal(render_excerpt(event)))
+    return lines
