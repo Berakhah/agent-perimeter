@@ -36,7 +36,7 @@ from agent_perimeter.api.state import AppState
 from agent_perimeter.db.models import CapabilityEdge as CapabilityEdgeRow
 from agent_perimeter.db.models import DriftEvent as DriftEventRow
 from agent_perimeter.db.models import FindingRow, Scan, Tool
-from agent_perimeter.drift.compare import plain_name
+from agent_perimeter.drift.compare import positional_keys
 from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile, require_scope
 from agent_perimeter.report.sarif import to_sarif
 from agent_perimeter.scan_runner import EventFrame, ScanMode, ScanOutcome, run_scan
@@ -236,8 +236,14 @@ def _persist(
             # on Postgres). Found via fix round 1, Finding 3's new test.
             session.flush()
 
+            # Keyed positionally, matching `drift.compare.keyed_tools` (spec
+            # §5.1) — a duplicate-named tool gets `name#2`, `name#3` … in
+            # listing order, so `outcome.drift_events[i].tool_name` (also a
+            # positional key) resolves to exactly the right row even when
+            # two tools share a name.
             tool_ids: dict[str, str] = {}
-            for tool in outcome.tools:
+            tool_keys = positional_keys(tool.name for tool in outcome.tools)
+            for key, tool in zip(tool_keys, outcome.tools, strict=True):
                 tool_row = Tool(
                     scan_id=scan_id,
                     name=tool.name,
@@ -248,18 +254,30 @@ def _persist(
                 )
                 session.add(tool_row)
                 session.flush()
-                tool_ids[tool.name] = tool_row.id
+                tool_ids[key] = tool_row.id
 
             baseline_id = lookup.snapshot.scan_id if lookup.snapshot is not None else None
+            baseline_tool_ids_by_key: dict[str, str] | None = None
             for event in outcome.drift_events:
                 if baseline_id is None:
                     break
-                name = plain_name(event.tool_name)
-                tool_id = tool_ids.get(name)
+                tool_id = tool_ids.get(event.tool_name)
                 if tool_id is None and event.field.value == "tool_removed":
-                    tool_id = session.execute(
-                        select(Tool.id).where(Tool.scan_id == baseline_id, Tool.name == name)
-                    ).scalar_one_or_none()
+                    if baseline_tool_ids_by_key is None:
+                        baseline_rows = (
+                            session.execute(
+                                select(Tool)
+                                .where(Tool.scan_id == baseline_id)
+                                .order_by(Tool.first_seen_at, Tool.id)
+                            )
+                            .scalars()
+                            .all()
+                        )
+                        baseline_keys = positional_keys(t.name for t in baseline_rows)
+                        baseline_tool_ids_by_key = dict(
+                            zip(baseline_keys, (t.id for t in baseline_rows), strict=True)
+                        )
+                    tool_id = baseline_tool_ids_by_key.get(event.tool_name)
                 if tool_id is None:
                     continue
                 session.add(

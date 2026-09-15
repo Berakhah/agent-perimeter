@@ -7,7 +7,7 @@ harness all call this one function, so there is exactly one definition of
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 
 from agent_perimeter.discover.enumerate import ToolRecord
@@ -15,18 +15,27 @@ from agent_perimeter.model.drift import DRIFT_SEVERITY, DriftEvent, DriftField
 from agent_perimeter.model.snapshot import SnapshotTool, ToolSnapshot, canonical_json
 
 
-def keyed_tools(snapshot: ToolSnapshot) -> dict[str, SnapshotTool]:
-    """Index tools by name; a repeated name (attacker-authored listings may
-    repeat) gets `name#2`, `name#3` … in listing order, so every copy is
-    still compared and the output stays deterministic."""
-    keyed: dict[str, SnapshotTool] = {}
+def positional_keys(names: Iterable[str]) -> list[str]:
+    """`["x", "x", "y"]` -> `["x", "x#2", "y"]`: one key per position, in
+    listing order. A repeated name (attacker-authored listings may repeat)
+    gets `name#2`, `name#3` … so every copy is still addressable and the
+    output stays deterministic. This is the one definition of "the key for
+    a tool at this position" — every caller that needs to line up two
+    listings of the same target by position (drift comparison, and the API's
+    persistence/read paths) uses this function rather than its own."""
+    keys: list[str] = []
     seen: dict[str, int] = {}
-    for tool in snapshot.tools:
-        count = seen.get(tool.name, 0) + 1
-        seen[tool.name] = count
-        key = tool.name if count == 1 else f"{tool.name}#{count}"
-        keyed[key] = tool
-    return keyed
+    for name in names:
+        count = seen.get(name, 0) + 1
+        seen[name] = count
+        keys.append(name if count == 1 else f"{name}#{count}")
+    return keys
+
+
+def keyed_tools(snapshot: ToolSnapshot) -> dict[str, SnapshotTool]:
+    """Index tools by their positional key; see `positional_keys`."""
+    keys = positional_keys(tool.name for tool in snapshot.tools)
+    return dict(zip(keys, snapshot.tools, strict=True))
 
 
 def plain_name(key: str) -> str:

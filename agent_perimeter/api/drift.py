@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from agent_perimeter.api.state import AppState
 from agent_perimeter.db.models import DriftEvent as DriftEventRow
 from agent_perimeter.db.models import Scan, Tool
+from agent_perimeter.drift.compare import positional_keys
 from agent_perimeter.model.snapshot import SnapshotTool, ToolSnapshot, canonical_json, sha256_json
 
 logger = logging.getLogger(__name__)
@@ -110,17 +111,30 @@ def _text(field: str, tool: Tool | None) -> str | None:
 
 
 def _drifted_tool(
-    event: DriftEventRow, current: dict[str, Tool], baseline_by_name: dict[str, Tool]
+    event: DriftEventRow,
+    current_by_id: dict[str, Tool],
+    current_key_by_id: dict[str, str],
+    baseline_by_id: dict[str, Tool],
+    baseline_by_key: dict[str, Tool],
 ) -> dict[str, object]:
-    tool = current.get(event.tool_id)
+    tool = current_by_id.get(event.tool_id)
     if tool is not None:
+        # Non-removed events: event.tool_id names a row in the *current*
+        # scan. Look up its counterpart on the baseline side by the same
+        # positional key (spec §5.1) -- not by name, which collapses
+        # duplicates the way `event.tool_id` itself does not.
+        key = current_key_by_id[tool.id]
         name = tool.name
-    else:  # a tool_removed event points at the baseline scan's tool row
-        name = next((t.name for t in baseline_by_name.values() if t.id == event.tool_id), "?")
-    # Duplicate-keyed tools (x#2) resolve to the first baseline row of that
-    # name; only old_text for a second copy loses precision.
-    before = baseline_by_name.get(name)
-    after = tool if event.field != "tool_removed" else None
+        before = baseline_by_key.get(key)
+        after = tool
+    else:
+        # tool_removed: event.tool_id names a row in the *baseline* scan
+        # directly (it has no counterpart in the current scan at all), so
+        # no positional-key lookup is needed to find it -- the FK already
+        # points at the exact copy that was removed.
+        before = baseline_by_id.get(event.tool_id)
+        name = before.name if before is not None else "?"
+        after = None
     return {
         "name": name,
         "field": event.field,
@@ -169,14 +183,40 @@ def get_drift(scan_id: str, request: Request) -> dict[str, object]:
             .all()
         )
         baseline_id = events[0].baseline_scan_id if events else None
-        current = {
-            t.id: t for t in session.execute(select(Tool).where(Tool.scan_id == scan_id)).scalars()
-        }
-        baseline_by_name: dict[str, Tool] = {}
+        current_rows = (
+            session.execute(
+                select(Tool).where(Tool.scan_id == scan_id).order_by(Tool.first_seen_at, Tool.id)
+            )
+            .scalars()
+            .all()
+        )
+        current_by_id = {t.id: t for t in current_rows}
+        current_key_by_id = dict(
+            zip(
+                (t.id for t in current_rows),
+                positional_keys(t.name for t in current_rows),
+                strict=True,
+            )
+        )
+        baseline_by_id: dict[str, Tool] = {}
+        baseline_by_key: dict[str, Tool] = {}
         if baseline_id is not None:
-            for t in session.execute(select(Tool).where(Tool.scan_id == baseline_id)).scalars():
-                baseline_by_name.setdefault(t.name, t)
-        drifted = [_drifted_tool(e, current, baseline_by_name) for e in events]
+            baseline_rows = (
+                session.execute(
+                    select(Tool)
+                    .where(Tool.scan_id == baseline_id)
+                    .order_by(Tool.first_seen_at, Tool.id)
+                )
+                .scalars()
+                .all()
+            )
+            baseline_by_id = {t.id: t for t in baseline_rows}
+            baseline_keys = positional_keys(t.name for t in baseline_rows)
+            baseline_by_key = dict(zip(baseline_keys, baseline_rows, strict=True))
+        drifted = [
+            _drifted_tool(e, current_by_id, current_key_by_id, baseline_by_id, baseline_by_key)
+            for e in events
+        ]
         timeline = [
             {
                 "id": s.id,

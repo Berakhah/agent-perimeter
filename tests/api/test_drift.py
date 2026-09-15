@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from agent_perimeter._contracts import Claim, Derivation, Method
 from agent_perimeter.api.app import create_app
-from agent_perimeter.db.models import DriftEvent
+from agent_perimeter.db.models import DriftEvent, Scan, Tool
 from agent_perimeter.model.feature import Feature, Revision
 from agent_perimeter.transport.revision import Fingerprint
 
@@ -34,16 +34,22 @@ MODERN = Fingerprint(
 
 class _Listing:
     description = "Read a file."
+    # When set, overrides the single read_file tool below with an explicit
+    # (name, description) listing, in order -- lets a test put two
+    # same-named tools on one listing (fix round 1: duplicate-name keying).
+    tools: list[tuple[str, str]] | None = None
 
     def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         if method == "tools/list":
+            names_and_descriptions = _Listing.tools or [("read_file", _Listing.description)]
             return {
                 "tools": [
                     {
-                        "name": "read_file",
-                        "description": _Listing.description,
+                        "name": name,
+                        "description": description,
                         "inputSchema": {"type": "object", "properties": {}},
                     }
+                    for name, description in names_and_descriptions
                 ]
             }
         return {}
@@ -54,6 +60,7 @@ class _Listing:
 @pytest.fixture
 def stub(monkeypatch: pytest.MonkeyPatch) -> None:
     _Listing.description = "Read a file."
+    _Listing.tools = None
     monkeypatch.setattr("agent_perimeter.scan_runner.fingerprint", lambda transport: MODERN)
     monkeypatch.setattr(
         "agent_perimeter.scan_runner.build_transport", lambda target, image, env: _Listing()
@@ -126,6 +133,57 @@ def test_second_scan_detects_the_change_persists_events_and_serves_the_diff(
         )
         assert len(rows) == 1
         assert rows[0].baseline_scan_id == first and rows[0].field == "description"
+
+
+def test_a_removed_duplicate_tool_persists_all_rows_and_names_the_right_copy(
+    client: TestClient, db_url: str
+) -> None:
+    # Baseline lists "x" twice; the current listing drops the second copy.
+    # Every row (Scan/Tool/DriftEvent) must still land, and the removed
+    # entry must resolve to the SECOND copy's own text, not the first's
+    # (fix round 1, Finding 1/2: positional, not by-name, keying).
+    _Listing.tools = [("x", "one"), ("x", "two")]
+    first = _scan(client)
+    _Listing.tools = [("x", "one")]
+    second = _scan(client)
+
+    with Session(create_engine(db_url)) as session:
+        assert session.get(Scan, first) is not None
+        assert session.get(Scan, second) is not None
+        first_tools = session.execute(select(Tool).where(Tool.scan_id == first)).scalars().all()
+        second_tools = session.execute(select(Tool).where(Tool.scan_id == second)).scalars().all()
+        assert len(first_tools) == 2
+        assert len(second_tools) == 1
+        drift_rows = (
+            session.execute(select(DriftEvent).where(DriftEvent.scan_id == second)).scalars().all()
+        )
+        assert len(drift_rows) == 1
+        assert drift_rows[0].field == "tool_removed"
+
+    body = client.get(f"/api/scans/{second}/drift").json()
+    [tool] = body["drifted_tools"]
+    assert tool["field"] == "tool_removed"
+    assert tool["name"] == "x"
+    assert tool["old_text"] == "two"
+
+
+def test_a_duplicate_tools_description_change_diffs_the_right_copy(
+    client: TestClient,
+) -> None:
+    # Baseline and current both list "x" twice; only the SECOND copy's
+    # description changes. The single description event must diff the
+    # second copy's old/new text, not the first's.
+    _Listing.tools = [("x", "one"), ("x", "two")]
+    _scan(client)
+    _Listing.tools = [("x", "one"), ("x", "TWO")]
+    second = _scan(client)
+
+    body = client.get(f"/api/scans/{second}/drift").json()
+    [tool] = body["drifted_tools"]
+    assert tool["field"] == "description"
+    assert tool["name"] == "x"
+    assert tool["old_text"] == "two"
+    assert tool["new_text"] == "TWO"
 
 
 def test_a_pinned_baseline_for_another_target_is_a_422_before_any_202(client: TestClient) -> None:
