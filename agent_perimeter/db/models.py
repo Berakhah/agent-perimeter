@@ -20,6 +20,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     String,
     Text,
 )
@@ -46,6 +47,7 @@ class Base(DeclarativeBase):
 
 class Scan(Base):
     __tablename__ = "scan"
+    __table_args__ = (Index("ix_scan_target_finished", "target_ref", "finished_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     target_ref: Mapped[str] = mapped_column(Text)
@@ -77,6 +79,9 @@ class Tool(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     scan_id: Mapped[str] = mapped_column(ForeignKey("scan.id"))
     name: Mapped[str] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Nullable: rows from before 0006 have only the hash. The drift diff
+    needs the text; the hash comparison does not."""
     description_hash: Mapped[str] = mapped_column(String(64))
     input_schema_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     annotations_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
@@ -152,10 +157,12 @@ class DriftEvent(Base):
     __tablename__ = "drift_event"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    scan_id: Mapped[str] = mapped_column(ForeignKey("scan.id"), index=True)
+    baseline_scan_id: Mapped[str] = mapped_column(ForeignKey("scan.id"))
     tool_id: Mapped[str] = mapped_column(ForeignKey("tool.id"))
     field: Mapped[str] = mapped_column(String(32))
-    old_hash: Mapped[str] = mapped_column(String(64))
-    new_hash: Mapped[str] = mapped_column(String(64))
+    old_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    new_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     severity: Mapped[str] = mapped_column(String(16))
 
