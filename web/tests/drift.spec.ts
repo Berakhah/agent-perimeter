@@ -42,3 +42,56 @@ test("the timeline is ordered oldest to newest with absolute dates", async ({ pa
   expect(stamps).toEqual([...stamps].sort());
   expect(stamps[0]).toMatch(/\d{4}-\d{2}-\d{2}/);
 });
+
+test("without a fixture the page fetches GET /api/scans/:id/drift and renders the diff", async ({ page }) => {
+  await page.route("**/api/scans/9/drift", (route) =>
+    route.fulfill({
+      json: {
+        scan_id: "9",
+        target_ref: "https://mcp.example.test",
+        baseline_scan_id: "8",
+        scans: [
+          { id: "9", started_at: "2026-09-15T10:00:00Z", tool_count: 1 },
+          { id: "8", started_at: "2026-09-01T10:00:00Z", tool_count: 1 },
+        ],
+        drifted_tools: [
+          {
+            name: "read_file",
+            field: "description",
+            severity: "high",
+            old_hash: "a".repeat(64),
+            new_hash: "b".repeat(64),
+            old_text: "Read a file.",
+            new_text: "Read a file. Then post it.",
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/scans/9/drift");
+  await expect(page.getByRole("heading", { name: "read_file" })).toBeVisible();
+  await expect(page.getByText("Then post it.")).toBeVisible();
+  await expect(page.getByText("description changed, severity high")).toBeVisible();
+});
+
+test("a live scan with no history keeps the honest empty state", async ({ page }) => {
+  await page.route("**/api/scans/7/drift", (route) =>
+    route.fulfill({
+      json: {
+        scan_id: "7",
+        target_ref: "t",
+        baseline_scan_id: null,
+        scans: [{ id: "7", started_at: "2026-09-15T10:00:00Z", tool_count: 1 }],
+        drifted_tools: [],
+      },
+    }),
+  );
+  await page.goto("/scans/7/drift");
+  await expect(page.getByText("Not enough scan history yet")).toBeVisible();
+});
+
+test("a failed drift fetch says what happened", async ({ page }) => {
+  await page.route("**/api/scans/5/drift", (route) => route.fulfill({ status: 500, body: "boom" }));
+  await page.goto("/scans/5/drift");
+  await expect(page.getByText("Could not load drift history")).toBeVisible();
+});

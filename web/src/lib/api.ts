@@ -90,7 +90,7 @@ export interface ScanTerminalEvent {
   total: number;
   skipped: Array<{
     check_id: string;
-    reason: "feature_absent" | "not_authorised" | "model_unavailable";
+    reason: "feature_absent" | "not_authorised" | "model_unavailable" | "no_baseline";
     detail: string;
   }>;
 }
@@ -213,6 +213,38 @@ export interface CapabilityEdge {
 
 export function getGraph(id: string): Promise<CapabilityEdge[]> {
   return request(`/api/scans/${id}/graph`);
+}
+
+/**
+ * Wire shape of `GET /api/scans/{id}/drift` (task 9,
+ * `agent_perimeter/api/drift.py`) -- snake_case as-is, no field renaming.
+ */
+export interface DriftScanSummary {
+  id: string;
+  started_at: string;
+  tool_count: number;
+}
+
+export interface DriftedTool {
+  name: string;
+  field: string;
+  severity: FindingSeverity;
+  old_hash: string | null;
+  new_hash: string | null;
+  old_text: string | null;
+  new_text: string | null;
+}
+
+export interface DriftResponse {
+  scan_id: string;
+  target_ref: string;
+  baseline_scan_id: string | null;
+  scans: DriftScanSummary[];
+  drifted_tools: DriftedTool[];
+}
+
+export function getDrift(id: string): Promise<DriftResponse> {
+  return request(`/api/scans/${id}/drift`);
 }
 
 export function getSarifReport(id: string): Promise<Record<string, unknown>> {
