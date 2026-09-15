@@ -21,6 +21,28 @@ class SkipReason(StrEnum):
     FEATURE_ABSENT = "feature_absent"
     NOT_AUTHORISED = "not_authorised"
     MODEL_UNAVAILABLE = "model_unavailable"
+    NO_BASELINE = "no_baseline"
+
+
+class BaselineStatus(StrEnum):
+    """Why a baseline-requiring check may not have one. Two absent states,
+    two messages: "no baseline" when the truth is "database down" is lying
+    by omission."""
+
+    PRESENT = "present"
+    NONE_ON_RECORD = "none_on_record"
+    SOURCE_UNAVAILABLE = "source_unavailable"
+
+
+_NO_BASELINE_DETAIL: dict[BaselineStatus, str] = {
+    BaselineStatus.NONE_ON_RECORD: (
+        "no earlier scan of this target to compare against — pass --baseline (CLI) "
+        "or scan this target again (API)"
+    ),
+    BaselineStatus.SOURCE_UNAVAILABLE: (
+        "the scan database was unreachable, so no baseline could be loaded"
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -38,6 +60,7 @@ def applicable(
     target: str,
     today: date,
     models_available: bool = True,
+    baseline_status: BaselineStatus = BaselineStatus.NONE_ON_RECORD,
 ) -> tuple[list[Check], list[Skipped]]:
     runnable: list[Check] = []
     skipped: list[Skipped] = []
@@ -52,6 +75,12 @@ def applicable(
         if check.requires_model and not models_available:
             skipped.append(
                 Skipped(check.id, SkipReason.MODEL_UNAVAILABLE, "no model provider is reachable")
+            )
+            continue
+
+        if check.requires_baseline and baseline_status is not BaselineStatus.PRESENT:
+            skipped.append(
+                Skipped(check.id, SkipReason.NO_BASELINE, _NO_BASELINE_DETAIL[baseline_status])
             )
             continue
 

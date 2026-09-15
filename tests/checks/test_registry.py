@@ -3,7 +3,7 @@ from datetime import date
 
 from agent_perimeter._contracts import Severity
 from agent_perimeter.checks.context import ScanContext
-from agent_perimeter.checks.registry import SkipReason, applicable, summarise_skips
+from agent_perimeter.checks.registry import BaselineStatus, SkipReason, applicable, summarise_skips
 from agent_perimeter.model.feature import Feature
 from agent_perimeter.model.finding import Finding
 from agent_perimeter.model.scope import ScopeFile
@@ -25,6 +25,7 @@ class FakeCheck:
     requires_features: frozenset[Feature] = frozenset()
     requires_auth: bool = False
     requires_model: bool = False
+    requires_baseline: bool = False
     cwe: str = "CWE-000"
     severity: Severity = Severity.INFO
     taxonomy_refs: tuple[str, ...] = ()
@@ -84,3 +85,61 @@ def test_no_check_is_ever_silently_dropped() -> None:
     runnable, skipped = applicable(checks, MODERN, scope=None, target=TARGET, today=TODAY)
     assert len(runnable) + len(skipped) == len(checks)
     assert "2 checks skipped" in summarise_skips(skipped)
+
+
+def test_a_baseline_check_is_skipped_when_no_baseline_is_on_record() -> None:
+    check = FakeCheck(id="drift.x", requires_baseline=True)
+    runnable, skipped = applicable(
+        [check],
+        MODERN,
+        scope=None,
+        target=TARGET,
+        today=TODAY,
+        baseline_status=BaselineStatus.NONE_ON_RECORD,
+    )
+    assert runnable == []
+    [skip] = skipped
+    assert skip.reason is SkipReason.NO_BASELINE
+    assert skip.detail == (
+        "no earlier scan of this target to compare against — pass --baseline (CLI) "
+        "or scan this target again (API)"
+    )
+
+
+def test_a_baseline_check_names_a_down_database_as_the_cause() -> None:
+    check = FakeCheck(id="drift.x", requires_baseline=True)
+    _, [skip] = applicable(
+        [check],
+        MODERN,
+        scope=None,
+        target=TARGET,
+        today=TODAY,
+        baseline_status=BaselineStatus.SOURCE_UNAVAILABLE,
+    )
+    assert skip.detail == "the scan database was unreachable, so no baseline could be loaded"
+
+
+def test_a_baseline_check_runs_when_a_baseline_is_present() -> None:
+    check = FakeCheck(id="drift.x", requires_baseline=True)
+    runnable, skipped = applicable(
+        [check],
+        MODERN,
+        scope=None,
+        target=TARGET,
+        today=TODAY,
+        baseline_status=BaselineStatus.PRESENT,
+    )
+    assert runnable == [check] and skipped == []
+
+
+def test_checks_that_do_not_need_a_baseline_ignore_its_status() -> None:
+    check = FakeCheck(id="static.x")
+    runnable, _ = applicable(
+        [check],
+        MODERN,
+        scope=None,
+        target=TARGET,
+        today=TODAY,
+        baseline_status=BaselineStatus.SOURCE_UNAVAILABLE,
+    )
+    assert runnable == [check]
