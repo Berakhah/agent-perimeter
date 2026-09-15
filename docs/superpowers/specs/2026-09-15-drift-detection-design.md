@@ -41,7 +41,7 @@ pinned; snapshot schema is versioned.
 | 6 Every finding cites CWE + taxonomy | `CWE-494` primary; `owasp-mcp:MCP03`, `owasp-llm:LLM01`, `mcp-spec:2026-07-28-security`. See §6.3 — MCP03's title and URL must be verified live before the row is added to `taxonomy.yaml`. |
 | 7 No weaponisation | Drift reports a diff and stops. |
 | 8 No named third-party server in public output | Drift output is per-operator, never aggregated into the census report. |
-| Determinism budget | Model-free. Degraded-mode surviving-class count rises by one. |
+| Determinism budget | Model-free. Fires with providers on and off, so it joins both sides of the degraded-mode ratio (§6.4). |
 
 ## 4. Data model
 
@@ -108,9 +108,12 @@ class DriftEvent(BaseModel):
 - `drift_event.scan_id VARCHAR(36) NOT NULL REFERENCES scan(id)` and
   `drift_event.baseline_scan_id VARCHAR(36) NOT NULL REFERENCES scan(id)`.
   The table is empty today, so `NOT NULL` needs no backfill.
+- `drift_event.old_hash` and `drift_event.new_hash` become **nullable** (`0001` created them `NOT NULL`; `TOOL_ADDED` has no old hash and `TOOL_REMOVED` no new one). `db/models.py` changes to `Mapped[str | None]` to match.
 - `drift_event.field` stays `String(32)` — the longest value is 12 characters.
 - Index `(scan_id)` on `drift_event`; index `(target_ref, finished_at)` on `scan` for the baseline lookup.
-- Downgrade drops the three columns and two indexes. The clean-machine smoke script's `(head)` check covers the new head automatically.
+- Downgrade drops the three columns and two indexes and restores `NOT NULL` on the two hash columns (safe: downgrade is only run on a table this revision emptied or never filled; the plan's round-trip test runs it against an empty table).
+- No retention purge exists for `scan`/`tool` today (only `secret_finding.expires_at`), so the new FKs block nothing. If a purge is ever added, `drift_event` rows must go before the scans they reference — noted in the migration's docstring.
+- The clean-machine smoke script's `(head)` check covers the new head automatically.
 
 Old/new **text is not stored on the event row**. The read path joins to the
 baseline scan's `tool` rows for it (§7.4). One copy of each description per
@@ -126,6 +129,7 @@ def compare(baseline: ToolSnapshot, current: ToolSnapshot, *, now: datetime) -> 
 
 - Raises `ValueError` if `baseline.target != current.target`. Callers must never compare across targets.
 - Tools matched by `name`. Names in `current` only → `TOOL_ADDED`; in `baseline` only → `TOOL_REMOVED`; matched → one event per differing hash among the three.
+- **Duplicate names.** A listing is attacker-authored and may repeat a name (the shadowing check already flags that). `compare` keys the second and later occurrences as `name#2`, `name#3`, … in listing order, so a change to any copy is still detected and the output stays deterministic. The `tool_name` on the event carries the suffixed key; the finding title shows the plain name plus "(duplicate 2)".
 - Output ordered by `(tool_name, field)` so SARIF `partialFingerprints`, golden files and the CLI diff are stable regardless of input order.
 - Pure: no I/O, no clock (`now` injected).
 
@@ -135,6 +139,9 @@ def compare(baseline: ToolSnapshot, current: ToolSnapshot, *, now: datetime) -> 
 using `difflib.SequenceMatcher` over whitespace-split tokens. Used by the
 check's evidence excerpt and the `drift` CLI command. The web keeps its own
 `DiffView`.
+
+- **Size cap.** `SequenceMatcher` is quadratic. Above 4 000 tokens on either side, `word_diff` returns a single `("replace-summary", "<n> tokens → <m> tokens; diff too large to render, hashes differ")` run and the excerpt falls back to the hash summary. Constant lives next to the function; test covers the boundary.
+- **Terminal safety.** `render.py` also exposes `for_terminal(text) -> str`, which replaces C0/C1 control characters, `ESC`, and Unicode bidi/zero-width/tag code points (the same set `descriptions/unicode_anomaly.py` detects) with their `\u{…}` escape. Every string the `drift` command and the `scan` summary write to stdout passes through it — a description that embeds an ANSI sequence must not repaint the operator's terminal. HTML output is already covered by Jinja autoescape; the web page renders text nodes. A test feeds `\x1b[2J` and a bidi override through both CLI paths and asserts the raw bytes never reach stdout.
 
 ## 6. The check — `agent_perimeter/checks/drift/description_drift.py`
 
@@ -155,15 +162,17 @@ check's evidence excerpt and the `drift` CLI command. The web keeps its own
 
 - `run_scan` gains `baseline: ToolSnapshot | None = None`. After `enumerate_tools`, the runner computes `drift_events = compare(baseline, ToolSnapshot.from_tools(...), now=...)` **once** when a baseline is present (else `[]`) and puts the result on both `ScanContext.drift_events` and `ScanOutcome.drift_events`. The check formats; it never re-computes. One computation, so the API persists exactly what the check reported.
 - `ScanContext` gains `baseline: ToolSnapshot | None = None` and `drift_events: list[DriftEvent] = []`.
-- No baseline → the check is **skipped**, not passed. `checks/registry.py` gains `SkipReason.NO_BASELINE` with detail `"no earlier scan of this target to compare against — pass --baseline (CLI) or scan this target again (API)"`. `applicable()` gains a keyword `has_baseline: bool`; the runner passes `baseline is not None`, and `applicable()` skips any check whose new `requires_baseline` property is `True`. `requires_baseline` is added to the `Check` protocol with a default of `False` on every existing check (a one-line property on the shared base), so the "N checks skipped and why" line stays honest (CLAUDE.md copy rules) and a baseline-less scan never calls `run()`.
+- No baseline → the check is **skipped**, not passed. `checks/registry.py` gains `SkipReason.NO_BASELINE`. `applicable()` gains a keyword `baseline_status: BaselineStatus` (`PRESENT | NONE_ON_RECORD | SOURCE_UNAVAILABLE`); the runner derives it from what the caller passed, and `applicable()` skips any check whose new `requires_baseline` property is `True`, with a detail that names the actual cause: `"no earlier scan of this target to compare against — pass --baseline (CLI) or scan this target again (API)"` versus `"the scan database was unreachable, so no baseline could be loaded"`. Two causes, two messages — a security tool that says "no baseline" when the truth is "database down" is lying by omission.
+- `requires_baseline` is added to the `Check` protocol. There is **no shared base class** across the check packages (only `checks/active/base.py` for the active family), so every existing check class gains the one-line class attribute `requires_baseline: bool = False`. Mechanical; the existing `isinstance(check, Check)` sweep test fails until every class has it, which is the point.
+- `web/src/lib/api.ts`'s `reason` union and the scan page's skip-reason copy table gain `"no_baseline"`.
 - Otherwise: `context.drift_events` grouped by `tool_name`; **one `Finding` per drifted tool**.
   - `title`: `"Tool '<name>' changed since the baseline scan: description, input_schema"` (fields listed in enum order).
   - `severity`: max over the tool's events.
-  - `evidence`: the existing `EvidenceKind` used by the description checks; `excerpt` = rendered word diff of the description when it changed, else one line per changed field (`"input_schema: <old_hash[:12]> → <new_hash[:12]>"`). Old and new text appear only inside the excerpt, as data; the finding never interpolates them into any instruction-shaped string.
-  - `reproduction`: `agent-perimeter drift <baseline> <current> --tool <name>`. On the CLI the two operands are the snapshot file paths; on the API they are `scan:<id>` references (§8.2).
-  - `claim`: a `bok-core` `Claim` asserting `"tool <name> <field> hash changed from <old> to <new>"` per event, with the snapshot(s) as the artefact.
+  - `evidence`: `EvidenceKind.DIFF` (already defined in `model/finding.py`, unused until now); `excerpt` = rendered word diff of the description when it changed, else one line per changed field (`"input_schema: <old_hash[:12]> → <new_hash[:12]>"`). Old and new text appear only inside the excerpt, as data; the finding never interpolates them into any instruction-shaped string.
+  - `reproduction`: `agent-perimeter drift <baseline> <current> --tool <name>`. On the CLI the operands are the snapshot file paths the operator passed; on the API they are `scan:<baseline_id> scan:<current_id>` plus `--database-url`, which the `drift` command accepts (§8.2). Both forms are runnable as written — rule "a reproduction a sceptic can run" is not satisfied by a reference the CLI cannot resolve.
+  - `claim`: a `bok-core` `Claim` asserting `"tool <name> <field> hash changed from <old> to <new>"` per event, with the snapshot(s) as the artefact. `sarif.py::partial_fingerprint` hashes `claim.value`, so a *new* change to the same tool is a *new* alert in GitHub code scanning, and a re-run against the same pair is not — the intended behaviour.
   - `confidence`: `1.0` — a hash comparison is not a heuristic.
-  - `location`: `FindingLocation(uri=f"mcp://{target}/tools/{name}")`, or whatever URI convention the description checks use today — match it, do not invent a second one.
+  - `location`: `None`. Only `secrets/config_scan.py` sets a location today (a real file); every other check leaves it unset and `sarif.py` then anchors the result to a synthetic per-scan profile line. Drift is the same case. Inventing an `mcp://` URI would be a second convention with no file behind it.
 
 ### 6.3 Taxonomy row to add
 
@@ -178,11 +187,22 @@ If the live entry's title differs, use the live title. If MCP03 is not the
 tool-poisoning entry, cite whichever MCP entry is, and record the check in
 the plan's verification log (the 29 Aug revision doc sets the precedent).
 
-### 6.4 Registration
+### 6.4 Registration and the eval corpus
 
-Appended to `ALL_CHECKS`. `test_every_check_cites_taxonomy` and the
-degraded-mode test pick it up with no test changes beyond the expected
-count moving by one.
+Appended to `ALL_CHECKS`. The taxonomy sweep picks it up unchanged.
+
+The eval corpus needs work, or this check is invisible to the two numbers
+the project publishes. `eval/harness.py::run_case` builds a `ScanContext`
+with no baseline, so as designed the check would never fire in the corpus:
+it would be absent from the precision/recall table (`docs/methodology.md`,
+rewritten by `eval/run.py` on every CI run — a CLAUDE.md requirement), and
+`test_degraded_mode_still_produces_findings` counts *fired* ids, so it
+would count in neither set. Therefore:
+
+- `CorpusCase` gains `baseline_flaw: str | None = None`. When set, the harness builds a second `InProcessTransport(case.revision, case.baseline_flaw)`, snapshots its tools, and passes that as `baseline` (via the same runner path a live scan uses, not a hand-built context).
+- Corpus rows added: `drift-description` (`flaw: drift_description`, `baseline_flaw: none`, expects `drift.description_drift`), `drift-schema` (`flaw: drift_schema`, expects the same id), and `drift-none` (`flaw: none`, `baseline_flaw: none`, `expect_clean: drift.description_drift`) so a false positive on an unchanged server is scored.
+- Consequence for degraded mode: the check fires with providers on **and** off, so it joins both sets. The ratio's numerator and denominator each move by one; the floor stays ≥90%.
+- `docs/methodology.md`'s published table gains the row automatically on the next CI run.
 
 ## 7. API surface — `agent_perimeter/api/scans.py`, new `agent_perimeter/api/drift.py`
 
@@ -194,7 +214,8 @@ count moving by one.
 
 `_load_baseline(session_factory, target_ref, *, pinned: str | None) -> ToolSnapshot | None`
 
-- Pinned: load that scan; it must exist, be finished, and have the same `target_ref`, else HTTP 422 with a message naming the mismatch. Checked before the scan starts, so a bad pin never burns a container launch.
+- Pinned: load that scan; it must exist, be finished, and have the same `target_ref`, else HTTP 422 with a message naming the mismatch. Validated **synchronously in the request handler, before the 202 is returned** — `POST /scans` runs the scan in a background thread, and a 422 cannot be sent once the 202 has gone. A bad pin therefore never burns a container launch.
+- Target identity is the exact `target_ref` string. Two stdio scans of the same command under different `--image` values compare against each other; the image is not part of the identity. Documented in `docs/byo-agent.md`; revisit only if it bites.
 - Unpinned: the most recent scan `WHERE target_ref = :t AND finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 1`.
 - Rebuild a `ToolSnapshot` from that scan's `tool` rows. Rows with `description IS NULL` (pre-0006) get `description=""` and keep their stored `description_hash`; comparison still works because the hash is what is compared.
 - DB unreachable or no prior scan → `None`, logged at `info`, scan proceeds. Same best-effort contract as `_persist`.
@@ -247,11 +268,12 @@ receives `old_text`/`new_text` exactly as the fixtures shape them today.
 
 ### 8.2 `drift` command
 
-`agent-perimeter drift BASELINE CURRENT [--tool NAME] [--json]`
+`agent-perimeter drift BASELINE CURRENT [--tool NAME] [--json] [--database-url URL]`
 
-- Both operands are snapshot file paths. Runs `compare()`, prints one block per drifted tool: a header line (name, fields, severity) then the word-level diff with `-`/`+` prefixed runs. `--json` emits the `DriftEvent` list. Exit 0 when no drift, 3 when drift, 2 on target mismatch or unreadable file.
-- No network. No database. This is the reproduction a sceptic runs with two files and nothing else.
-- API findings cite `scan:<id>` operands. `docs/byo-agent.md` gains a two-line note that `GET /api/scans/{id}/drift` returns the text those refer to and that the CLI accepts a snapshot file assembled from it. A DB-to-file `snapshot export` command is **not** in scope (§10).
+- Each operand is either a snapshot file path or `scan:<id>`. A `scan:` operand is resolved from the database (`--database-url`, default `DEFAULT_DATABASE_URL`, same expansion the `census` command uses) by rebuilding a `ToolSnapshot` from that scan's `tool` rows — the same loader the API uses (§7.2), so CLI and API cannot disagree about what a stored scan contains. File operands never touch the database; a `scan:` operand with no reachable database exits 2 with a message naming the URL it tried.
+- Runs `compare()`, prints one block per drifted tool: a header line (name, fields, severity) then the word-level diff with `-`/`+` prefixed runs, every line through `for_terminal` (§5.2). `--json` emits the `DriftEvent` list. Exit 0 when no drift, 3 when drift, 2 on target mismatch, unreadable file, or unresolvable `scan:` id.
+- No network beyond an optional database connection. With two file operands this is the reproduction a sceptic runs with two files and nothing else; with `scan:` operands it is the reproduction an API finding cites, runnable by anyone with read access to the same database.
+- A DB-to-file `snapshot export` command is still **not** in scope (§10) — `drift --json` already gives the events, and `scan --snapshot` gives the file.
 
 ### 8.3 Security note (`docs/security.md`)
 
@@ -263,16 +285,33 @@ output — the secrets checks do not scan them.
 
 | Layer | Tests |
 |---|---|
-| `compare()` | unchanged → `[]`; description only; schema key reorder → `[]`; annotation change; added; removed; mixed on one tool; cross-target `ValueError`; ordering stable across input order. |
-| `render.py` | golden word-diff for a rug-pull description (fixture text from the existing adversarial corpus). |
-| Check | no baseline → `Skipped(NO_BASELINE)`, not a finding; one finding per drifted tool with max severity; excerpt contains old and new text; `confidence == 1.0`; CWE/taxonomy present (existing sweep). |
-| Fixture fleet | `tests/fixtures/servers/drifting-server/` — one server, two builds (`v1`, `v2`) differing only in one tool's description and another tool's schema. End-to-end: scan v1 `--snapshot`, scan v2 `--baseline` → exactly two findings; SARIF golden added. |
-| API | `POST /scans` twice on the same target → second has the finding and `drift_event` rows; `GET /drift` returns old/new text; first-ever scan → `baseline_scan_id: null`, empty list; pinned baseline with wrong target → 422; DB down → scan completes, check skipped. |
-| CLI boundary | `--baseline` target mismatch → exit 2 before transport; invalid JSON → exit 2; `--fail-on-drift` → exit 3 only when drift found; `drift` command exit codes. |
-| Migration | `alembic upgrade head` then `downgrade -1` round-trip against the test Postgres; pre-0006 rows (`description NULL`) still compare by hash. |
-| Degraded mode | expected surviving-class count +1; floor still ≥90%. |
+| `compare()` | unchanged → `[]`; description only; schema key reorder → `[]`; annotation change; added; removed; mixed on one tool; duplicate names keyed `name#2`; cross-target `ValueError`; ordering stable across input order. |
+| `render.py` | golden word-diff for a rug-pull description (fixture text from the existing adversarial corpus); size cap boundary; `for_terminal` strips `\x1b[2J`, C0/C1, bidi/zero-width/tag code points. |
+| Check | no baseline → `Skipped(NO_BASELINE)` with the *right* detail for each of the two causes, not a finding; one finding per drifted tool with max severity; excerpt contains old and new text; `confidence == 1.0`; `location is None`; CWE/taxonomy present (existing sweep); every class in `ALL_CHECKS` satisfies the widened `Check` protocol. |
+| Fixture fleet | The fleet is **one server, one flaw per `AP_FIXTURE_FLAW` value** (`tests/fixtures/servers/server.py`), not one directory per server. Add flaws `drift_description` (swaps `read_file`'s description) and `drift_schema` (adds a `notes` parameter to a second tool's `input_schema`); `none` is the baseline. End-to-end CLI test: scan `none` `--snapshot`, scan `drift_description` `--baseline` → exactly one finding; scan `drift_schema` → one finding at `medium`; SARIF golden added for the first. |
+| Eval corpus | three new rows per §6.4; `run_case` honours `baseline_flaw`; the published table gains the row. |
+| API | `POST /scans` twice on the same target → second has the finding and `drift_event` rows (including a `TOOL_ADDED` row with `old_hash IS NULL`); `GET /drift` returns old/new text; first-ever scan → `baseline_scan_id: null`, empty list; pinned baseline with wrong target → 422 before any 202; DB down → scan completes, check skipped with the "database unreachable" detail. |
+| CLI boundary | `--baseline` target mismatch → exit 2 before transport; invalid JSON → exit 2; `--fail-on-drift` → exit 3 only when drift found; `drift` with two files, with two `scan:` ids, with one of each; unresolvable `scan:` id → exit 2; attacker text with ANSI never reaches stdout raw. |
+| Migration | `alembic upgrade head` then `downgrade -1` round-trip against the test Postgres on an empty `drift_event`; pre-0006 rows (`description NULL`) still compare by hash. |
+| Degraded mode | check fires in both sets; ratio unchanged in direction; floor still ≥90%. |
 | Web | `drift.spec.ts` keeps both fixture cases; adds one live case against a mocked `GET /drift`; keyboard-only; axe zero serious/critical. |
 | Coverage | floor 75% unchanged; new modules target ≥95%. |
+
+## 9a. Documents this feature must touch
+
+| File | Change |
+|---|---|
+| `README.md` | Drift moves from "v2, stubbed" to a shipped surface; add the three-command CI recipe (`scan --snapshot` → store artefact → `scan --baseline --fail-on-drift`). |
+| `docs/open-decisions.md` | Record the DB-read-route exception (§7.4) and D1–D5 as answered. |
+| `docs/byo-agent.md` | Snapshot format, `scan:` operands, target-identity rule. |
+| `docs/security.md` | Snapshot files hold attacker-authored text (§8.3); terminal sanitisation (§5.2). |
+| `docs/methodology.md` | Regenerated by `eval/run.py`; no hand edit. |
+| `web/app/scans/[id]/drift/page.tsx` docstring | Delete the "no live backend" ruling paragraph; it is now false. |
+| `CHANGELOG.md` | Entry. |
+
+## 11. Audit log
+
+**Rev 2, 15 Sep 2026 — blindspot pass against the code, not the design.** Nine corrections folded in above: `drift_event` hash columns were `NOT NULL` (§4.3); the fixture fleet is env-driven, not directory-per-server (§9); the eval corpus had no way to give the check a baseline, so it would have been absent from the published precision/recall table and the degraded-mode claim was wrong (§6.4); API reproduction commands cited operands the CLI could not resolve (§6.2, §8.2); the `drift` command printed attacker text to a terminal unsanitised (§5.2); duplicate tool names broke name-keyed matching (§5.1); `requires_baseline` assumed a shared base class that does not exist (§6.2); `NO_BASELINE` conflated "no prior scan" with "database down" (§6.2); `EvidenceKind.DIFF` already existed and `location` should be `None` like every other non-file check (§6.2). Also added: word-diff size cap, 422-before-202 ordering, target-identity rule for `--image`, docs list (§9a).
 
 ## 10. Out of scope (recorded so nobody re-decides it by accident)
 
