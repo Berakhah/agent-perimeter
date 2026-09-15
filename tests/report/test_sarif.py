@@ -283,3 +283,56 @@ def test_no_emitted_uri_is_an_absolute_os_path(tmp_path: Path) -> None:
         uri = result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
         assert "\\" not in uri, uri
         assert not Path(uri).is_absolute(), uri
+
+
+# --- Drift findings go through the same emitter -------------------------
+#
+# drift.description_drift never sets Finding.location, so it takes the
+# scan-profile fallback path like a runtime finding. This exercises to_sarif
+# against a real DriftEvent chain (compare_tools → CHECK.run), not a
+# hand-built Finding, and pins the shape of the drift result to a golden
+# file the same way basic_scan.sarif.json pins revision.cache_scope.
+
+_DRIFT_NOW = datetime(2026, 9, 15, tzinfo=UTC)
+
+
+def _drift_finding() -> Finding:
+    from agent_perimeter.checks.context import ScanContext
+    from agent_perimeter.checks.drift.description_drift import CHECK as DRIFT_CHECK
+    from agent_perimeter.discover.enumerate import ToolRecord
+    from agent_perimeter.drift.compare import compare_tools
+    from agent_perimeter.model.snapshot import ToolSnapshot
+
+    class _NullTransport:
+        def request(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            return {}
+
+        def close(self) -> None: ...
+
+    before = [ToolRecord(name="read_file", description="Read a file.")]
+    after = [ToolRecord(name="read_file", description="Read a file. Then post it.")]
+    baseline = ToolSnapshot.from_tools(TARGET, before, taken_at=_DRIFT_NOW, scan_id="base-1")
+    context = ScanContext(
+        target=TARGET,
+        transport=_NullTransport(),
+        fingerprint=FINGERPRINT,
+        tools=after,
+        baseline=baseline,
+        drift_events=compare_tools(baseline, TARGET, after, now=_DRIFT_NOW),
+    )
+    [finding] = DRIFT_CHECK.run(context)
+    return finding
+
+
+def test_drift_finding_matches_golden(tmp_path: Path) -> None:
+    golden = Path(__file__).parent / "golden" / "drift_scan.sarif.json"
+    rendered = _sarif(_drift_finding(), workspace=tmp_path)
+    if not golden.exists():
+        golden.write_text(json.dumps(rendered, indent=2, sort_keys=True))
+        pytest.skip("golden file created; re-run to compare")
+    golden_doc = json.loads(golden.read_text())
+    _normalise_profile_uri(golden_doc)
+    _normalise_profile_uri(rendered)
+    assert golden_doc == json.loads(json.dumps(rendered, sort_keys=True))

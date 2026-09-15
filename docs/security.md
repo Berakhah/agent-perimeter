@@ -26,6 +26,10 @@ Maintainers may dispute a finding, provide context, or request that we re-run a 
 
 A credential discovered in a public artifact (registry metadata, package manifest, repository file) is reported to the owner and hosting platform immediately and bypasses embargo entirely. We never publish a raw secret, never include it in raw data, never validate it against a live service, and never expose it in logs, screenshots, or SARIF output. We store only the fingerprint: SHA-256 hash, entropy estimate, prefix, last 4 characters, and source file/line.
 
+## Drift snapshots
+
+A `ToolSnapshot` (`--snapshot`, `--baseline`) holds attacker-authored tool description text verbatim — it is the same untrusted content a scan analyses, just persisted between runs. We write it only to the path the operator names; we never log it and never upload it anywhere on the operator's behalf. The secrets checks do not scan snapshot files: they are diff material, not a target's runtime configuration, so a credential embedded in a description by an attacker is caught (if at all) the same way any other description content is, not by the secrets pipeline. Every drift string this project writes to a terminal — the `drift` command, the `scan --fail-on-drift` summary — passes through `for_terminal()` (`agent_perimeter/drift/render.py`), which escapes C0/C1 control characters, `ESC`, and Unicode bidi/zero-width/tag code points before they reach stdout.
+
 ## What we publish
 
 We publish aggregate statistics only:

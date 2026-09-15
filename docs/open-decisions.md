@@ -89,6 +89,10 @@ being caught overstating a number.
 **7. Apache-2.0 or AGPL for this repo? — Answered: Apache-2.0.**
 `LICENSE` present, confirmed in `docs/licences.md`. No change.
 
+### Drift detection (15 Sep 2026)
+
+Decided in `docs/superpowers/specs/2026-09-15-drift-detection-design.md` §2 (D1–D5): compare-on-scan, five drift fields, description text persisted, drift is a Finding, snapshot source is pluggable. One standing exception recorded: `GET /api/scans/{id}/drift` reads from the database. Task 9's "DB is audit-only" ruling still holds for findings/graph/SARIF; drift is history and the in-process cache cannot hold history across restarts.
+
 ## `00-SHARED-FOUNDATION.md` §12 (shared substrate)
 
 **1. Publish `bok-core`/`bok-ui` packages, or vendor? — Decided: vendor

@@ -92,6 +92,19 @@ see hard constraint 4 in `CLAUDE.md`:
 agent-perimeter scan --target "python /server.py" --mode passive
 ```
 
+### Drift detection
+
+A point-in-time scan cannot catch a tool whose description changes after you approved it. Snapshot once, then diff on every rescan:
+
+```bash
+agent-perimeter scan --target https://mcp.example.test --snapshot baseline.json
+# … later, in CI …
+agent-perimeter scan --target https://mcp.example.test --baseline baseline.json --snapshot current.json --fail-on-drift
+agent-perimeter drift baseline.json current.json          # the reproduction every drift finding cites
+```
+
+Exit `3` means at least one tool's description, schema or annotations changed, or a tool appeared or vanished. The API does the same automatically: every `POST /api/scans` is compared to the previous scan of the same target, and `GET /api/scans/{id}/drift` returns the word-level diff the web drift page renders.
+
 ## CI: SARIF in GitHub code scanning
 
 `GET /api/scans/{id}/report.sarif` (or `agent-perimeter scan --sarif
