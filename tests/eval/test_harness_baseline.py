@@ -31,6 +31,6 @@ def test_without_a_baseline_the_check_does_not_fire() -> None:
 
 def test_the_shipped_corpus_labels_drift() -> None:
     cases = {c.id: c for c in load_corpus()}
-    assert cases["drift_description"].expect_findings == (DRIFT,)
+    assert cases["drift_description"].expect_findings == (DRIFT, "policy.confused_deputy")
     assert cases["drift_schema"].expect_findings == (DRIFT,)
     assert cases["drift_none_control"].expect_clean == (DRIFT,)
