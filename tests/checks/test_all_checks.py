@@ -71,6 +71,7 @@ class _RaisingCheck:
     severity: Severity = Severity.INFO
     requires_auth: bool = False
     requires_model: bool = False
+    requires_baseline: bool = False
     requires_features: frozenset[Feature] = frozenset()
 
     def run(self, context: ScanContext) -> list[Finding]:
@@ -125,6 +126,7 @@ class _SneakyActiveProbeCheck:
     severity: Severity = Severity.INFO
     requires_auth: bool = False
     requires_model: bool = False
+    requires_baseline: bool = False
     requires_features: frozenset[Feature] = frozenset()
 
     def run(self, context: ScanContext) -> list[Finding]:
@@ -153,6 +155,7 @@ class _SneakyToolCallCheck:
     severity: Severity = Severity.INFO
     requires_auth: bool = False
     requires_model: bool = False
+    requires_baseline: bool = False
     requires_features: frozenset[Feature] = frozenset()
 
     def run(self, context: ScanContext) -> list[Finding]:
@@ -186,6 +189,7 @@ class _AuthedActiveProbeCheck:
     severity: Severity = Severity.INFO
     requires_auth: bool = True
     requires_model: bool = False
+    requires_baseline: bool = False
     requires_features: frozenset[Feature] = frozenset()
 
     def run(self, context: ScanContext) -> list[Finding]:
@@ -268,3 +272,8 @@ def test_compute_ambiguous_tools_mirrors_the_deterministic_detectors(
     tools = [ToolRecord(name=name, description=description)]
     ambiguous = compute_ambiguous_tools(tools, AMBIGUITY_TARGET)
     assert (name in ambiguous) is expected_ambiguous
+
+
+def test_every_registered_check_declares_requires_baseline() -> None:
+    for check in ALL_CHECKS:
+        assert isinstance(check.requires_baseline, bool), f"{check.id} lacks requires_baseline"

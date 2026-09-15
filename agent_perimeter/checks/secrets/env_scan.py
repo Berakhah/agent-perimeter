@@ -21,6 +21,7 @@ class EnvScanCheck:
     severity: Severity = Severity.CRITICAL
     requires_auth: bool = False
     requires_model: bool = False
+    requires_baseline: bool = False
     requires_features: frozenset[Feature] = field(default_factory=frozenset)
     hmac_key: bytes | None = None
     """Injectable for test hermeticity; None (the `CHECK` singleton's default)

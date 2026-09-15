@@ -41,6 +41,7 @@ class ConformanceMismatchCheck:
     severity: Severity = Severity.INFO
     requires_auth: bool = False
     requires_model: bool = False
+    requires_baseline: bool = False
     requires_features: frozenset[Feature] = field(default_factory=frozenset)
 
     def run(self, context: ScanContext) -> list[Finding]:

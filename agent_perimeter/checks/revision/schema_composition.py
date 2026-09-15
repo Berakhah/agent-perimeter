@@ -164,6 +164,7 @@ class SchemaCompositionCheck:
     severity: Severity = Severity.HIGH
     requires_auth: bool = False
     requires_model: bool = False
+    requires_baseline: bool = False
     # No feature gate: this check is purely structural over tool.input_schema
     # and $ref/composition keywords can appear regardless of which optional
     # protocol features a server negotiates (see task correction: there is no

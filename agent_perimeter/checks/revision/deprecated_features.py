@@ -51,6 +51,7 @@ class DeprecatedFeaturesCheck:
     severity: Severity = Severity.LOW
     requires_auth: bool = False
     requires_model: bool = False
+    requires_baseline: bool = False
     requires_features: frozenset[Feature] = field(
         default_factory=lambda: frozenset({Feature.SERVER_DISCOVER})
     )

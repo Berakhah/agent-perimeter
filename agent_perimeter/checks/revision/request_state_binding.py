@@ -51,6 +51,7 @@ class RequestStateBindingCheck:
     severity: Severity = Severity.MEDIUM
     requires_auth: bool = False
     requires_model: bool = False
+    requires_baseline: bool = False
     # Not gated on Feature.MRTR: this check is opportunistic (see module
     # docstring) — it inspects context.raw for an input_required result
     # already captured, never probes for MRTR itself. MRTR needs an active
