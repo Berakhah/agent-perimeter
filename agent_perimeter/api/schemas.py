@@ -42,3 +42,4 @@ class ScanRequest(BaseModel):
     target: str
     mode: ScanMode = ScanMode.PASSIVE
     scope_file: ScopeFileInput | None = None
+    baseline_scan_id: str | None = None

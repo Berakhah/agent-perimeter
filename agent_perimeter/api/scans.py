@@ -20,7 +20,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -28,11 +28,15 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
+from sqlalchemy import select
 
+from agent_perimeter.api.drift import BaselineLookup, load_baseline
 from agent_perimeter.api.schemas import ScanRequest, ScopeFileInput
 from agent_perimeter.api.state import AppState
 from agent_perimeter.db.models import CapabilityEdge as CapabilityEdgeRow
+from agent_perimeter.db.models import DriftEvent as DriftEventRow
 from agent_perimeter.db.models import FindingRow, Scan, Tool
+from agent_perimeter.drift.compare import plain_name
 from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile, require_scope
 from agent_perimeter.report.sarif import to_sarif
 from agent_perimeter.scan_runner import EventFrame, ScanMode, ScanOutcome, run_scan
@@ -115,6 +119,7 @@ def create_scan(
             },
         )
 
+    state: AppState = request.app.state.ap
     today = date.today()
     scope: ScopeFile | None = None
     if scan_request.mode is ScanMode.ACTIVE:
@@ -126,18 +131,25 @@ def create_scan(
         scope = _build_scope(scan_request.scope_file, today=today)
         require_scope(scope, check_id="scan", target=scan_request.target, today=today)
 
-    state: AppState = request.app.state.ap
+    lookup = load_baseline(
+        state.session_factory, scan_request.target, pinned=scan_request.baseline_scan_id
+    )
+
     scan_id = str(uuid.uuid4())
     state.events.start(scan_id)
     with state.lock:
         state.requests[scan_id] = scan_request
 
-    background_tasks.add_task(_run_and_record, scan_id, scan_request, scope, state)
+    background_tasks.add_task(_run_and_record, scan_id, scan_request, scope, state, lookup)
     return {"id": scan_id, "status": "accepted"}
 
 
 def _run_and_record(
-    scan_id: str, scan_request: ScanRequest, scope: ScopeFile | None, state: AppState
+    scan_id: str,
+    scan_request: ScanRequest,
+    scope: ScopeFile | None,
+    state: AppState,
+    lookup: BaselineLookup,
 ) -> None:
     event_count = 0
 
@@ -157,11 +169,25 @@ def _run_and_record(
             scope,
             invocation_flags=invocation_flags,
             on_event=on_event,
+            baseline=lookup.snapshot,
+            baseline_source_unavailable=lookup.source_unavailable,
         )
     except Exception:  # noqa: BLE001 - a scan that raises still gets a terminal frame.
         logger.exception("scan %s failed", scan_id)
         state.events.finish(scan_id, skipped=[], completed=event_count, total=event_count)
         return
+
+    outcome = replace(
+        outcome,
+        findings=[
+            f.model_copy(
+                update={"reproduction": f.reproduction.replace("<current.json>", f"scan:{scan_id}")}
+            )
+            if f.check_id == "drift.description_drift"
+            else f
+            for f in outcome.findings
+        ],
+    )
 
     with state.lock:
         state.results[scan_id] = outcome
@@ -171,11 +197,15 @@ def _run_and_record(
         completed=event_count,
         total=event_count + len(outcome.skipped),
     )
-    _persist(state, scan_id, scan_request, outcome)
+    _persist(state, scan_id, scan_request, outcome, lookup)
 
 
 def _persist(
-    state: AppState, scan_id: str, scan_request: ScanRequest, outcome: ScanOutcome
+    state: AppState,
+    scan_id: str,
+    scan_request: ScanRequest,
+    outcome: ScanOutcome,
+    lookup: BaselineLookup,
 ) -> None:
     """Durability/audit only (Task 9 ruling #5) — never the read path for
     findings/graph/report.sarif/status, all served from the in-process cache
@@ -211,6 +241,7 @@ def _persist(
                 tool_row = Tool(
                     scan_id=scan_id,
                     name=tool.name,
+                    description=tool.description,
                     description_hash=hashlib.sha256(tool.description.encode()).hexdigest(),
                     input_schema_json=tool.input_schema,
                     annotations_json=tool.annotations,
@@ -218,6 +249,31 @@ def _persist(
                 session.add(tool_row)
                 session.flush()
                 tool_ids[tool.name] = tool_row.id
+
+            baseline_id = lookup.snapshot.scan_id if lookup.snapshot is not None else None
+            for event in outcome.drift_events:
+                if baseline_id is None:
+                    break
+                name = plain_name(event.tool_name)
+                tool_id = tool_ids.get(name)
+                if tool_id is None and event.field.value == "tool_removed":
+                    tool_id = session.execute(
+                        select(Tool.id).where(Tool.scan_id == baseline_id, Tool.name == name)
+                    ).scalar_one_or_none()
+                if tool_id is None:
+                    continue
+                session.add(
+                    DriftEventRow(
+                        scan_id=scan_id,
+                        baseline_scan_id=baseline_id,
+                        tool_id=tool_id,
+                        field=event.field.value,
+                        old_hash=event.old_hash,
+                        new_hash=event.new_hash,
+                        detected_at=event.detected_at,
+                        severity=event.severity.value,
+                    )
+                )
 
             for edge in outcome.edges:
                 tool_id = tool_ids.get(edge.tool)

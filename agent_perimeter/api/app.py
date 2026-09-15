@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from agent_perimeter.api import census, scans
+from agent_perimeter.api import census, drift, scans
 from agent_perimeter.api.state import AppState
 from agent_perimeter.db.models import Base
 from agent_perimeter.model.scope import AuthorizationRequired, require_scope  # noqa: F401
@@ -104,4 +104,5 @@ def create_app(*, database_url: str | None = None) -> FastAPI:
 
     app.include_router(scans.router, prefix="/api")
     app.include_router(census.router, prefix="/api")
+    app.include_router(drift.router, prefix="/api")
     return app
