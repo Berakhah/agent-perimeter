@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.1.0
-        with: { cache-suffix: web }
+        with: { cache-suffix: test }
         with: { cache-suffix: test }
       - run: uv sync --all-groups
       - run: uv run ruff check .
@@ -47,6 +47,7 @@ jobs:
       # required for that step to do anything in a fresh runner (the brief's
       # sketch has no Python/uv setup at all).
       - uses: astral-sh/setup-uv@v10.1.0
+        with: { cache-suffix: web }
       - run: uv sync --all-groups
       - uses: actions/setup-node@v7
         with: { node-version: "22", cache: npm, cache-dependency-path: web/package-lock.json }
