@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "pretest": "cd .. && uv run python analysis/render_web_fixtures.py"
+    "pretest": "node scripts/render-fixtures.mjs",
+    "test:scripts": "node --test scripts/"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.10",
