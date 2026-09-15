@@ -21,6 +21,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
 )
@@ -86,6 +87,11 @@ class Tool(Base):
     input_schema_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     annotations_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    position: Mapped[int] = mapped_column(Integer)
+    """1-based index in the scan's tools/list order. Drift keys tools by
+    position (`drift.compare.positional_keys`), so listing order must be
+    stored, not reconstructed from (first_seen_at, id) -- two duplicate-named
+    copies persisted in the same clock tick would otherwise be mispaired."""
 
 
 class CapabilityEdge(Base):

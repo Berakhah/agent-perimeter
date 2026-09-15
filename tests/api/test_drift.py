@@ -178,6 +178,18 @@ def test_a_removed_duplicate_tool_persists_all_rows_and_names_the_right_copy(
     assert tool["old_text"] == "two"
 
 
+def test_persisted_tools_carry_their_listing_position(client: TestClient, db: Engine) -> None:
+    _Listing.tools = [("x", "one"), ("x", "two"), ("y", "three")]
+    scan_id = _scan(client)
+    with Session(db) as session:
+        rows = session.execute(select(Tool).where(Tool.scan_id == scan_id)).scalars().all()
+    assert sorted((r.position, r.description) for r in rows) == [
+        (1, "one"),
+        (2, "two"),
+        (3, "three"),
+    ]
+
+
 def test_a_duplicate_tools_description_change_diffs_the_right_copy(
     client: TestClient,
 ) -> None:
