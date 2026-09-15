@@ -10,13 +10,13 @@ since the CLI has no other way to steer a stdio target's revision.
 """
 
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from agent_perimeter.cli import app
+from tests.docker_build import build_image as build_docker_image
 
 IMAGE = "agent-perimeter-fixture:test"
 FIXTURE = Path(__file__).parent / "fixtures" / "servers"
@@ -28,7 +28,7 @@ runner = CliRunner()
 
 @pytest.fixture(scope="module", autouse=True)
 def build_image() -> None:
-    subprocess.run(["docker", "build", "-t", IMAGE, str(FIXTURE)], check=True, capture_output=True)
+    build_docker_image(IMAGE, FIXTURE)
 
 
 @pytest.mark.parametrize("revision", ["2025-11-25", "2026-07-28"])
