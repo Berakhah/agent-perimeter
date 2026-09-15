@@ -19,8 +19,8 @@ def test_every_check_has_a_unique_id() -> None:
     assert len(ids) == len(set(ids))
 
 
-def test_thirty_three_checks_are_registered() -> None:
-    assert len(ALL_CHECKS) == 33
+def test_thirty_four_checks_are_registered() -> None:
+    assert len(ALL_CHECKS) == 34
 
 
 def test_every_check_cites_a_resolvable_taxonomy_entry() -> None:
