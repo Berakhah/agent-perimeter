@@ -13,7 +13,9 @@ every Playwright invocation, never committed output (`web/tests/fixtures/
 report.html` and `census.html` are gitignored, generated fresh every run so
 they can never drift from the emitter):
 
-    uv run python analysis/render_web_fixtures.py
+    uv run python analysis/render_web_fixtures.py   # or, from web/: npm run pretest
+                                                   # (scripts/render-fixtures.mjs falls back
+                                                   # to .venv or python when uv is absent)
 """
 
 from __future__ import annotations
