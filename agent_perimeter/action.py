@@ -138,14 +138,18 @@ def reproduction_line(argv: Sequence[str]) -> str:
     """``shlex.join(argv)`` with every ``--env KEY=VALUE`` value masked.
 
     Rule 3: env values are how a consumer passes credentials to a stdio
-    server; they must never land in a job log.
+    server; they must never land in a job log. Malformed tokens without
+    '=' are masked entirely as '***' rather than appearing unmasked.
     """
     masked: list[str] = []
     previous = ""
     for part in argv:
         if previous == "--env":
-            key, _, _ = part.partition("=")
-            masked.append(f"{key}=***")
+            if "=" in part:
+                key, _, _ = part.partition("=")
+                masked.append(f"{key}=***")
+            else:
+                masked.append("***")
         else:
             masked.append(part)
         previous = part

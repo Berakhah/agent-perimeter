@@ -184,3 +184,19 @@ def test_reproduction_line_is_shell_quoted_argv_with_env_values_masked() -> None
     for part in unmasked:
         assert shlex.quote(part) in line
     assert line.startswith("agent-perimeter scan --target 'python /srv/server.py'")
+
+
+def test_reproduction_line_masks_malformed_env_token_entirely() -> None:
+    """Rule 3: malformed env tokens without '=' must not appear unmasked."""
+    # Simulate a malformed env value (no '=') by directly constructing argv
+    argv = [
+        "agent-perimeter",
+        "scan",
+        "--target",
+        "https://example.test",
+        "--env",
+        "bare_token_no_equals",  # Malformed: no KEY=VALUE structure
+    ]
+    line = reproduction_line(argv)
+    assert "bare_token_no_equals" not in line
+    assert "--env '***'" in line
