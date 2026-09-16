@@ -108,3 +108,9 @@ runs:
       uses: github/codeql-action/upload-sarif@v4.38.0
       with:
         sarif_file: ${{ steps.scan.outputs.sarif-file }}
+        # A stable per-invocation category: code scanning refuses more than
+        # one upload per job per category, which the self-test workflow's
+        # three uses: ./ calls in one job hit immediately. The sarif path
+        # is already required to be distinct per invocation to avoid a
+        # stale-SARIF read, so it doubles as the category with no new input.
+        category: ${{ inputs.sarif }}
