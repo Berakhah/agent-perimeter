@@ -6,17 +6,26 @@
 
 from __future__ import annotations
 
+import json
 import shlex
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from agent_perimeter.action import (
+    DRIFT_CHECK_ID,
     INPUT_NAMES,
     InputError,
     Inputs,
     build_argv,
+    drift_verdict,
+    main,
     read_inputs,
+    read_sarif,
+    render_summary,
     reproduction_line,
+    sarif_results,
 )
 
 
@@ -200,3 +209,205 @@ def test_reproduction_line_masks_malformed_env_token_entirely() -> None:
     line = reproduction_line(argv)
     assert "bare_token_no_equals" not in line
     assert "--env '***'" in line
+
+
+def _sarif(*results: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {"driver": {"name": "agent-perimeter"}},
+                "properties": {"revision_claimed": "2026-07-28", "target": "t"},
+                "results": list(results),
+            }
+        ],
+    }
+
+
+def _result(rule: str, level: str = "warning") -> dict[str, Any]:
+    return {
+        "ruleId": rule,
+        "level": level,
+        "message": {"text": "attacker-authored text that must not reach the summary"},
+    }
+
+
+class FakeRun:
+    """Stands in for subprocess.run: records argv, writes a SARIF (or not),
+    returns a chosen exit code."""
+
+    def __init__(self, rc: int, sarif: dict[str, Any] | None) -> None:
+        self.rc = rc
+        self.sarif = sarif
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str]) -> int:
+        self.calls.append(list(argv))
+        if self.sarif is not None:
+            Path(argv[argv.index("--sarif") + 1]).write_text(json.dumps(self.sarif))
+        return self.rc
+
+
+def _gh(tmp_path: Path, **overrides: str) -> dict[str, str]:
+    env = _env(
+        baseline=str(tmp_path / ".agent-perimeter" / "baseline.json"),
+        snapshot=str(tmp_path / ".agent-perimeter" / "current.json"),
+        sarif=str(tmp_path / "out" / "r.sarif"),
+        **overrides,
+    )
+    env["GITHUB_OUTPUT"] = str(tmp_path / "gh_output")
+    env["GITHUB_STEP_SUMMARY"] = str(tmp_path / "gh_summary")
+    return env
+
+
+def _outputs(tmp_path: Path) -> dict[str, str]:
+    lines = (tmp_path / "gh_output").read_text().splitlines()
+    return dict(line.split("=", 1) for line in lines)
+
+
+def _existing_baseline(tmp_path: Path) -> None:
+    baseline = tmp_path / ".agent-perimeter" / "baseline.json"
+    baseline.parent.mkdir()
+    baseline.write_text("{}")
+
+
+def test_drift_check_id_matches_the_registered_check() -> None:
+    from agent_perimeter.checks.drift.description_drift import CHECK
+
+    assert CHECK.id == DRIFT_CHECK_ID
+
+
+def test_read_sarif_returns_none_when_absent(tmp_path: Path) -> None:
+    assert read_sarif(tmp_path / "missing.sarif") is None
+
+
+def test_sarif_results_handles_none_and_missing_runs() -> None:
+    assert sarif_results(None) == []
+    assert sarif_results({"runs": []}) == []
+    assert len(sarif_results(_sarif(_result("a"), _result("b")))) == 2
+
+
+def test_drift_verdict() -> None:
+    assert drift_verdict(_sarif(), first_run=True) == "none"
+    assert drift_verdict(_sarif(_result(DRIFT_CHECK_ID)), first_run=True) == "none"
+    assert drift_verdict(_sarif(_result("x")), first_run=False) == "false"
+    assert drift_verdict(_sarif(_result(DRIFT_CHECK_ID)), first_run=False) == "true"
+    assert drift_verdict(None, first_run=False) == "false"
+
+
+def test_first_run_creates_parent_dirs_writes_baseline_and_reports(tmp_path: Path) -> None:
+    run = FakeRun(0, _sarif(_result("revision.cache_scope")))
+    rc = main(environ=_gh(tmp_path), run=run)
+    assert rc == 0
+    argv = run.calls[0]
+    assert argv[argv.index("--snapshot") + 1].endswith("baseline.json")
+    assert (tmp_path / ".agent-perimeter").is_dir() and (tmp_path / "out").is_dir()
+    out = _outputs(tmp_path)
+    assert out["baseline-created"] == "true"
+    assert out["drift"] == "none"
+    assert out["finding-count"] == "1"
+    assert out["snapshot-file"].endswith("baseline.json")
+    assert out["sarif-file"].endswith("r.sarif")
+    summary = (tmp_path / "gh_summary").read_text()
+    assert "Commit it to arm the drift gate" in summary
+
+
+def test_gate_run_with_drift_exits_3_and_reports_true(tmp_path: Path) -> None:
+    _existing_baseline(tmp_path)
+    run = FakeRun(3, _sarif(_result(DRIFT_CHECK_ID, "error"), _result("x")))
+    rc = main(environ=_gh(tmp_path), run=run)
+    assert rc == 3
+    assert "--fail-on-drift" in run.calls[0]
+    out = _outputs(tmp_path)
+    assert out["baseline-created"] == "false"
+    assert out["drift"] == "true"
+    assert out["finding-count"] == "2"
+    assert out["snapshot-file"].endswith("current.json")
+    summary = (tmp_path / "gh_summary").read_text()
+    assert "Drift gate tripped" in summary
+    assert "agent-perimeter drift" in summary
+    assert "attacker-authored" not in summary  # rule 5
+
+
+def test_gate_run_clean_exits_0_and_reports_false(tmp_path: Path) -> None:
+    _existing_baseline(tmp_path)
+    rc = main(environ=_gh(tmp_path), run=FakeRun(0, _sarif()))
+    assert rc == 0
+    out = _outputs(tmp_path)
+    assert out["drift"] == "false" and out["finding-count"] == "0"
+
+
+def test_soft_gate_reports_drift_but_exits_0(tmp_path: Path) -> None:
+    _existing_baseline(tmp_path)
+    run = FakeRun(0, _sarif(_result(DRIFT_CHECK_ID)))
+    rc = main(environ=_gh(tmp_path, fail_on_drift="false"), run=run)
+    assert rc == 0
+    assert "--fail-on-drift" not in run.calls[0]
+    assert _outputs(tmp_path)["drift"] == "true"
+
+
+def test_rc_zero_without_sarif_is_exit_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc = main(environ=_gh(tmp_path), run=FakeRun(0, None))
+    assert rc == 2
+    assert "wrote no SARIF" in capsys.readouterr().out
+    assert "sarif-file" not in _outputs(tmp_path)
+
+
+def test_nonzero_rc_without_sarif_still_writes_outputs(tmp_path: Path) -> None:
+    rc = main(environ=_gh(tmp_path), run=FakeRun(2, None))
+    assert rc == 2
+    out = _outputs(tmp_path)
+    assert out["finding-count"] == "0" and out["drift"] == "none"
+    assert "sarif-file" not in out
+
+
+def test_input_error_exits_2_and_runs_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = FakeRun(0, _sarif())
+    rc = main(environ=_gh(tmp_path, target="", image=""), run=run)
+    assert rc == 2 and run.calls == []
+    assert "Set the `target` input" in capsys.readouterr().out
+
+
+def test_reproduction_line_is_printed_before_the_run_and_matches_argv(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = FakeRun(0, _sarif())
+    main(environ=_gh(tmp_path, env="TOKEN=s3cret"), run=run)
+    out = capsys.readouterr().out
+    first = out.splitlines()[0]
+    assert first.startswith("Reproduction: agent-perimeter scan")
+    assert "s3cret" not in out
+    assert first == "Reproduction: " + reproduction_line(run.calls[0])
+
+
+def test_active_mode_never_creates_a_scope_file(tmp_path: Path) -> None:
+    before = set(tmp_path.rglob("*"))
+    main(environ=_gh(tmp_path, mode="active"), run=FakeRun(2, None))
+    created = set(tmp_path.rglob("*")) - before
+    assert all(p.name in {"gh_output", "gh_summary"} or p.is_dir() for p in created)
+
+
+def test_outputs_fall_back_to_stdout_when_github_vars_are_unset(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env = _gh(tmp_path)
+    del env["GITHUB_OUTPUT"], env["GITHUB_STEP_SUMMARY"]
+    main(environ=env, run=FakeRun(0, _sarif()))
+    out = capsys.readouterr().out
+    assert "::notice::GITHUB_OUTPUT is not set" in out
+    assert "baseline-created=true" in out
+    assert "::notice::GITHUB_STEP_SUMMARY is not set" in out
+
+
+def test_render_summary_counts_by_severity_and_shows_revision() -> None:
+    inputs = read_inputs(_env())
+    sarif = _sarif(_result("a", "error"), _result("b", "warning"), _result("c", "warning"))
+    text = render_summary(inputs, sarif, first_run=False, rc=0)
+    assert "| Revision claimed | 2026-07-28 |" in text
+    assert "| error | 1 |" in text and "| warning | 2 |" in text
+    assert "| Drift | false |" in text
+    assert "attacker-authored" not in text

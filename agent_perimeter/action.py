@@ -12,9 +12,15 @@ a network connection itself, and never writes a scope file.
 
 from __future__ import annotations
 
+import json
+import os
 import shlex
-from collections.abc import Mapping, Sequence
+import subprocess
+import sys
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 # Mirrors agent_perimeter/checks/drift/description_drift.py:CHECK.id.
 # Importing the check package into this glue module would pull the whole
@@ -154,3 +160,155 @@ def reproduction_line(argv: Sequence[str]) -> str:
             masked.append(part)
         previous = part
     return shlex.join(masked)
+
+
+def read_sarif(path: Path) -> dict[str, Any] | None:
+    """The SARIF the CLI wrote, or ``None`` if it wrote none."""
+    if not path.is_file():
+        return None
+    loaded: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return loaded
+
+
+def sarif_results(sarif: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    if sarif is None:
+        return []
+    runs = sarif.get("runs") or []
+    if not runs:
+        return []
+    results: list[dict[str, Any]] = list(runs[0].get("results") or [])
+    return results
+
+
+def drift_verdict(sarif: Mapping[str, Any] | None, *, first_run: bool) -> str:
+    """``none`` on a first run; otherwise whether the drift check fired.
+
+    Read from the SARIF, not the exit code, so ``fail-on-drift: false``
+    still yields a usable signal.
+    """
+    if first_run:
+        return "none"
+    drifted = any(r.get("ruleId") == DRIFT_CHECK_ID for r in sarif_results(sarif))
+    return "true" if drifted else "false"
+
+
+def write_outputs(path: Path | None, outputs: Mapping[str, str]) -> None:
+    lines = [f"{key}={value}" for key, value in outputs.items()]
+    if path is None:
+        print("::notice::GITHUB_OUTPUT is not set; printing outputs instead.")
+        print("\n".join(lines))
+        return
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
+def write_summary(path: Path | None, text: str) -> None:
+    if path is None:
+        print("::notice::GITHUB_STEP_SUMMARY is not set; printing the summary instead.")
+        print(text)
+        return
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(text + "\n")
+
+
+def render_summary(
+    inputs: Inputs, sarif: Mapping[str, Any] | None, *, first_run: bool, rc: int
+) -> str:
+    """Counts, ids and severities only -- never a message body (rule 5)."""
+    results = sarif_results(sarif)
+    props: Mapping[str, Any] = {}
+    if sarif is not None and sarif.get("runs"):
+        props = sarif["runs"][0].get("properties") or {}
+    by_level: dict[str, int] = {}
+    for result in results:
+        level = str(result.get("level", "none"))
+        by_level[level] = by_level.get(level, 0) + 1
+    verdict = drift_verdict(sarif, first_run=first_run)
+    drifted = sum(1 for r in results if r.get("ruleId") == DRIFT_CHECK_ID)
+
+    rows = [
+        "## Agent Perimeter",
+        "",
+        "| | |",
+        "|---|---|",
+        f"| Target | `{inputs.target or inputs.image}` |",
+        f"| Mode | {inputs.mode or 'passive'} |",
+        f"| Revision claimed | {props.get('revision_claimed') or 'unknown'} |",
+        f"| Findings | {len(results)} |",
+        f"| Drift | {verdict} |",
+        f"| Exit code | {rc} |",
+    ]
+    if by_level:
+        rows += ["", "| Severity | Count |", "|---|---|"]
+        rows += [f"| {level} | {count} |" for level, count in sorted(by_level.items())]
+    if first_run:
+        rows += [
+            "",
+            f"Baseline written to `{inputs.baseline}`. Commit it to arm the drift gate.",
+        ]
+    elif verdict == "true":
+        rows += [
+            "",
+            f"Drift gate tripped: {drifted} tool(s) changed since the baseline. "
+            f"Review the diff with `agent-perimeter drift {shlex.quote(inputs.baseline)} "
+            f"{shlex.quote(inputs.snapshot)}`; commit the new snapshot as the baseline "
+            "to approve.",
+        ]
+    return "\n".join(rows)
+
+
+def _subprocess_run(argv: list[str]) -> int:  # pragma: no cover -- the self-test workflow runs it
+    return subprocess.run(argv, check=False).returncode
+
+
+def main(
+    *,
+    environ: Mapping[str, str] | None = None,
+    run: Callable[[list[str]], int] | None = None,
+) -> int:
+    """Entry point. Returns the exit code (0 ok, 2 usage/missing artifact, 3 drift)."""
+    env = os.environ if environ is None else environ
+    execute = _subprocess_run if run is None else run
+
+    try:
+        inputs = read_inputs(env)
+    except InputError as exc:
+        print(str(exc))
+        return 2
+
+    gh_output = Path(env["GITHUB_OUTPUT"]) if env.get("GITHUB_OUTPUT") else None
+    gh_summary = Path(env["GITHUB_STEP_SUMMARY"]) if env.get("GITHUB_STEP_SUMMARY") else None
+
+    first_run = not Path(inputs.baseline).is_file()
+    # The CLI writes with write_text and does not create directories; the
+    # defaults live under .agent-perimeter/, which a fresh checkout lacks.
+    for target_path in (inputs.baseline, inputs.snapshot, inputs.sarif, inputs.html):
+        if target_path:
+            Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+
+    command = build_argv(inputs, first_run=first_run)
+    print("Reproduction: " + reproduction_line(command), flush=True)
+    rc = execute(command)
+
+    sarif = read_sarif(Path(inputs.sarif))
+    if rc == 0 and sarif is None:
+        print(
+            f"Scan exited 0 but wrote no SARIF at {inputs.sarif}. "
+            "Check the `sarif` input points at a writable path."
+        )
+        rc = 2
+
+    outputs: dict[str, str] = {}
+    if sarif is not None:
+        outputs["sarif-file"] = inputs.sarif
+    outputs["snapshot-file"] = inputs.baseline if first_run else inputs.snapshot
+    outputs["baseline-created"] = "true" if first_run else "false"
+    outputs["drift"] = drift_verdict(sarif, first_run=first_run)
+    outputs["finding-count"] = str(len(sarif_results(sarif)))
+    write_outputs(gh_output, outputs)
+    write_summary(gh_summary, render_summary(inputs, sarif, first_run=first_run, rc=rc))
+    return rc
+
+
+if __name__ == "__main__":  # pragma: no cover -- exercised by the self-test workflow
+    sys.exit(main())
