@@ -69,7 +69,7 @@ branding: { icon: shield, color: yellow }
 
 | Input | Required | Default | Maps to |
 |---|---|---|---|
-| `target` | yes | — | `--target` |
+| `target` | yes unless `image` is set | — | `--target`. A URL, a stdio command, or empty with `image` set (the image's own entrypoint is the server — the same convention as the CLI and `tests/test_cli_integration.py`) |
 | `mode` | no | `passive` | `--mode` |
 | `scope-file` | no | — | `--scope-file` (required by the CLI when `mode: active`) |
 | `image` | no | CLI default (`python:3.12-slim`) | `--image` |
@@ -116,7 +116,7 @@ rather than failing it.
 ## 5. Runtime flow — `agent_perimeter/action.py`
 
 ```
-inputs  = read_inputs(os.environ)            # INPUT_* → dataclass; target required
+inputs  = read_inputs(os.environ)            # INPUT_* → dataclass; target or image required
 first   = not Path(inputs.baseline).is_file()
 argv    = build_argv(inputs, first_run=first)
 print(reproduction_line(argv))               # env values masked
@@ -158,7 +158,7 @@ The module has no dependency on `typer` internals; it depends on the
 
 | Condition | Behaviour |
 |---|---|
-| `target` empty | exit 2: "Set the `target` input to a URL or a stdio command." |
+| `target` and `image` both empty | exit 2: "Set the `target` input to a URL or a stdio command, or set `image` to a container image whose entrypoint is the server." |
 | `mode: active` without `scope-file` | passed through; the CLI refuses (exit 2) with its own message. The action does not pre-empt it, so the refusal path and its message are the CLI's single source of truth. |
 | `fail-on-drift`/`upload-sarif` not `true`/`false` | exit 2 naming the input and the accepted values. |
 | `baseline` exists but is unreadable/invalid | passed through; the CLI's `--baseline` reader exits 2 with its own message. |
@@ -186,7 +186,7 @@ point at tmp files; a small SARIF written by the fake "CLI" where needed):
   through unchanged; `mode: active` without one passes no `--scope-file`
   and the action writes no file anywhere (asserted by listing the tmp
   workspace before/after)
-- `target` empty → exit 2, nothing executed
+- `target` and `image` both empty → exit 2, nothing executed; `target` empty with `image` set → runs with `--target ''`
 - rc 0 and no SARIF → exit 2
 - `finding-count` and the per-severity summary read from the SARIF
 - printed reproduction line equals `shlex.join` of the argv actually
