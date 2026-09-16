@@ -105,6 +105,69 @@ agent-perimeter drift baseline.json current.json          # the reproduction eve
 
 Exit `3` means at least one tool's description, schema or annotations changed, or a tool appeared or vanished. The API does the same automatically: every `POST /api/scans` is compared to the previous scan of the same target, and `GET /api/scans/{id}/drift` returns the word-level diff the web drift page renders.
 
+## Use as a GitHub Action
+
+The drift recipe above as one step. On the first run there is no baseline,
+so the action writes one and exits 0 — commit it. Every run after that
+diffs against the committed file and exits `3` if any tool's description,
+schema or annotations changed, or a tool appeared or vanished. Approving a
+change is a commit that replaces the baseline, reviewed like any other.
+
+```yaml
+name: mcp-perimeter
+on:
+  push: { branches: [main] }
+  schedule: [{ cron: "17 6 * * *" }]
+permissions:
+  contents: read
+  security-events: write   # for the SARIF upload; set upload-sarif: "false" to skip it
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Berakhah/agent-perimeter@v1
+        with:
+          target: https://mcp.example.test/rpc
+```
+
+| Input | Default | Meaning |
+|---|---|---|
+| `target` | — | URL or stdio command. May be empty when `image` is set (the image's entrypoint is the server). |
+| `mode` | `passive` | `active` needs `scope-file`; the action never creates one. |
+| `scope-file` | — | Authorisation for active mode (see "Before you scan anything"). |
+| `image` | CLI default | Container image for stdio targets. |
+| `env` | — | `KEY=VALUE` per line for a stdio target. Never logged. |
+| `only` | — | Run one check by id. |
+| `baseline` | `.agent-perimeter/baseline.json` | Committed snapshot to diff against; written on the first run. |
+| `snapshot` | `.agent-perimeter/current.json` | Where a gate run writes this scan's snapshot. |
+| `fail-on-drift` | `true` | `false` keeps the job green and exposes the `drift` output instead. |
+| `sarif` | `agent-perimeter.sarif` | SARIF 2.1.0 output path. |
+| `html` | — | HTML report path, if wanted. |
+| `upload-sarif` | `true` | Upload to code scanning. |
+
+Outputs: `sarif-file`, `snapshot-file`, `baseline-created`, `drift`
+(`none` / `true` / `false`, read from the SARIF so it works with
+`fail-on-drift: "false"`), `finding-count`. Exit codes are the CLI's: `0`
+clean, `2` refused or usage error, `3` drift gate tripped. The step log's
+first line is the exact `agent-perimeter scan …` command that ran, with
+`env` values masked — paste it to reproduce.
+
+Soft gate — annotate instead of fail:
+
+```yaml
+      - id: ap
+        uses: Berakhah/agent-perimeter@v1
+        with: { target: https://mcp.example.test/rpc, fail-on-drift: "false" }
+      - if: steps.ap.outputs.drift == 'true'
+        run: echo "::warning::MCP tools drifted; review ${{ steps.ap.outputs.snapshot-file }}"
+```
+
+The action installs the scanner from its own checkout (`@v1` tracks the
+latest `v1.x.y` release); nothing is published to PyPI or a registry.
+stdio targets run in the same locked-down container the CLI uses, on the
+runner's Docker daemon — use an `ubuntu-*` runner.
+
 ## CI: SARIF in GitHub code scanning
 
 `GET /api/scans/{id}/report.sarif` (or `agent-perimeter scan --sarif
