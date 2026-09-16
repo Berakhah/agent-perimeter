@@ -83,7 +83,7 @@ runs:
       # failed attempts). The venv's bin/ goes on GITHUB_PATH so the scan
       # step below (and the agent-perimeter console script) resolve to it.
       run: |
-        uv venv "$RUNNER_TEMP/agent-perimeter-venv"
+        uv venv --clear "$RUNNER_TEMP/agent-perimeter-venv"
         uv pip install --python "$RUNNER_TEMP/agent-perimeter-venv/bin/python" "${{ github.action_path }}"
         echo "$RUNNER_TEMP/agent-perimeter-venv/bin" >> "$GITHUB_PATH"
     - id: scan
