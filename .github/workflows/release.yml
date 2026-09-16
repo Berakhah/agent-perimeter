@@ -1,0 +1,22 @@
+name: release
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  move-major-tag:
+    # `uses: Berakhah/agent-perimeter@v1` must follow the newest v1.x.y.
+    if: startsWith(github.event.release.tag_name, 'v1.')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+      - name: Point v1 at this release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f v1 "${{ github.event.release.tag_name }}"
+          git push -f origin v1

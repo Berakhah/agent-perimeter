@@ -85,3 +85,42 @@ def test_readme_documents_every_input_and_the_permission() -> None:
     assert "security-events: write" in section
     assert "uses: Berakhah/agent-perimeter@v1" in section
     assert "`3`" in section
+
+
+SELFTEST = Path(".github/workflows/action-selftest.yml")
+RELEASE = Path(".github/workflows/release.yml")
+
+
+def _workflow(path: Path) -> dict[str, Any]:
+    loaded: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return loaded
+
+
+def test_selftest_workflow_exercises_first_run_clean_rerun_and_drift() -> None:
+    wf = _workflow(SELFTEST)
+    # PyYAML parses the bare `on:` key as boolean True.
+    assert set(wf[True]) == {"push", "pull_request"}
+    assert wf["permissions"]["security-events"] == "write"
+    job = wf["jobs"]["selftest"]
+    assert job["runs-on"] == "ubuntu-latest"
+    local_uses = [s for s in job["steps"] if s.get("uses") == "./"]
+    assert [s["id"] for s in local_uses] == ["first", "clean", "drifted"]
+    assert all(s["with"]["image"] == "agent-perimeter-fixture:selftest" for s in local_uses)
+    assert local_uses[0]["with"]["env"].strip() == "AP_FIXTURE_FLAW=none"
+    assert local_uses[2]["with"]["env"].strip() == "AP_FIXTURE_FLAW=drift_description"
+    assert local_uses[2]["continue-on-error"] is True
+    runs = "\n".join(s.get("run", "") for s in job["steps"])
+    assert "steps.first.outputs.baseline-created" in runs
+    assert "steps.clean.outputs.drift" in runs
+    assert "steps.drifted.outcome" in runs and "steps.drifted.outputs.drift" in runs
+    assert "drift.description_drift" in runs
+
+
+def test_release_workflow_moves_the_v1_tag_on_v1_releases_only() -> None:
+    wf = _workflow(RELEASE)
+    assert wf[True] == {"release": {"types": ["published"]}}
+    assert wf["permissions"]["contents"] == "write"
+    job = wf["jobs"]["move-major-tag"]
+    assert "startsWith(github.event.release.tag_name, 'v1.')" in job["if"]
+    runs = "\n".join(s.get("run", "") for s in job["steps"])
+    assert "git tag -f v1" in runs and "git push -f origin v1" in runs

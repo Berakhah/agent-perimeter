@@ -1,0 +1,82 @@
+name: action-selftest
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the stdio fixture image
+        run: docker build -t agent-perimeter-fixture:selftest tests/fixtures/servers
+
+      # (1) No baseline exists: the action must write one and exit 0.
+      - id: first
+        uses: ./
+        with:
+          target: ""
+          image: agent-perimeter-fixture:selftest
+          env: |
+            AP_FIXTURE_FLAW=none
+          baseline: selftest/baseline.json
+          snapshot: selftest/current.json
+          sarif: selftest/first.sarif
+
+      - name: Assert first run created the baseline
+        run: |
+          test "${{ steps.first.outputs.baseline-created }}" = "true"
+          test "${{ steps.first.outputs.drift }}" = "none"
+          test -s selftest/baseline.json
+
+      # (2) Same fixture again: gate run, no drift, exit 0.
+      - id: clean
+        uses: ./
+        with:
+          target: ""
+          image: agent-perimeter-fixture:selftest
+          env: |
+            AP_FIXTURE_FLAW=none
+          baseline: selftest/baseline.json
+          snapshot: selftest/current.json
+          sarif: selftest/clean.sarif
+
+      - name: Assert clean rerun reports no drift
+        run: |
+          test "${{ steps.clean.outputs.baseline-created }}" = "false"
+          test "${{ steps.clean.outputs.drift }}" = "false"
+
+      # (3) Description changed: gate must trip (exit 3) and still upload SARIF.
+      - id: drifted
+        uses: ./
+        continue-on-error: true
+        with:
+          target: ""
+          image: agent-perimeter-fixture:selftest
+          env: |
+            AP_FIXTURE_FLAW=drift_description
+          baseline: selftest/baseline.json
+          snapshot: selftest/current.json
+          sarif: selftest/drifted.sarif
+
+      - name: Assert the drift gate tripped and the SARIF names the drift check
+        run: |
+          test "${{ steps.drifted.outcome }}" = "failure"
+          test "${{ steps.drifted.outputs.drift }}" = "true"
+          python3 - <<'EOF'
+          import json
+          results = json.load(open("selftest/drifted.sarif"))["runs"][0]["results"]
+          assert any(r["ruleId"] == "drift.description_drift" for r in results), results
+          EOF
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: action-selftest
+          path: selftest/
