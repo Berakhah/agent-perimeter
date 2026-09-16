@@ -1,0 +1,116 @@
+name: Agent Perimeter
+description: >-
+  Scan an MCP server, upload SARIF to code scanning, and fail the job when
+  its tools drift from a committed baseline.
+author: Berakhah
+branding:
+  icon: shield
+  color: yellow
+
+inputs:
+  target:
+    description: >-
+      A URL (Streamable HTTP) or a stdio command to launch. May be empty when
+      `image` is set, in which case the image's own entrypoint is the server.
+    default: ""
+  mode:
+    description: "`passive` or `active`. Active mode refuses to run without `scope-file`."
+    default: passive
+  scope-file:
+    description: >-
+      Path to the scope file authorising active mode. The action never creates
+      one; the CLI exits 2 without it.
+    default: ""
+  image:
+    description: Container image for stdio targets (default is the CLI's `python:3.12-slim`).
+    default: ""
+  env:
+    description: Environment for a stdio target, one `KEY=VALUE` per line. Values are never logged.
+    default: ""
+  only:
+    description: Run a single check by id.
+    default: ""
+  baseline:
+    description: >-
+      Committed tool snapshot to diff against. When the file does not exist
+      the action writes this scan's snapshot there and exits 0; commit it.
+    default: .agent-perimeter/baseline.json
+  snapshot:
+    description: Where this scan's snapshot is written on a gate run.
+    default: .agent-perimeter/current.json
+  fail-on-drift:
+    description: "`true` to exit 3 when any tool changed since `baseline`."
+    default: "true"
+  sarif:
+    description: Where to write SARIF 2.1.0.
+    default: agent-perimeter.sarif
+  html:
+    description: Where to write the HTML report (omitted when empty).
+    default: ""
+  upload-sarif:
+    description: "`true` to upload the SARIF to code scanning (needs `security-events: write`)."
+    default: "true"
+
+outputs:
+  sarif-file:
+    description: Path of the SARIF written (absent when the scan wrote none).
+    value: ${{ steps.scan.outputs.sarif-file }}
+  snapshot-file:
+    description: Path the tool snapshot was written to (`baseline` on a first run).
+    value: ${{ steps.scan.outputs.snapshot-file }}
+  baseline-created:
+    description: "`true` when this run wrote the baseline because none existed."
+    value: ${{ steps.scan.outputs.baseline-created }}
+  drift:
+    description: "`none` on a first run; else `true`/`false` from the SARIF, independent of `fail-on-drift`."
+    value: ${{ steps.scan.outputs.drift }}
+  finding-count:
+    description: Number of SARIF results.
+    value: ${{ steps.scan.outputs.finding-count }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v10.1.0
+      with:
+        python-version: "3.12"
+    - name: Install agent-perimeter from this action's checkout
+      shell: bash
+      # A venv, never --system: GitHub-hosted runners' system Python is
+      # PEP-668 protected, and the runner user cannot write to its
+      # dist-packages even with --break-system-packages -- both surfaced
+      # only by running on a real runner (see git history for the two
+      # failed attempts). The venv's bin/ goes on GITHUB_PATH so the scan
+      # step below (and the agent-perimeter console script) resolve to it.
+      run: |
+        uv venv --clear "$RUNNER_TEMP/agent-perimeter-venv"
+        uv pip install --python "$RUNNER_TEMP/agent-perimeter-venv/bin/python" "${{ github.action_path }}"
+        echo "$RUNNER_TEMP/agent-perimeter-venv/bin" >> "$GITHUB_PATH"
+    - id: scan
+      name: Scan
+      shell: bash
+      env:
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_SCOPE-FILE: ${{ inputs.scope-file }}
+        INPUT_IMAGE: ${{ inputs.image }}
+        INPUT_ENV: ${{ inputs.env }}
+        INPUT_ONLY: ${{ inputs.only }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_SNAPSHOT: ${{ inputs.snapshot }}
+        INPUT_FAIL-ON-DRIFT: ${{ inputs.fail-on-drift }}
+        INPUT_SARIF: ${{ inputs.sarif }}
+        INPUT_HTML: ${{ inputs.html }}
+        INPUT_UPLOAD-SARIF: ${{ inputs.upload-sarif }}
+      run: python -m agent_perimeter.action
+    - name: Upload SARIF to code scanning
+      if: always() && inputs.upload-sarif == 'true' && steps.scan.outputs.sarif-file != ''
+      uses: github/codeql-action/upload-sarif@v4.38.0
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-file }}
+        # A stable per-invocation category: code scanning refuses more than
+        # one upload per job per category, which the self-test workflow's
+        # three uses: ./ calls in one job hit immediately. The sarif path
+        # is already required to be distinct per invocation to avoid a
+        # stale-SARIF read, so it doubles as the category with no new input.
+        category: ${{ inputs.sarif }}
