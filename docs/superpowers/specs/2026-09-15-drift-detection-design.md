@@ -316,7 +316,7 @@ No project-level changelog exists (docs/census/CHANGELOG.md is census-only); REA
 
 ## 10. Out of scope (recorded so nobody re-decides it by accident)
 
-- A GitHub Action wrapper (`agent-perimeter/scan@v1`). Natural follow-on; needs the marketplace/publishing decision first.
+- A GitHub Action wrapper (`agent-perimeter/scan@v1`). Built 2026-09-16 — see `2026-09-16-github-action-design.md`; the publishing decision it needed is that spec's D3/D8.
 - Any scheduler or "watched targets" table.
 - Server-level drift (transport/auth/revision changes).
 - Notifications (email/webhook) on drift.

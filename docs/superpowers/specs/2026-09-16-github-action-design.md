@@ -1,7 +1,7 @@
 # Agent Perimeter — GitHub Action wrapper
 
 **Date:** 16 September 2026
-**Status:** design approved in brainstorming; awaiting implementation plan
+**Status:** implemented 2026-09-16 (plan: `docs/superpowers/plans/2026-09-16-github-action.md`)
 **Scope:** the `agent-perimeter/scan@v1` follow-on that the drift spec
 (`2026-09-15-drift-detection-design.md` §10) listed as out of scope pending
 a publishing decision. That decision is taken here.

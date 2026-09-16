@@ -157,13 +157,22 @@ full-time pace when sequencing what comes next.
 ## Standing status note (not one of the 14, but blocks acting on several
 of them)
 
-Local `main` was 64 commits ahead of `origin/main` as of 2026-09-14 (last
-pushed commit `5418be3`), and `gh auth login` has not been run. Decision 5
-above (public from commit one) is already true for what's pushed, but nearly
-half the project's history — the capability graph, the web UI, the a11y
-suite, the full census pipeline, the containment tests — has never been
-validated by `.github/workflows/ci.yml`. Syncing this is a prerequisite for
-trusting "CI is green" as evidence for anything in this file or in
-`docs/methodology.md`'s DoD table, and needs an explicit go-ahead before
-pushing (see conversation record — this is a visible, external action, not
-a local edit).
+*Addendum, 2026-09-16.* The sync above happened on 2026-09-14/15 (`gh auth
+login` done, `origin/main` current, `.github/workflows/ci.yml` green on
+every push since). "CI is green" is now usable evidence.
+
+## Addendum — GitHub Action delivery (2026-09-16)
+
+The drift spec (`docs/superpowers/specs/2026-09-15-drift-detection-design.md`
+§10) deferred a GitHub Action pending a publishing decision. Decided, with
+the reasoning in `2026-09-16-github-action-design.md` D3/D8:
+
+- **Delivery: install from this repo at the action's own ref.** `action.yml`
+  at the root; `uses: Berakhah/agent-perimeter@v1` installs `agent_perimeter`
+  from the action's checkout. No PyPI release, no GHCR image — both would add
+  a recurring publishing surface for a package that has never been released,
+  and neither is needed for the action to work.
+- **Marketplace: not listed.** `branding` is in place so a listing is one
+  click; listing implies support expectations that are a human-partner call.
+- **Versioning:** `v1.0.0` release + floating `v1` tag moved by
+  `.github/workflows/release.yml`.
