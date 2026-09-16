@@ -91,6 +91,9 @@ def read_inputs(environ: Mapping[str, str]) -> Inputs:
             "to a container image whose entrypoint is the server."
         )
     env_lines = tuple(line.strip() for line in _get(environ, "env").splitlines() if line.strip())
+    for index, line in enumerate(env_lines, start=1):
+        if "=" not in line:
+            raise InputError(f"`env` line {index} is not in `KEY=VALUE` form.")
     return Inputs(
         target=target,
         mode=_get(environ, "mode"),
@@ -163,10 +166,23 @@ def reproduction_line(argv: Sequence[str]) -> str:
 
 
 def read_sarif(path: Path) -> dict[str, Any] | None:
-    """The SARIF the CLI wrote, or ``None`` if it wrote none."""
+    """The SARIF the CLI wrote, or ``None`` if it wrote none or wrote garbage.
+
+    A runner timeout or OOM can kill the CLI mid-write, leaving a truncated
+    or otherwise invalid file at ``path``, or valid JSON that isn't an
+    object (e.g. a bare list). Either case is treated the same as "wrote
+    no SARIF" rather than crashing the action.
+    """
     if not path.is_file():
         return None
-    loaded: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        loaded: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        print(f"Wrote SARIF at {path} that is not valid JSON; treating it as no SARIF.")
+        return None
+    if not isinstance(loaded, dict):
+        print(f"Wrote SARIF at {path} that is not valid JSON; treating it as no SARIF.")
+        return None
     return loaded
 
 
@@ -257,8 +273,12 @@ def render_summary(
     return "\n".join(rows)
 
 
-def _subprocess_run(argv: list[str]) -> int:  # pragma: no cover -- the self-test workflow runs it
-    return subprocess.run(argv, check=False).returncode
+def _subprocess_run(argv: list[str]) -> int:
+    try:
+        return subprocess.run(argv, check=False).returncode
+    except FileNotFoundError:
+        print(f"::error::{argv[0]} was not found on PATH; the install step may not have run.")
+        return 2
 
 
 def main(
@@ -273,7 +293,7 @@ def main(
     try:
         inputs = read_inputs(env)
     except InputError as exc:
-        print(str(exc))
+        print(f"::error::{exc}")
         return 2
 
     gh_output = Path(env["GITHUB_OUTPUT"]) if env.get("GITHUB_OUTPUT") else None
@@ -285,6 +305,10 @@ def main(
     for target_path in (inputs.baseline, inputs.snapshot, inputs.sarif, inputs.html):
         if target_path:
             Path(target_path).parent.mkdir(parents=True, exist_ok=True)
+    # A stale SARIF from a prior invocation in the same job (reusing default
+    # paths across two action steps) must never be read as this run's result.
+    if inputs.sarif:
+        Path(inputs.sarif).unlink(missing_ok=True)
 
     command = build_argv(inputs, first_run=first_run)
     print("Reproduction: " + reproduction_line(command), flush=True)
@@ -293,7 +317,7 @@ def main(
     sarif = read_sarif(Path(inputs.sarif))
     if rc == 0 and sarif is None:
         print(
-            f"Scan exited 0 but wrote no SARIF at {inputs.sarif}. "
+            f"::error::Scan exited 0 but wrote no SARIF at {inputs.sarif}. "
             "Check the `sarif` input points at a writable path."
         )
         rc = 2

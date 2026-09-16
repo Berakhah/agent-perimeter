@@ -154,12 +154,13 @@ commits and watching CI go green on the full codebase for the first time —
 as spread over roughly 2–3 real weeks, not calendar days. Do not assume a
 full-time pace when sequencing what comes next.
 
-## Standing status note (not one of the 14, but blocks acting on several
-of them)
+## Standing status note (not one of the 14)
 
-*Addendum, 2026-09-16.* The sync above happened on 2026-09-14/15 (`gh auth
-login` done, `origin/main` current, `.github/workflows/ci.yml` green on
-every push since). "CI is green" is now usable evidence.
+*Addendum, 2026-09-16.* The local/origin sync (getting `main` and
+`origin/main` aligned, `gh auth login`, and `.github/workflows/ci.yml`
+running on every push) happened on 2026-09-14/15, and CI has been green on
+every push since. "CI is green" is now usable evidence; this no longer
+blocks acting on any of the 14.
 
 ## Addendum — GitHub Action delivery (2026-09-16)
 

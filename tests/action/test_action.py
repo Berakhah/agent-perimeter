@@ -13,11 +13,13 @@ from typing import Any
 
 import pytest
 
+from agent_perimeter import action as action_module
 from agent_perimeter.action import (
     DRIFT_CHECK_ID,
     INPUT_NAMES,
     InputError,
     Inputs,
+    _subprocess_run,
     build_argv,
     drift_verdict,
     main,
@@ -111,6 +113,16 @@ def test_read_inputs_missing_key_is_treated_as_empty() -> None:
     env = _env()
     del env["INPUT_HTML"]
     assert read_inputs(env).html == ""
+
+
+def test_read_inputs_rejects_malformed_env_line_without_leaking_the_value() -> None:
+    """Finding 1: a bare token (no '=') must be rejected before it ever
+    reaches the CLI, whose own error echo would print it unmasked."""
+    with pytest.raises(InputError) as exc:
+        read_inputs(_env(env="A=1\nsecret-token-no-equals\nB=2"))
+    message = str(exc.value)
+    assert "secret-token-no-equals" not in message
+    assert "line 2" in message
 
 
 def test_first_run_writes_the_snapshot_to_the_baseline_path_and_never_gates() -> None:
@@ -281,6 +293,32 @@ def test_read_sarif_returns_none_when_absent(tmp_path: Path) -> None:
     assert read_sarif(tmp_path / "missing.sarif") is None
 
 
+def test_read_sarif_returns_none_for_truncated_json(tmp_path: Path) -> None:
+    """Finding 3: a runner timeout/OOM can kill the CLI mid-write."""
+    path = tmp_path / "broken.sarif"
+    path.write_text('{"version": "2.1.0", "runs": [', encoding="utf-8")
+    assert read_sarif(path) is None
+
+
+def test_read_sarif_returns_none_for_a_json_list(tmp_path: Path) -> None:
+    """Valid JSON that isn't an object must not lie about being a SARIF dict."""
+    path = tmp_path / "list.sarif"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+    assert read_sarif(path) is None
+
+
+def test_read_sarif_prints_a_stated_message_for_invalid_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "broken.sarif"
+    path.write_text("not json", encoding="utf-8")
+    assert read_sarif(path) is None
+    out = capsys.readouterr().out
+    assert str(path) in out
+    assert "not valid JSON" in out
+    assert "treating it as no SARIF" in out
+
+
 def test_sarif_results_handles_none_and_missing_runs() -> None:
     assert sarif_results(None) == []
     assert sarif_results({"runs": []}) == []
@@ -369,7 +407,42 @@ def test_input_error_exits_2_and_runs_nothing(
     run = FakeRun(0, _sarif())
     rc = main(environ=_gh(tmp_path, target="", image=""), run=run)
     assert rc == 2 and run.calls == []
-    assert "Set the `target` input" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "::error::" in out
+    assert "Set the `target` input" in out
+
+
+def test_malformed_env_line_exits_2_before_the_subprocess_ever_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Finding 1: read_inputs rejects the malformed line before build_argv/
+    the CLI ever see it, so the CLI's own unmasking echo can never fire."""
+    run = FakeRun(0, _sarif())
+    rc = main(environ=_gh(tmp_path, env="A=1\nsecret-token-no-equals"), run=run)
+    assert rc == 2
+    assert run.calls == []
+    out = capsys.readouterr().out
+    assert "secret-token-no-equals" not in out
+    assert "::error::" in out
+
+
+def test_stale_sarif_at_a_reused_path_is_not_read_as_this_runs_result(
+    tmp_path: Path,
+) -> None:
+    """Finding 5: a prior invocation's SARIF must not leak into this run's
+    outputs when the CLI fails before writing a fresh one."""
+    env = _gh(tmp_path)
+    stale_path = Path(env["INPUT_SARIF"])
+    stale_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_path.write_text(json.dumps(_sarif(_result(DRIFT_CHECK_ID))), encoding="utf-8")
+
+    rc = main(environ=env, run=FakeRun(2, None))
+    assert rc == 2
+    assert not stale_path.exists()
+    out = _outputs(tmp_path)
+    assert out["drift"] == "none"
+    assert out["finding-count"] == "0"
+    assert "sarif-file" not in out
 
 
 def test_reproduction_line_is_printed_before_the_run_and_matches_argv(
@@ -401,6 +474,23 @@ def test_outputs_fall_back_to_stdout_when_github_vars_are_unset(
     assert "::notice::GITHUB_OUTPUT is not set" in out
     assert "baseline-created=true" in out
     assert "::notice::GITHUB_STEP_SUMMARY is not set" in out
+
+
+def test_subprocess_run_missing_executable_prints_error_and_returns_2(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Finding 4: a missing `agent-perimeter` on PATH must fail closed with
+    a stated ::error:: message, not an uncaught FileNotFoundError."""
+
+    def _raise(argv: list[str], check: bool) -> None:  # noqa: ARG001 - matches subprocess.run's shape
+        raise FileNotFoundError(argv[0])
+
+    monkeypatch.setattr(action_module.subprocess, "run", _raise)
+    rc = _subprocess_run(["agent-perimeter", "scan"])
+    assert rc == 2
+    out = capsys.readouterr().out
+    assert "::error::" in out
+    assert "agent-perimeter" in out
 
 
 def test_render_summary_counts_by_severity_and_shows_revision() -> None:
