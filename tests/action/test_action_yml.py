@@ -69,10 +69,19 @@ def test_manifest_is_composite_with_the_pinned_steps_and_branding() -> None:
 
 
 def test_install_step_installs_from_the_action_path() -> None:
+    """Installs into a uv-managed venv (never --system): the GitHub-hosted
+    runner's system Python is PEP-668 protected and its dist-packages
+    directory is not writable by the runner user even with
+    --break-system-packages -- both discovered only by running on a real
+    runner (PR #3). The venv's bin/ is put on GITHUB_PATH so later steps'
+    `python -m agent_perimeter.action` and the `agent-perimeter` console
+    script both resolve."""
     steps = _manifest()["runs"]["steps"]
     install = next(s for s in steps if "run" in s and "pip install" in s["run"])
     assert '"${{ github.action_path }}"' in install["run"]
-    assert "--system" in install["run"]
+    assert "--system" not in install["run"]
+    assert "uv venv" in install["run"]
+    assert "GITHUB_PATH" in install["run"]
 
 
 def test_readme_documents_every_input_and_the_permission() -> None:
