@@ -1,7 +1,7 @@
 # Agent Perimeter — Web UI visual polish + motion
 
 **Date:** 16 September 2026
-**Status:** design approved in brainstorming; awaiting implementation plan
+**Status:** design approved in brainstorming; reviewed against code 17 Sep 2026; awaiting implementation plan
 **Scope:** the five Next.js screens under `web/app/**` (not the Python-rendered
 static `report.html` artifact from `agent_perimeter/report/html.py`, which
 `web/tests/a11y.spec.ts` also tests but this redesign does not touch).
@@ -78,8 +78,15 @@ accessibility fix is in scope here** — this item is dropped.
   `easeOut`, ≤40ms stagger between rows arriving in the same event batch
   (most arrive one at a time over the SSE-like stream already, so stagger
   rarely compounds).
-- The pending-check `Skeleton` gets a CSS pulse animation (`@keyframes`,
-  opacity 0.5↔1, 1.5s loop) instead of a static block.
+- The pending-check `Skeleton` is **unchanged** — it already runs a
+  shimmer animation (`bok-skeleton-pulse`, `globals.css:632-645`) that the
+  global reduced-motion rule already covers. (An earlier draft proposed
+  adding one; it was already there.)
+- Timing note: fixture playback emits 29 checks at 30ms intervals
+  (`page.tsx:59`), so a 300ms entrance overlaps ~10 rows deep — a cascade,
+  which is the intended look. `live-scan.spec.ts:35` documents a <700ms
+  expectation for the Skeleton → first-row hand-off; the plan's test task
+  must confirm that still holds with the entrance in place.
 - The terminal-frame transition (running → `EmptyState`/summary) gets a
   brief cross-fade (200ms) so the status region swap doesn't pop — must
   preserve the existing single-`role="status"`-at-a-time invariant the
@@ -97,10 +104,21 @@ accessibility fix is in scope here** — this item is dropped.
   per the "don't use bounce on dense data tables" guidance. Must respect
   the existing `@tanstack/react-virtual` windowing — only mounted
   (currently-rendered) rows animate; the plan's implementation task
-  verifies this doesn't fight virtualization's own recycling.
+  verifies this doesn't fight virtualization's own recycling. **Rows
+  scrolled back into view remount**, so the reveal must run on initial
+  mount and on filter change only; a scroll-in remount renders the end
+  state immediately, otherwise the table shimmers on every scroll. The
+  implementation tracks "already revealed" per row key (not per mounted
+  instance) to make that distinction.
 - Row expand/collapse (`FindingRow`'s reproduction + `EvidencePane`):
-  height/opacity transition, 200ms, matching the existing
-  `bok-row-expandable` class hook.
+  **opacity-only** transition, 200ms, on the expanded `<tr>`'s inner
+  content, matching the existing `bok-row-expandable` class hook. Height is
+  deliberately *not* animated: (a) `<tr>` is `display: table-row` and does
+  not transition height; (b) the virtualizer uses a fixed per-density
+  `estimateSize` with no `measureElement` (`_bok-ui.tsx:383-500`), so an
+  animating height would not be tracked by the padding rows. Switching to
+  `measureElement` is a separate change (the code comment at
+  `_bok-ui.tsx:385` already anticipates it) and is out of scope here.
 - `SeverityBadge`: hover state (subtle scale/brightness, 150ms) — decorative
   only, the glyph+label+color encoding is unchanged.
 
@@ -109,12 +127,25 @@ accessibility fix is in scope here** — this item is dropped.
   own comments) — gets marginally more presence than the others, still
   restrained: node entrance (opacity+scale 0.95→1, 300ms, staggered by
   graph layer/depth if the layout algorithm exposes one, else by array
-  order capped at the same ≤40ms/item budget as §4.2).
-- Edge derivation styling (schema/description/probe — already rendered
-  differently per the design system's "never just colored" rule) gets a
-  draw-in transition on entrance (stroke-dasharray reveal, 400ms) — SVG/
-  Canvas-appropriate, whichever `CapabilityGraph` currently renders with
-  (check before planning).
+  order capped at the same ≤40ms/item budget as §4.2). Policy-flagged
+  nodes already play a one-shot CSS pulse (`bok-graph-pulse`, 900ms,
+  `CapabilityGraph.tsx:292`, state-machined via `onAnimationEnd`). The two
+  must not stack: the pulse ring mounts only after the node's entrance
+  completes (entrance `onAnimationComplete` → set pulse state to
+  `"playing"`), so the sequence is entrance → pulse, never both at once.
+  Under reduced motion the entrance is skipped and the pulse fires as it
+  does today (its CSS is already reduced-motion covered).
+- Edge entrance: the graph is SVG (`CapabilityGraph.tsx:103`) and
+  `strokeDasharray` is **already the semantic channel** — it encodes
+  derivation (schema/description/probe) per edge at
+  `CapabilityGraph.tsx:148`, mirrored by the legend at line 175. That is
+  the design system's "never colour alone" encoding, so the edge reveal
+  **must not touch `stroke-dasharray` or `stroke-dashoffset`** — a
+  dash-based draw-in would scramble the pattern mid-animation and
+  momentarily make a probe edge read as a schema edge. Use a reveal that
+  leaves dasharray untouched: an SVG `<clipPath>` rect sweeping along the
+  edge's bounding box (400ms, `easeOut`), or, if that proves fiddly, a
+  plain opacity fade (300ms). The plan picks one; either is acceptable.
 - Hover on a node highlights its connected edges (opacity dim on
   unconnected edges, 150ms) — this is new interaction, not purely visual;
   must not remove keyboard-reachability of the same information (the
@@ -141,6 +172,14 @@ accessibility fix is in scope here** — this item is dropped.
   it animates must already be legible in the static (reduced-motion) end
   state, matching the existing severity/provenance "glyph + label, never
   color alone" rule extended to motion.
+- The converse also binds: **no animation may drive a property that is
+  itself a semantic encoding** (edge `stroke-dasharray`, severity glyph,
+  provenance underline style). Animate opacity/transform/clip on the
+  element instead. §4.4's edge reveal is the concrete case.
+- Where an element already has a CSS animation (Skeleton shimmer, graph
+  pulse ring, ProvenanceRail item entrance at `globals.css:271`), a new
+  `motion` animation on the same element must be sequenced with it, not
+  stacked — see §4.4.
 - No easing with overshoot/bounce (`back.out`, spring with high stiffness)
   anywhere in the findings table or drift diff — editorial restraint per
   D1/D3. The capability graph may use a very slight settle (`easeOut` with
