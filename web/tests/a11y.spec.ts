@@ -14,6 +14,30 @@ const SCREENS = [
 for (const [name, path] of SCREENS) {
   test(`${name} has no serious or critical axe violations`, async ({ page }) => {
     await page.goto(path);
+    // Motion entrances (src/lib/motion.ts) fade content in over ≤300ms and
+    // mark it data-entered="true" on completion. axe reads mid-fade text at
+    // opacity < 1 as a colour-contrast failure, which is a sampling artefact,
+    // not a defect -- audit the settled DOM. Screens with no motion have no
+    // data-entered elements and pass through immediately.
+    // A single zero reading isn't proof the DOM has settled: under worker
+    // contention the streaming fixture's per-event timers can bunch up, so
+    // a *new* data-entered="false" row can appear moments after a momentary
+    // all-zero reading while the stream is still catching up (measured:
+    // ~20-50% flake with a single .poll(...).toBe(0) here). Debounce by
+    // re-checking after a pause comfortably longer than one entrance
+    // animation (DURATION_S.reveal + STAGGER_CAP_S, src/lib/motion.ts) --
+    // if the pause reveals a fresh false element, the outer poll retries.
+    await expect
+      .poll(
+        async () => {
+          const stillEntering = await page.locator('[data-entered="false"]').count();
+          if (stillEntering > 0) return stillEntering;
+          await page.waitForTimeout(400);
+          return page.locator('[data-entered="false"]').count();
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(0);
     const results = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
       .analyze();
