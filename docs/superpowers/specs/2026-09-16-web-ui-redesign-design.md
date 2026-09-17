@@ -1,7 +1,7 @@
 # Agent Perimeter — Web UI visual polish + motion
 
 **Date:** 16 September 2026
-**Status:** design approved in brainstorming; reviewed against code 17 Sep 2026; awaiting implementation plan
+**Status:** implemented 2026-09-17 (plan `docs/superpowers/plans/2026-09-17-web-ui-redesign.md`)
 **Scope:** the five Next.js screens under `web/app/**` (not the Python-rendered
 static `report.html` artifact from `agent_perimeter/report/html.py`, which
 `web/tests/a11y.spec.ts` also tests but this redesign does not touch).
@@ -229,3 +229,46 @@ accessibility fix is in scope here** — this item is dropped.
   (`globals.css:102`) is untouched; this redesign doesn't add or change
   dark-mode-specific rules beyond whatever spacing/motion changes apply
   identically in both modes.
+
+## 8. Implementation record (17 Sep 2026)
+
+- `motion` 13.4.0 (MIT) added; all JS-driven entrances go through
+  `web/src/lib/motion.ts`. Scan setup (§4.1) and drift (§4.5) turned out to
+  need no JS motion at all and are pure CSS.
+- Bundle impact (`next build`, First Load JS, gzipped): before → after —
+  `/` 118.91 → 159.98 kB · `/scans/[id]` 119.41 → 160.49 kB · findings
+  120.61 → 161.59 kB · graph 120.37 → 161.62 kB · drift 118.74 → 159.73 kB.
+  Every route +≈41 kB, all of it `motion/react` in the shared chunk. The
+  plan estimated ≤40 kB from a wrong "tree-shaken core ≈18 kB" assumption;
+  the real cost is the whole `motion/react` runtime. Accepted as the price
+  of D4 (the CSS-only alternative was 0 kB); reversible by swapping the
+  hooks in `web/src/lib/motion.ts` for CSS keyframes — that module is the
+  only import site.
+- Playwright suite: 90 tests: 89/90 on a full-parallel run, the one miss
+  (`live-scan.spec.ts:98`, entered-state timing under load) passes 5/5 in
+  isolation (22 new: 2 live-scan entrance, 2 terminal frame, 5 scan setup,
+  4 findings, 6 graph, 3 drift), a11y matrix green on all six screens,
+  tokens/print unchanged and green.
+- Spec deviations:
+  1. `web/tests/a11y.spec.ts`: the axe audit now waits (with a 400ms
+     debounce, 15s cap) until no `[data-entered="false"]` element remains
+     before `analyze()` — axe was sampling text mid-fade at opacity < 1 and
+     reporting `color-contrast` (a sampling artefact, not a defect). Rule
+     not disabled; reduced motion not emulated.
+  2. `web/src/lib/motion.ts`: `data-entered` is `"false"` on first render
+     for every path (so server and client markup agree — the graph SSRs
+     its fixture content and React 19 does not patch attribute mismatches)
+     and flips to `"true"` in a post-mount effect. The spec's "end state
+     immediately" claim holds after hydration; the graph's reduced-motion
+     test gates on the flagged node's `data-pulse="skipped"` (a
+     `useLayoutEffect` hydration signal) before its non-retrying checks.
+  3. Two plan-authored test assertions were corrected: `drift.spec.ts`
+     asserts `animationDuration < 0.001s` numerically (Chromium normalizes
+     `0.001ms` to `1e-06s`); `scan-setup.spec.ts`'s reduced-motion test
+     uses a retrying `toHaveAttribute("data-unlocked", "true")` because the
+     unlock follows an async file read, not motion.
+  4. `print.css` does not force `opacity`/`transform` on `*` (the closed
+     ProvenanceRail hides via `translateX(100%)`); it zeroes
+     animation/transition and hides the closed rail with `display: none`.
+  5. §4.3's "filter change" has no filter to attach to today; rows are
+     keyed by id so a future filter gets the mount reveal for free.
