@@ -109,10 +109,15 @@ test("focusing a tool node highlights its edges from the keyboard too", async ({
 test("reduced motion renders nodes and edges already entered and still pulses nothing", async ({ browser }) => {
   const page = await (await browser.newContext({ reducedMotion: "reduce" })).newPage();
   await page.goto("/scans/1/graph?fixture=deputy");
+  // The graph SSRs its fixture content, so `toBeVisible()` can resolve
+  // against the server HTML before React hydrates. `data-pulse="skipped"`
+  // is set in a useLayoutEffect (CapabilityGraph.tsx), so it is a
+  // hydration signal, not an animation wait -- once it holds, the
+  // non-retrying checks below prove the entered state needs no wait.
+  await expect(page.getByTestId("node-flagged").first()).toHaveAttribute("data-pulse", "skipped");
   const node = page.getByTestId("node").first();
   await expect(node).toBeVisible();
   expect(await node.getAttribute("data-entered")).toBe("true");
   const edge = page.getByTestId("edge").first();
   expect(await edge.getAttribute("data-entered")).toBe("true");
-  await expect(page.getByTestId("node-flagged").first()).toHaveAttribute("data-pulse", "skipped");
 });
