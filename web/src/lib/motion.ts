@@ -14,7 +14,7 @@
  * overshoot anywhere (spec D3).
  */
 import { useReducedMotion, type Transition } from "motion/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export const DURATION_S = { hover: 0.15, state: 0.2, reveal: 0.3, edge: 0.4 } as const;
 export const STAGGER_S = 0.04;
@@ -56,12 +56,29 @@ export interface EntranceProps {
 }
 
 function useEntrance(from: EntranceTarget, to: EntranceTarget, options: EntranceOptions): EntranceProps {
-  // `null` only during SSR; every animated element on these screens is
-  // client-rendered after a fetch/stream, so treating null as "not reduced"
-  // never paints a reduced-motion viewer's content at opacity 0.
+  // `null` only during SSR (no `window` to read `matchMedia` from); `?? false`
+  // just picks the value this render starts from. The graph's fixture path
+  // is server-rendered with real content, so this genuinely differs from
+  // the client's real preference on first hydration for a reduced-motion
+  // viewer -- `data-entered` below is built to survive that, not to assume
+  // it never happens.
   const reduced = useReducedMotion() ?? false;
   const [entered, setEntered] = useState(false);
   const immediate = reduced || options.skip === true;
+  // `data-entered` always starts "false" -- on some screens (the capability
+  // graph's fixture path) this element is present in server-rendered HTML,
+  // and `reduced`/`skip` are only known once the client hydrates. Starting
+  // from "false" unconditionally means the very first render always agrees
+  // with the server, so React has nothing to silently refuse to patch
+  // (react.dev/link/hydration-mismatch); the effect below then commits the
+  // real end state in the first post-mount render, which is a normal
+  // client update, not a hydration diff, so it always lands. `immediate`
+  // still governs the *visual* (initial/transition below) -- an immediate
+  // viewer's content is already painted in its final state on mount, this
+  // is only the attribute lagging one commit behind for correctness.
+  useEffect(() => {
+    if (immediate) setEntered(true);
+  }, [immediate]);
   return {
     initial: immediate ? false : from,
     animate: to,
@@ -69,7 +86,7 @@ function useEntrance(from: EntranceTarget, to: EntranceTarget, options: Entrance
       ? { duration: 0 }
       : { duration: options.duration ?? DURATION_S.reveal, ease: "easeOut", delay: staggerDelay(options.index ?? 0) },
     onAnimationComplete: () => setEntered(true),
-    "data-entered": immediate || entered ? "true" : "false",
+    "data-entered": entered ? "true" : "false",
   };
 }
 
