@@ -462,6 +462,11 @@ body {
   gap: var(--density-gap);
   border-left: 2px solid var(--neutral-200);
   padding-left: var(--density-cell-x);
+  transition: border-left-color 150ms ease-out, background-color 150ms ease-out;
+}
+.bok-timeline-item:hover {
+  border-left-color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 5%, transparent);
 }
 .bok-timeline-error {
   border-left-color: var(--severity-critical);
@@ -483,9 +488,11 @@ body {
 }
 .bok-diff-add {
   background: color-mix(in oklch, var(--provenance-verified) 18%, transparent);
+  animation: bok-diff-in 300ms ease-out backwards;
 }
 .bok-diff-remove {
   background: color-mix(in oklch, var(--severity-critical) 18%, transparent);
+  animation: bok-diff-in 300ms ease-out backwards;
 }
 .bok-diff-word {
   display: block;
@@ -498,10 +505,20 @@ body {
   color: var(--severity-critical);
   text-decoration: line-through;
   background: color-mix(in oklch, var(--severity-critical) 12%, transparent);
+  animation: bok-diff-in 300ms ease-out backwards;
 }
 .bok-diff-word-added {
   color: var(--provenance-verified);
   background: color-mix(in oklch, var(--provenance-verified) 12%, transparent);
+  animation: bok-diff-in 300ms ease-out backwards;
+}
+/* From transparent to whatever background the rule above declares -- the
+   `to` frame is implicit, so one keyframe serves all four rules. The +/−
+   prefix and data-glyph are the colour-independent encoding; untouched. */
+@keyframes bok-diff-in {
+  from {
+    background-color: transparent;
+  }
 }
 
 /* EmptyState / ErrorState. */
