@@ -93,7 +93,7 @@ test("reduced motion leaves every scan-setup end state intact", async ({ browser
   const page = await (await browser.newContext({ reducedMotion: "reduce" })).newPage();
   await page.goto("/");
   await page.getByTestId("scope-file").setInputFiles("tests/fixtures/scope-valid.json");
-  expect(await page.locator(".bok-mode-selector").getAttribute("data-unlocked")).toBe("true");
+  await expect(page.locator(".bok-mode-selector")).toHaveAttribute("data-unlocked", "true");
   await expect(page.getByRole("radio", { name: /active/i })).toBeEnabled();
   await page.getByLabel(/target/i).fill("x");
   await expect(page.getByRole("button", { name: /start scan/i })).toHaveCSS("cursor", "pointer");
