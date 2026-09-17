@@ -512,11 +512,20 @@ body {
 }
 
 /* Scan setup screen (task 11). */
+.bok-scan-setup {
+  max-width: 32rem;
+}
+.bok-scan-setup h1 {
+  margin-bottom: var(--density-cell-y);
+}
+.bok-scan-setup > p {
+  margin: 0 0 calc(var(--density-gap) * 3);
+  color: var(--neutral-600);
+}
 .bok-scan-setup form {
   display: flex;
   flex-direction: column;
   gap: calc(var(--density-gap) * 2);
-  max-width: 32rem;
 }
 .bok-field {
   display: flex;
@@ -529,6 +538,15 @@ body {
   padding: var(--density-cell-y) var(--density-cell-x);
   background: var(--paper);
   color: var(--ink);
+  transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
+}
+.bok-field input[type="text"]:hover {
+  border-color: var(--neutral-400);
+}
+.bok-field input[type="text"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
 }
 .bok-mode-selector {
   display: flex;
@@ -542,12 +560,39 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5em;
+  padding: var(--density-cell-y) var(--density-cell-x);
+  border: 1px solid transparent;
+  border-radius: var(--radius-cell);
+  transition: background-color 200ms ease-out, border-color 200ms ease-out, color 200ms ease-out;
+}
+.bok-mode-option:has(input:not(:disabled)) {
+  cursor: pointer;
+}
+.bok-mode-option:has(input:not(:disabled)):hover {
+  background: var(--neutral-50);
+  border-color: var(--neutral-200);
+}
+.bok-mode-option:has(input:disabled) {
+  color: var(--neutral-500);
+  cursor: not-allowed;
+}
+.bok-mode-option:has(input:focus-visible) {
+  border-color: var(--accent);
+}
+.bok-mode-selector[data-unlocked="true"] .bok-mode-option:has(input[value="active"]) {
+  border-color: var(--neutral-200);
 }
 .bok-lock-reason {
   color: var(--severity-medium);
   border-left: 2px solid var(--severity-medium);
   padding-left: var(--density-cell-x);
   font-size: 0.9em;
+  transition: border-left-color 150ms ease-out, color 150ms ease-out;
+}
+/* Informational, not interactive (no tab stop): hover only deepens the
+   rule so a pointer user can tell it's the thing explaining the lock. */
+.bok-lock-reason:hover {
+  border-left-color: var(--ink);
 }
 .bok-scope-file-field {
   display: flex;
@@ -556,6 +601,16 @@ body {
   border: 1px dashed var(--neutral-300);
   border-radius: var(--radius-control);
   padding: var(--density-gap);
+  transition: border-color 150ms ease-out, background-color 150ms ease-out;
+}
+.bok-scope-file-field:hover,
+.bok-scope-file-field:focus-within {
+  border-color: var(--neutral-500);
+}
+.bok-scope-file-field[data-dragging="true"] {
+  border-color: var(--accent);
+  border-style: solid;
+  background: color-mix(in oklch, var(--accent) 6%, transparent);
 }
 .bok-hint {
   color: var(--neutral-600);
@@ -564,6 +619,46 @@ body {
 .bok-scope-file-name {
   font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
   font-size: 0.9em;
+}
+/* Submit: disabled→enabled is a colour/cursor transition (150ms); the
+   in-flight state pulses the label -- never a spinner (00 §5.5). */
+.bok-submit {
+  align-self: flex-start;
+  padding: var(--density-cell-y) calc(var(--density-cell-x) * 2);
+  border: 1px solid var(--ink);
+  border-radius: var(--radius-control);
+  background: var(--ink);
+  color: var(--paper);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
+}
+.bok-submit:hover:not(:disabled) {
+  background: var(--neutral-800);
+  border-color: var(--neutral-800);
+}
+.bok-submit:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.bok-submit:disabled {
+  background: var(--neutral-100);
+  border-color: var(--neutral-200);
+  color: var(--neutral-500);
+  cursor: not-allowed;
+}
+.bok-submit[data-submitting="true"] .bok-submit-label {
+  display: inline-block;
+  animation: bok-submit-pulse 1.2s ease-in-out infinite;
+}
+@keyframes bok-submit-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
 }
 
 /* Live scan screen (task 12). */
