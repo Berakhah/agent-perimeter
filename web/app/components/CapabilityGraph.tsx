@@ -65,37 +65,6 @@ function activates(event: KeyboardEvent) {
   return event.key === "Enter" || event.key === " ";
 }
 
-/**
- * This graph renders its fixture content synchronously on first paint (see
- * `graph/page.tsx`, so the keyboard test's immediate Tab press has a node to
- * land on), unlike other screens' entrance-animated elements, which only
- * ever mount after a client fetch/stream completes and so never have
- * server-rendered markup to hydrate against. That makes this the one place
- * `useScaleIn`/`useFadeIn`'s reduced-motion detection (client-only
- * `matchMedia`, unknown during SSR) can disagree with the server-rendered
- * `data-entered`: React's hydration diff logs that mismatch and does not
- * repair it -- "won't be patched up" (react.dev/link/hydration-mismatch)
- * -- and, having recorded the *new* value as already-applied to the fiber,
- * no later re-render (a `useLayoutEffect` correction included, tried and
- * measured flaky here) touches that attribute again either.
- *
- * This module-level statement runs once, synchronously, the moment the
- * browser evaluates this script -- which happens while parsing/executing
- * the page's scripts, strictly before React hydrates anything (imports run
- * before the code that uses them). At that point the server-rendered
- * `data-entered="false"` is already sitting in the DOM (the browser painted
- * it from the raw HTML, no JS involved yet); this corrects it directly via
- * the DOM API, bypassing React's props entirely, before hydration ever
- * gets a chance to compare against it. `motion`'s own inline `opacity`
- * style doesn't need the same treatment -- it's already applied
- * imperatively via a ref, independent of this hydration-diff issue.
- */
-if (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-  document
-    .querySelectorAll('[data-testid="node"], [data-testid="node-flagged"], [data-testid="edge"], .bok-graph-node-inner')
-    .forEach((el) => el.setAttribute("data-entered", "true"));
-}
-
 export interface CapabilityGraphProps {
   edges: CapabilityEdge[];
   flaggedTools: ReadonlySet<string>;
