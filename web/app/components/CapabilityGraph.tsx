@@ -14,10 +14,12 @@
  * count; swap in a force-layout pass (or a library) if a future task wants
  * one for a much larger graph.
  */
+import { motion } from "motion/react";
 import { useLayoutEffect, useMemo, useState, type KeyboardEvent } from "react";
 
 import { DERIVATION_META, type Derivation } from "@/src/lib/_bok-ui";
 import type { Capability, CapabilityEdge } from "@/src/lib/api";
+import { useFadeIn, useScaleIn } from "@/src/lib/motion";
 import { EdgeTooltip } from "./EdgeTooltip";
 
 const CAPABILITY_ORDER: Capability[] = [
@@ -63,6 +65,37 @@ function activates(event: KeyboardEvent) {
   return event.key === "Enter" || event.key === " ";
 }
 
+/**
+ * This graph renders its fixture content synchronously on first paint (see
+ * `graph/page.tsx`, so the keyboard test's immediate Tab press has a node to
+ * land on), unlike other screens' entrance-animated elements, which only
+ * ever mount after a client fetch/stream completes and so never have
+ * server-rendered markup to hydrate against. That makes this the one place
+ * `useScaleIn`/`useFadeIn`'s reduced-motion detection (client-only
+ * `matchMedia`, unknown during SSR) can disagree with the server-rendered
+ * `data-entered`: React's hydration diff logs that mismatch and does not
+ * repair it -- "won't be patched up" (react.dev/link/hydration-mismatch)
+ * -- and, having recorded the *new* value as already-applied to the fiber,
+ * no later re-render (a `useLayoutEffect` correction included, tried and
+ * measured flaky here) touches that attribute again either.
+ *
+ * This module-level statement runs once, synchronously, the moment the
+ * browser evaluates this script -- which happens while parsing/executing
+ * the page's scripts, strictly before React hydrates anything (imports run
+ * before the code that uses them). At that point the server-rendered
+ * `data-entered="false"` is already sitting in the DOM (the browser painted
+ * it from the raw HTML, no JS involved yet); this corrects it directly via
+ * the DOM API, bypassing React's props entirely, before hydration ever
+ * gets a chance to compare against it. `motion`'s own inline `opacity`
+ * style doesn't need the same treatment -- it's already applied
+ * imperatively via a ref, independent of this hydration-diff issue.
+ */
+if (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  document
+    .querySelectorAll('[data-testid="node"], [data-testid="node-flagged"], [data-testid="edge"], .bok-graph-node-inner')
+    .forEach((el) => el.setAttribute("data-entered", "true"));
+}
+
 export interface CapabilityGraphProps {
   edges: CapabilityEdge[];
   flaggedTools: ReadonlySet<string>;
@@ -94,6 +127,11 @@ export function CapabilityGraph({ edges, flaggedTools, onActivateTool }: Capabil
 
   const [activeEdge, setActiveEdge] = useState<CapabilityEdge | null>(null);
 
+  // Pointer-hovered or keyboard-focused tool; its edges are marked
+  // connected, every other edge dimmed (spec §4.4). Keyboard sets it too,
+  // so the highlight is not a pointer-only affordance.
+  const [highlightedTool, setHighlightedTool] = useState<string | null>(null);
+
   return (
     <div className="bok-graph">
       {/* No `role="img"` here -- this SVG has real interactive descendants
@@ -105,14 +143,16 @@ export function CapabilityGraph({ edges, flaggedTools, onActivateTool }: Capabil
         viewBox={`0 0 ${VIEW_W} ${height}`}
         aria-label="Capability graph: tools on the left, capabilities on the right"
       >
-        {toolOrder.map((tool) => (
+        {toolOrder.map((tool, index) => (
           <ToolNode
             key={tool}
             tool={tool}
+            index={index}
             x={TOOL_X}
             y={toolY.get(tool) ?? TOP_PAD}
             flagged={flaggedTools.has(tool)}
             onActivate={() => onActivateTool(tool)}
+            onHighlight={setHighlightedTool}
           />
         ))}
 
@@ -132,31 +172,17 @@ export function CapabilityGraph({ edges, flaggedTools, onActivateTool }: Capabil
         {/* Rendered last so tool nodes above stay first in tab order
             (tests/graph.spec.ts "the graph is fully navigable from the
             keyboard" -- a single Tab press must land on the first node). */}
-        {edges.map((edge, i) => {
-          const y1 = toolY.get(edge.tool) ?? TOP_PAD;
-          const y2 = capY.get(edge.capability) ?? TOP_PAD;
-          return (
-            <line
-              key={`${edge.tool}-${edge.capability}-${i}`}
-              data-testid="edge"
-              data-derivation={edge.derivation}
-              className="bok-graph-edge"
-              x1={TOOL_X}
-              y1={y1}
-              x2={CAP_X}
-              y2={y2}
-              strokeDasharray={DASH_ARRAY[edge.derivation]}
-              tabIndex={0}
-              aria-label={`${edge.tool} has ${CAPABILITY_LABEL[edge.capability]}, ${DERIVATION_META[edge.derivation].label}-derived: ${edge.rationale}`}
-              onMouseEnter={() => setActiveEdge(edge)}
-              onMouseLeave={() => setActiveEdge((current) => (current === edge ? null : current))}
-              onFocus={() => setActiveEdge(edge)}
-              onBlur={() => setActiveEdge((current) => (current === edge ? null : current))}
-            >
-              <title>{`${DERIVATION_META[edge.derivation].label}: ${edge.rationale}`}</title>
-            </line>
-          );
-        })}
+        {edges.map((edge, i) => (
+          <Edge
+            key={`${edge.tool}-${edge.capability}-${i}`}
+            edge={edge}
+            index={i}
+            y1={toolY.get(edge.tool) ?? TOP_PAD}
+            y2={capY.get(edge.capability) ?? TOP_PAD}
+            highlightedTool={highlightedTool}
+            onActive={setActiveEdge}
+          />
+        ))}
       </svg>
 
       {activeEdge && (
@@ -212,21 +238,76 @@ export function CapabilityGraph({ edges, flaggedTools, onActivateTool }: Capabil
   );
 }
 
+interface EdgeProps {
+  edge: CapabilityEdge;
+  index: number;
+  y1: number;
+  y2: number;
+  highlightedTool: string | null;
+  onActive: (update: (current: CapabilityEdge | null) => CapabilityEdge | null) => void;
+}
+
+/**
+ * One edge. Entrance is an opacity fade (spec §4.4): `strokeDasharray` is
+ * the derivation encoding and is never animated. Dimming uses
+ * `stroke-opacity` in CSS so it doesn't fight the inline `opacity` motion
+ * owns. `onActive` takes a functional update so leaving/blurring one edge
+ * never clears a different edge that became active in between.
+ */
+function Edge({ edge, index, y1, y2, highlightedTool, onActive }: EdgeProps) {
+  const fade = useFadeIn({ index, duration: 0.4 });
+  const connected = highlightedTool === edge.tool;
+  const dimmed = highlightedTool !== null && !connected;
+  const clearIfCurrent = () => onActive((current) => (current === edge ? null : current));
+  return (
+    <motion.line
+      {...fade}
+      data-testid="edge"
+      data-derivation={edge.derivation}
+      data-tool={edge.tool}
+      data-connected={connected}
+      data-dimmed={dimmed}
+      className="bok-graph-edge"
+      x1={TOOL_X}
+      y1={y1}
+      x2={CAP_X}
+      y2={y2}
+      strokeDasharray={DASH_ARRAY[edge.derivation]}
+      tabIndex={0}
+      aria-label={`${edge.tool} has ${CAPABILITY_LABEL[edge.capability]}, ${DERIVATION_META[edge.derivation].label}-derived: ${edge.rationale}`}
+      onMouseEnter={() => onActive(() => edge)}
+      onMouseLeave={clearIfCurrent}
+      onFocus={() => onActive(() => edge)}
+      onBlur={clearIfCurrent}
+    >
+      <title>{`${DERIVATION_META[edge.derivation].label}: ${edge.rationale}`}</title>
+    </motion.line>
+  );
+}
+
 interface ToolNodeProps {
   tool: string;
+  index: number;
   x: number;
   y: number;
   flagged: boolean;
   onActivate: () => void;
+  onHighlight: (tool: string | null) => void;
 }
 
-function ToolNode({ tool, x, y, flagged, onActivate }: ToolNodeProps) {
-  if (flagged) return <FlaggedToolNode tool={tool} x={x} y={y} onActivate={onActivate} />;
+function ToolNode({ tool, index, x, y, flagged, onActivate, onHighlight }: ToolNodeProps) {
+  // Unconditional hook call (rules of hooks); unused on the flagged path,
+  // where FlaggedToolNode owns its own entrance.
+  const entrance = useScaleIn({ index });
+  if (flagged) {
+    return <FlaggedToolNode tool={tool} index={index} x={x} y={y} onActivate={onActivate} onHighlight={onHighlight} />;
+  }
   return (
     <g
       transform={`translate(${x}, ${y})`}
       className="bok-graph-node-tool"
       data-testid="node"
+      data-entered={entrance["data-entered"]}
       role="button"
       tabIndex={0}
       aria-label={`Tool ${tool}`}
@@ -236,11 +317,19 @@ function ToolNode({ tool, x, y, flagged, onActivate }: ToolNodeProps) {
         event.preventDefault();
         onActivate();
       }}
+      onMouseEnter={() => onHighlight(tool)}
+      onMouseLeave={() => onHighlight(null)}
+      onFocus={() => onHighlight(tool)}
+      onBlur={() => onHighlight(null)}
     >
-      <circle r={16} />
-      <text x={-24} dy="0.35em" textAnchor="end">
-        {tool}
-      </text>
+      {/* Inner group carries the entrance: motion writes style.transform,
+          which would override the positioning `transform` attribute above. */}
+      <motion.g {...entrance} className="bok-graph-node-inner">
+        <circle r={16} />
+        <text x={-24} dy="0.35em" textAnchor="end">
+          {tool}
+        </text>
+      </motion.g>
     </g>
   );
 }
@@ -248,25 +337,28 @@ function ToolNode({ tool, x, y, flagged, onActivate }: ToolNodeProps) {
 type PulseState = "pending" | "playing" | "done" | "skipped";
 
 /**
- * A policy-flagged tool pulses once, amber, on first render, then holds a
- * static ring -- one orchestrated moment, not scattered effects or a loop
- * (brief §7 screen 4).
+ * A policy-flagged tool pulses once, amber, after its entrance completes,
+ * then holds a static ring -- one orchestrated moment, sequenced, never
+ * stacked (spec §4.4; brief §7 screen 4).
  *
- * ponytail: pulse is a one-shot CSS animation keyed on first paint, not a
- * JS timer. A timer would re-fire on re-render and turn the one
- * orchestrated moment into a nervous tic, which is the exact failure 00
- * §5.3 warns about.
+ * ponytail: pulse is a one-shot CSS animation keyed on the entrance's
+ * completion, not a JS timer. A timer would re-fire on re-render and turn
+ * the one orchestrated moment into a nervous tic, which is the exact
+ * failure 00 §5.3 warns about.
  */
-function FlaggedToolNode({ tool, x, y, onActivate }: Omit<ToolNodeProps, "flagged">) {
+function FlaggedToolNode({ tool, index, x, y, onActivate, onHighlight }: Omit<ToolNodeProps, "flagged">) {
   const [pulse, setPulse] = useState<PulseState>("pending");
+  const entrance = useScaleIn({ index });
 
   // useLayoutEffect (not useEffect): resolves before the browser paints, so
   // a reduced-motion viewer never sees `data-pulse` pass through "playing"
   // at all -- it goes straight from the unpainted "pending" first render to
-  // "skipped".
+  // "skipped". A motion-allowed viewer stays "pending" here; the entrance's
+  // onAnimationComplete below is what starts the pulse (spec §4.4:
+  // entrance → pulse, sequenced, never stacked).
   useLayoutEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    setPulse(reduced ? "skipped" : "playing");
+    if (reduced) setPulse("skipped");
   }, []);
 
   const ring = pulse === "done" || pulse === "skipped";
@@ -276,6 +368,7 @@ function FlaggedToolNode({ tool, x, y, onActivate }: Omit<ToolNodeProps, "flagge
       transform={`translate(${x}, ${y})`}
       className="bok-graph-node-tool bok-graph-node-flagged"
       data-testid="node-flagged"
+      data-entered={entrance["data-entered"]}
       data-pulse={pulse}
       data-ring={ring}
       role="button"
@@ -287,15 +380,28 @@ function FlaggedToolNode({ tool, x, y, onActivate }: Omit<ToolNodeProps, "flagge
         event.preventDefault();
         onActivate();
       }}
+      onMouseEnter={() => onHighlight(tool)}
+      onMouseLeave={() => onHighlight(null)}
+      onFocus={() => onHighlight(tool)}
+      onBlur={() => onHighlight(null)}
     >
-      {pulse === "playing" && (
-        <circle r={16} className="bok-graph-pulse-ring" onAnimationEnd={() => setPulse("done")} />
-      )}
-      {ring && <circle r={22} className="bok-graph-static-ring" />}
-      <circle r={16} className="bok-graph-node-circle" />
-      <text x={-24} dy="0.35em" textAnchor="end">
-        {tool}
-      </text>
+      <motion.g
+        {...entrance}
+        className="bok-graph-node-inner"
+        onAnimationComplete={() => {
+          entrance.onAnimationComplete();
+          setPulse((current) => (current === "pending" ? "playing" : current));
+        }}
+      >
+        {pulse === "playing" && (
+          <circle r={16} className="bok-graph-pulse-ring" onAnimationEnd={() => setPulse("done")} />
+        )}
+        {ring && <circle r={22} className="bok-graph-static-ring" />}
+        <circle r={16} className="bok-graph-node-circle" />
+        <text x={-24} dy="0.35em" textAnchor="end">
+          {tool}
+        </text>
+      </motion.g>
     </g>
   );
 }

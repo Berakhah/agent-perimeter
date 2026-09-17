@@ -802,6 +802,11 @@ body {
   stroke: var(--accent);
   stroke-width: 2.5;
 }
+/* Entrance scale must pivot on the node itself, not the SVG origin. */
+.bok-graph-node-inner {
+  transform-box: fill-box;
+  transform-origin: center;
+}
 .bok-graph-node-flagged .bok-graph-node-circle {
   stroke: var(--accent);
 }
@@ -834,6 +839,7 @@ body {
 .bok-graph-edge {
   stroke: var(--neutral-400);
   stroke-width: 1.5;
+  transition: stroke 150ms ease-out, stroke-width 150ms ease-out, stroke-opacity 150ms ease-out;
 }
 .bok-graph-edge:hover,
 .bok-graph-edge:focus-visible {
@@ -843,6 +849,16 @@ body {
 .bok-graph-edge:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+/* Hover/focus on a tool node: its edges read as connected, the rest recede.
+   stroke-opacity, not opacity -- motion owns inline opacity for the
+   entrance. Dasharray (the derivation encoding) is never touched. */
+.bok-graph-edge[data-connected="true"] {
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+.bok-graph-edge[data-dimmed="true"] {
+  stroke-opacity: 0.3;
 }
 
 .bok-edge-tooltip {
