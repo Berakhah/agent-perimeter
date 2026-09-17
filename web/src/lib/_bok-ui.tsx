@@ -20,7 +20,9 @@
 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { diffWords } from "diff";
+import { motion } from "motion/react";
 import {
+  type ComponentPropsWithoutRef,
   Fragment,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -30,6 +32,8 @@ import {
   useRef,
   useState,
 } from "react";
+
+import { useFadeIn, useRiseIn } from "./motion";
 
 // ---------------------------------------------------------------------------
 // Shared vocabulary
@@ -390,6 +394,53 @@ const ROW_HEIGHT_BY_DENSITY: Record<Density, number> = {
   dense: 28,
 };
 
+/**
+ * A finding row that rises in on its *first* mount only (spec §4.3). The
+ * virtualizer remounts rows that scroll back into view; `skip` is true for
+ * an id that has already been revealed, so a remount renders the end state
+ * instead of shimmering on every scroll. `onRevealed` fires both when the
+ * animation completes and when the row was rendered already-entered
+ * (reduced motion / skip), so the set is complete either way.
+ */
+function RevealRow({
+  index,
+  skip,
+  onRevealed,
+  ...rest
+}: {
+  index: number;
+  skip: boolean;
+  onRevealed: () => void;
+} & Omit<ComponentPropsWithoutRef<typeof motion.tr>, "initial" | "animate" | "transition" | "onAnimationComplete">) {
+  const entrance = useRiseIn({ index, skip, duration: 0.25 });
+  const entered = entrance["data-entered"] === "true";
+  useEffect(() => {
+    // Idempotent (adds to a Set), so re-running on an inline-arrow
+    // `onRevealed` identity change is harmless.
+    if (entered) onRevealed();
+  }, [entered, onRevealed]);
+  return (
+    <motion.tr
+      {...rest}
+      {...entrance}
+      onAnimationComplete={() => {
+        entrance.onAnimationComplete();
+        onRevealed();
+      }}
+    />
+  );
+}
+
+/** The expanded row's content, opacity-only (spec §4.3 -- never height). */
+function RevealExpanded({ children }: { children: ReactNode }) {
+  const fade = useFadeIn();
+  return (
+    <motion.div {...fade} className="bok-finding-expanded-reveal">
+      {children}
+    </motion.div>
+  );
+}
+
 /** Column-resizable, keyboard-navigable, CSV/JSON export, virtualised (00 §5.4). */
 export function FindingsTable({ rows, density = "compact", caption, onClaimActivate, renderExpanded }: FindingsTableProps) {
   const [widths, setWidths] = useState<number[]>(() => FINDINGS_COLUMNS.map(() => 160));
@@ -397,6 +448,8 @@ export function FindingsTable({ rows, density = "compact", caption, onClaimActiv
   const dragState = useRef<{ col: number; startX: number; startWidth: number } | null>(null);
   const cellRefs = useRef<Array<Array<HTMLTableCellElement | null>>>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Ids that have completed their reveal once -- see RevealRow.
+  const revealedIds = useRef<Set<string>>(new Set());
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedIds((prev) => {
@@ -547,7 +600,10 @@ export function FindingsTable({ rows, density = "compact", caption, onClaimActiv
               const expanded = expandedIds.has(row.id);
               return (
                 <Fragment key={row.id}>
-                  <tr
+                  <RevealRow
+                    index={virtualRow.index - (virtualRows[0]?.index ?? 0)}
+                    skip={revealedIds.current.has(row.id)}
+                    onRevealed={() => revealedIds.current.add(row.id)}
                     data-testid="finding-row"
                     style={{ height: rowHeight }}
                     className={cx(renderExpanded && "bok-row-expandable")}
@@ -611,10 +667,12 @@ export function FindingsTable({ rows, density = "compact", caption, onClaimActiv
                     >
                       {row.taxonomyRefs && row.taxonomyRefs.length > 0 ? row.taxonomyRefs.join(", ") : "—"}
                     </td>
-                  </tr>
+                  </RevealRow>
                   {renderExpanded && expanded && (
                     <tr data-testid="finding-row-expanded">
-                      <td colSpan={FINDINGS_COLUMNS.length}>{renderExpanded(row)}</td>
+                      <td colSpan={FINDINGS_COLUMNS.length}>
+                        <RevealExpanded>{renderExpanded(row)}</RevealExpanded>
+                      </td>
                     </tr>
                   )}
                 </Fragment>

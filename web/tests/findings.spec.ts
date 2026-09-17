@@ -70,3 +70,42 @@ test("Enter on a claim inside an expandable row only opens the rail, not the row
   await expect(page.getByRole("complementary", { name: /provenance/i })).toBeVisible();
   await expect(page.getByTestId("reproduction")).toHaveCount(0);
 });
+
+// Web UI redesign (spec §4.3): rows rise in on first mount; the expanded
+// reproduction fades in. End-state assertions only.
+test("finding rows reach their entered state", async ({ page }) => {
+  await page.goto("/scans/1/findings?fixture=mixed");
+  const rows = page.getByTestId("finding-row");
+  await expect(rows.first()).toHaveAttribute("data-entered", "true", { timeout: 3_000 });
+  await expect(rows.last()).toHaveAttribute("data-entered", "true", { timeout: 3_000 });
+});
+
+test("an expanded row's content reaches its entered state", async ({ page }) => {
+  await page.goto("/scans/1/findings?fixture=mixed");
+  await page.getByTestId("finding-row").first().click();
+  const reveal = page.getByTestId("finding-row-expanded").locator(".bok-finding-expanded-reveal");
+  await expect(reveal).toHaveAttribute("data-entered", "true", { timeout: 3_000 });
+  await expect(page.getByTestId("reproduction")).toBeVisible();
+});
+
+test("a severity badge lifts on hover, keeping glyph and label", async ({ page }) => {
+  await page.goto("/scans/1/findings?fixture=mixed");
+  const badge = page.getByTestId("severity-badge").first();
+  const before = await badge.getAttribute("data-glyph");
+  await badge.hover();
+  await expect(badge).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, -1)");
+  expect(await badge.getAttribute("data-glyph")).toBe(before);
+  await expect(badge).not.toHaveText("");
+});
+
+test("reduced motion renders rows and expansions already entered", async ({ browser }) => {
+  const page = await (await browser.newContext({ reducedMotion: "reduce" })).newPage();
+  await page.goto("/scans/1/findings?fixture=mixed");
+  const first = page.getByTestId("finding-row").first();
+  await expect(first).toBeVisible();
+  expect(await first.getAttribute("data-entered")).toBe("true");
+  await first.click();
+  const reveal = page.getByTestId("finding-row-expanded").locator(".bok-finding-expanded-reveal");
+  await expect(reveal).toBeVisible();
+  expect(await reveal.getAttribute("data-entered")).toBe("true");
+});
