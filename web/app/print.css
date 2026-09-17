@@ -27,4 +27,19 @@
   :focus {
     outline: none !important;
   }
+
+  /* Nothing animates on paper. Belt-and-braces over the reduced-motion
+     rule: a print snapshot taken mid-keyframe would otherwise capture a
+     half-highlighted diff or a half-risen row. Deliberately NOT forcing
+     opacity/transform: the closed ProvenanceRail hides via
+     translateX(100%) and would print on top of the page. */
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .bok-rail:not(.bok-rail-open) {
+    display: none !important;
+  }
 }

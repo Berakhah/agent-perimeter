@@ -110,3 +110,38 @@ test("navigating from a failed live fetch to a fixture drops the stale error", a
   await expect(page.getByTestId("empty-state")).toContainText(/needs at least two scans/i);
   await expect(page.getByText("Could not load drift history")).toHaveCount(0);
 });
+
+// Web UI redesign (spec §4.5): added/removed spans highlight in via a
+// background keyframe; the glyph encoding is unaffected.
+test("added and removed spans settle on a highlighted background", async ({ page }) => {
+  await page.goto("/scans/2/drift?fixture=changed-description");
+  const added = page.getByTestId("added").first();
+  await expect(added).toHaveCSS("animation-name", "bok-diff-in");
+  await expect
+    .poll(async () => added.evaluate((el) => getComputedStyle(el).backgroundColor), { timeout: 3_000 })
+    .not.toBe("rgba(0, 0, 0, 0)");
+  await expect(added).toHaveAttribute("data-glyph", "+");
+});
+
+test("a timeline item responds to hover", async ({ page }) => {
+  await page.goto("/scans/2/drift?fixture=changed-description");
+  const item = page.locator(".bok-timeline-item").first();
+  const before = await item.evaluate((el) => getComputedStyle(el).borderLeftColor);
+  await item.hover();
+  await expect.poll(async () => item.evaluate((el) => getComputedStyle(el).borderLeftColor)).not.toBe(before);
+});
+
+test("reduced motion renders the diff highlight immediately", async ({ browser }) => {
+  const page = await (await browser.newContext({ reducedMotion: "reduce" })).newPage();
+  await page.goto("/scans/2/drift?fixture=changed-description");
+  const added = page.getByTestId("added").first();
+  await expect(added).toBeVisible();
+  expect(await added.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+  // Chromium normalises the computed value's unit/notation (observed as
+  // "1e-06s" rather than the literal "0.001ms" authored in the rule) --
+  // parse to seconds so the assertion tracks the invariant (effectively
+  // instantaneous), not a serialisation quirk.
+  const duration = await added.evaluate((el) => getComputedStyle(el).animationDuration);
+  const seconds = duration.endsWith("ms") ? Number.parseFloat(duration) / 1000 : Number.parseFloat(duration);
+  expect(seconds).toBeLessThan(0.001);
+});
