@@ -310,6 +310,12 @@ body {
   padding: 2px 6px;
   border-radius: var(--radius-cell);
   border: 1px solid currentColor;
+  transition: transform 150ms ease-out, filter 150ms ease-out;
+}
+/* Decorative only -- glyph + label + colour encoding is unchanged. */
+.bok-severity-badge:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
 }
 .bok-severity-critical {
   color: var(--severity-critical);
@@ -371,6 +377,7 @@ body {
 }
 .bok-row-expandable {
   cursor: pointer;
+  transition: background-color 150ms ease-out;
 }
 .bok-row-expandable:hover {
   background: var(--neutral-50);
@@ -743,8 +750,11 @@ body {
 /* ConformanceStrip -- the findings screen's header differentiator (task 13). */
 .bok-conformance-strip {
   font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   padding: var(--density-cell-y) var(--density-cell-x);
-  margin-bottom: var(--density-gap);
+  margin-bottom: calc(var(--density-gap) * 2);
   border: 1px solid var(--accent);
   border-radius: var(--radius-cell);
   background: color-mix(in oklch, var(--accent) 8%, transparent);
