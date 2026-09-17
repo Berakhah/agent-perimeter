@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import "./print.css";
+import { MotionProvider } from "./components/MotionProvider";
 
 // Self-hosted (00 §5.2: Google Fonts CDN is a privacy/offline-demo liability).
 // Files copied one-time from the `geist` / `@fontsource/*` npm packages into
@@ -50,7 +51,7 @@ export default function RootLayout({
       <body
         className={`${displayFont.variable} ${uiFont.variable} ${monoFont.variable} antialiased`}
       >
-        {children}
+        <MotionProvider>{children}</MotionProvider>
       </body>
     </html>
   );

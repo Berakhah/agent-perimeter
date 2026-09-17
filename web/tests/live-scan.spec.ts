@@ -91,3 +91,25 @@ test("an unknown findings count reads as unknown, never as a false zero", async 
   await expect(page.getByTestId("findings-summary")).toContainText(/unknown/i);
   await expect(page.getByText("No findings for the checks that ran")).toHaveCount(0);
 });
+
+// Web UI redesign (spec §4.2): each check row enters with a short rise-in.
+// The test asserts the *end state* -- `data-entered="true"` is set from
+// motion's onAnimationComplete -- never the animation's visual path.
+test("check rows reach their entered state after streaming in", async ({ page }) => {
+  await page.goto("/scans/1?fixture=streaming");
+  const first = page.getByTestId("check-row").first();
+  await expect(first).toHaveAttribute("data-entered", "false");
+  await expect(first).toHaveAttribute("data-entered", "true", { timeout: 3_000 });
+  await expect(page.getByTestId("check-row").last()).toHaveAttribute("data-entered", "true", { timeout: 10_000 });
+});
+
+// Spec §5/§6: under reduced motion the end state is reached immediately.
+// The non-retrying `getAttribute` (not `toHaveAttribute`) is the evidence --
+// there is no window in which the row exists but is not yet entered.
+test("reduced motion renders check rows already entered", async ({ browser }) => {
+  const page = await (await browser.newContext({ reducedMotion: "reduce" })).newPage();
+  await page.goto("/scans/1?fixture=streaming");
+  const first = page.getByTestId("check-row").first();
+  await expect(first).toBeVisible();
+  expect(await first.getAttribute("data-entered")).toBe("true");
+});
