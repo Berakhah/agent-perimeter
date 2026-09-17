@@ -49,11 +49,14 @@
  * `findingsCount`'s state comment below. None of the three fixture
  * scenarios represents an unclean run, so fixture mode is untouched.
  */
-import { use, useEffect, useMemo, useState } from "react";
+import { use, useEffect, useMemo, useState, type ReactNode } from "react";
+
+import { motion } from "motion/react";
 
 import { PhaseGroup, type PhaseGroupCheck } from "@/app/components/PhaseGroup";
 import { EmptyState, ErrorState, QuotaStrip, Skeleton, type ProviderQuota } from "@/src/lib/_bok-ui";
 import { getScan, isTerminalEvent, subscribeToScanEvents, type ScanEvent, type ScanTerminalEvent } from "@/src/lib/api";
+import { useFadeIn } from "@/src/lib/motion";
 import { FIXTURES } from "./fixtures";
 
 // 29 checks at 30ms apart (~870ms) plus a 500ms pause before the terminal
@@ -217,29 +220,33 @@ export default function LiveScanPage({
         <p role="status" aria-live="polite" className="bok-scan-progress">
           {progress ? `${progress.completed} of ${progress.total} checks complete` : "Starting scan…"}
         </p>
-      ) : fixture || findingsCount === 0 ? (
-        // Fixture mode: none of the three canned scenarios represents an
-        // unclean run, so this stays the existing, verified-clean copy.
-        // Real mode: `findingsCount === 0` is the one case where "No
-        // findings" is actually true.
-        <EmptyState
-          title="No findings for the checks that ran"
-          description={
-            skippedCount === 0
-              ? "0 checks skipped."
-              : `${skippedCount} check${skippedCount === 1 ? "" : "s"} skipped — see the skipped rows below for why.`
-          }
-        />
-      ) : typeof findingsCount === "number" ? (
-        <p data-testid="findings-summary" role="status" aria-live="polite">
-          {findingsCount} finding{findingsCount === 1 ? "" : "s"} — see the findings link above.
-        </p>
       ) : (
-        // `getScan` hasn't resolved yet, or it failed -- absence is not the
-        // same claim as zero, so this never falls back to "No findings".
-        <p data-testid="findings-summary" role="status" aria-live="polite">
-          findings count unknown — see the findings link above to check.
-        </p>
+        <TerminalFrame>
+          {fixture || findingsCount === 0 ? (
+            // Fixture mode: none of the three canned scenarios represents an
+            // unclean run, so this stays the existing, verified-clean copy.
+            // Real mode: `findingsCount === 0` is the one case where "No
+            // findings" is actually true.
+            <EmptyState
+              title="No findings for the checks that ran"
+              description={
+                skippedCount === 0
+                  ? "0 checks skipped."
+                  : `${skippedCount} check${skippedCount === 1 ? "" : "s"} skipped — see the skipped rows below for why.`
+              }
+            />
+          ) : typeof findingsCount === "number" ? (
+            <p data-testid="findings-summary" role="status" aria-live="polite">
+              {findingsCount} finding{findingsCount === 1 ? "" : "s"} — see the findings link above.
+            </p>
+          ) : (
+            // `getScan` hasn't resolved yet, or it failed -- absence is not the
+            // same claim as zero, so this never falls back to "No findings".
+            <p data-testid="findings-summary" role="status" aria-live="polite">
+              findings count unknown — see the findings link above to check.
+            </p>
+          )}
+        </TerminalFrame>
       )}
 
       {connectionError && (
@@ -260,5 +267,21 @@ export default function LiveScanPage({
 
       {hasPending && <Skeleton lines={4} />}
     </main>
+  );
+}
+
+/**
+ * Fades in whichever terminal element replaces the running progress
+ * announcer (spec §4.2). A wrapper `div`, not a `motion.p`, so the three
+ * terminal branches above keep their own role="status" elements untouched.
+ * Mounting this is the same render that unmounts `.bok-scan-progress`, so
+ * there is never a moment with two live regions.
+ */
+function TerminalFrame({ children }: { children: ReactNode }) {
+  const fade = useFadeIn();
+  return (
+    <motion.div {...fade} data-testid="terminal-frame">
+      {children}
+    </motion.div>
   );
 }

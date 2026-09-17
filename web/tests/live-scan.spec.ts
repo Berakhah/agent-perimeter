@@ -113,3 +113,23 @@ test("reduced motion renders check rows already entered", async ({ browser }) =>
   await expect(first).toBeVisible();
   expect(await first.getAttribute("data-entered")).toBe("true");
 });
+
+// Spec §4.2: the running→terminal swap cross-fades the incoming summary.
+// Both role="status" sources must never coexist (page.tsx header comment),
+// so only the incoming frame animates -- assert it reaches its end state
+// and that the progress announcer is gone by then.
+test("the terminal summary fades in and replaces the progress announcer", async ({ page }) => {
+  await page.goto("/scans/1?fixture=streaming");
+  const frame = page.getByTestId("terminal-frame");
+  await expect(frame).toHaveAttribute("data-entered", "true", { timeout: 10_000 });
+  await expect(page.locator(".bok-scan-progress")).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: /findings/ })).toHaveCount(1);
+});
+
+test("reduced motion renders the terminal summary already entered", async ({ browser }) => {
+  const page = await (await browser.newContext({ reducedMotion: "reduce" })).newPage();
+  await page.goto("/scans/1?fixture=streaming");
+  const frame = page.getByTestId("terminal-frame");
+  await expect(frame).toBeVisible({ timeout: 10_000 });
+  expect(await frame.getAttribute("data-entered")).toBe("true");
+});
