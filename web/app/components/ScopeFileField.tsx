@@ -32,6 +32,7 @@ function isBlank(value: unknown): boolean {
 
 export function ScopeFileField({ onScopeFile, onError }: ScopeFileFieldProps) {
   const [fileName, setFileName] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   async function processFile(file: File) {
     setFileName(file.name);
@@ -74,7 +75,24 @@ export function ScopeFileField({ onScopeFile, onError }: ScopeFileFieldProps) {
   }
 
   return (
-    <div className="bok-scope-file-field" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
+    <div
+      className="bok-scope-file-field"
+      data-dragging={dragging}
+      onDragEnter={() => setDragging(true)}
+      onDragOver={(e) => {
+        e.preventDefault();
+        if (!dragging) setDragging(true);
+      }}
+      onDragLeave={(e) => {
+        // Leaving a child still fires dragleave on the parent; only clear
+        // when the pointer has actually left this element.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+      }}
+      onDrop={(e) => {
+        setDragging(false);
+        handleDrop(e);
+      }}
+    >
       <label htmlFor="scope-file">Scope file</label>
       <input
         id="scope-file"

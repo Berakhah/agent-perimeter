@@ -91,8 +91,13 @@ export default function Home() {
           />
         )}
 
-        <button type="submit" disabled={submitting || target.trim() === ""}>
-          {submitting ? "Starting scan…" : "Start scan"}
+        <button
+          type="submit"
+          className="bok-submit"
+          data-submitting={submitting}
+          disabled={submitting || target.trim() === ""}
+        >
+          <span className="bok-submit-label">{submitting ? "Starting scan…" : "Start scan"}</span>
         </button>
       </form>
     </main>

@@ -41,3 +41,60 @@ test("the whole form is operable from the keyboard", async ({ page }) => {
   await page.keyboard.press("Tab");
   await expect(page.getByLabel(/target/i)).toBeFocused();
 });
+
+// Web UI redesign (spec §4.1). Each test asserts an end state -- an
+// attribute or a computed style -- not a transition's intermediate frames.
+test("the dropzone marks itself while a file is dragged over it", async ({ page }) => {
+  await page.goto("/");
+  const zone = page.locator(".bok-scope-file-field");
+  await expect(zone).toHaveAttribute("data-dragging", "false");
+  await zone.dispatchEvent("dragenter");
+  await expect(zone).toHaveAttribute("data-dragging", "true");
+  await zone.dispatchEvent("dragleave");
+  await expect(zone).toHaveAttribute("data-dragging", "false");
+});
+
+test("the mode selector records the lock state for its transition", async ({ page }) => {
+  await page.goto("/");
+  const selector = page.locator(".bok-mode-selector");
+  await expect(selector).toHaveAttribute("data-unlocked", "false");
+  await page.getByTestId("scope-file").setInputFiles("tests/fixtures/scope-valid.json");
+  await expect(selector).toHaveAttribute("data-unlocked", "true");
+});
+
+test("the submit button reads disabled until a target is typed", async ({ page }) => {
+  await page.goto("/");
+  const submit = page.getByRole("button", { name: /start scan/i });
+  await expect(submit).toBeDisabled();
+  await expect(submit).toHaveCSS("cursor", "not-allowed");
+  await page.getByLabel(/target/i).fill("https://example.test/mcp");
+  await expect(submit).toBeEnabled();
+  await expect(submit).toHaveCSS("cursor", "pointer");
+});
+
+test("the submit button shows its submitting state while the request is in flight", async ({ page }) => {
+  // Hold the API response open so the in-flight state is observable.
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/scans", async (route) => {
+    await held;
+    await route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({ id: "9" }) });
+  });
+  await page.goto("/");
+  await page.getByLabel(/target/i).fill("https://example.test/mcp");
+  const submit = page.getByRole("button", { name: /start/i });
+  await submit.click();
+  await expect(submit).toHaveAttribute("data-submitting", "true");
+  release();
+  await page.waitForURL(/\/scans\/9/);
+});
+
+test("reduced motion leaves every scan-setup end state intact", async ({ browser }) => {
+  const page = await (await browser.newContext({ reducedMotion: "reduce" })).newPage();
+  await page.goto("/");
+  await page.getByTestId("scope-file").setInputFiles("tests/fixtures/scope-valid.json");
+  expect(await page.locator(".bok-mode-selector").getAttribute("data-unlocked")).toBe("true");
+  await expect(page.getByRole("radio", { name: /active/i })).toBeEnabled();
+  await page.getByLabel(/target/i).fill("x");
+  await expect(page.getByRole("button", { name: /start scan/i })).toHaveCSS("cursor", "pointer");
+});

@@ -26,7 +26,7 @@ const LOCK_REASON =
 
 export function ModeSelector({ mode, onChange, activeUnlocked }: ModeSelectorProps) {
   return (
-    <fieldset className="bok-mode-selector">
+    <fieldset className="bok-mode-selector" data-unlocked={activeUnlocked}>
       <legend>Scan mode</legend>
       <label className="bok-mode-option">
         <input
