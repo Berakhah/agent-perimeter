@@ -26,3 +26,11 @@ test("no external host is contacted", async ({ page }) => {
   await page.goto("/");
   expect(external).toEqual([]);
 });
+
+test("headings use the display typeface and scale", async ({ page }) => {
+  await page.goto("/scans/1/findings?fixture=mixed");
+  const h1 = page.getByRole("heading", { level: 1 });
+  await expect(h1).toHaveCSS("font-family", /Newsreader/);
+  const fontSize = await h1.evaluate((el) => getComputedStyle(el).fontSize);
+  expect(fontSize).toBe("22px");
+});
