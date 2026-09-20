@@ -1033,3 +1033,46 @@ body {
   gap: calc(var(--density-gap) * 2);
   max-width: 48rem;
 }
+
+/* StatTileGrid -- decorative severity/coverage summary (spec §5.1). */
+.bok-stat-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--density-gap);
+  margin-bottom: calc(var(--density-gap) * 2);
+}
+@media (max-width: 480px) {
+  .bok-stat-tile-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+.bok-stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--density-cell-y) var(--density-cell-x);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+.bok-stat-tile-value {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+}
+.bok-stat-tile-label {
+  font-size: var(--text-sm);
+  color: var(--neutral-600);
+}
+.bok-stat-tile-critical .bok-stat-tile-value {
+  color: var(--severity-critical);
+}
+.bok-stat-tile-high .bok-stat-tile-value {
+  color: var(--severity-high);
+}
+.bok-stat-tile-medium .bok-stat-tile-value {
+  color: var(--severity-medium);
+}
+.bok-stat-tile-low .bok-stat-tile-value {
+  color: var(--severity-low);
+}
