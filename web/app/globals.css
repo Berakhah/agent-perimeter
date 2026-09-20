@@ -72,6 +72,20 @@
   --text-xl: 1.125rem;
   --text-2xl: 1.375rem;
   --text-3xl: 1.75rem;
+
+  /* Elevation surfaces (spec §4) -- lightness steps, not shadows (shadows
+     read poorly on the dark theme's near-black background).
+     --surface-1 maps to --neutral-100, not --neutral-50 as first drafted:
+     --neutral-50 is defined identically to --paper in this (light) block
+     (both oklch(0.985 0.004 85), line 14 vs 18), so a panel using
+     --neutral-50 would be visually indistinguishable from the page
+     background -- the elevation this token exists to produce would be a
+     no-op in light mode. --neutral-100 is the first step that is actually
+     distinct from --paper in every theme block. */
+  --surface-0: var(--paper);
+  --surface-1: var(--neutral-100);
+  --surface-2: var(--neutral-150);
+  --border-subtle: var(--neutral-150);
 }
 
 @theme inline {
@@ -145,6 +159,13 @@ h2 {
     --neutral-800: oklch(0.9 0.006 85);
     --neutral-900: oklch(0.95 0.005 85);
     --neutral-950: oklch(0.985 0.004 85);
+
+    /* Surface mapping matches the light :root block above (see its comment)
+       for a consistent elevation step across themes. */
+    --surface-0: var(--paper);
+    --surface-1: var(--neutral-100);
+    --surface-2: var(--neutral-150);
+    --border-subtle: var(--neutral-150);
   }
 }
 
@@ -164,6 +185,13 @@ h2 {
   --neutral-800: oklch(0.9 0.006 85);
   --neutral-900: oklch(0.95 0.005 85);
   --neutral-950: oklch(0.985 0.004 85);
+
+  /* Surface mapping matches the light :root block above (see its comment)
+     for a consistent elevation step across themes. */
+  --surface-0: var(--paper);
+  --surface-1: var(--neutral-100);
+  --surface-2: var(--neutral-150);
+  --border-subtle: var(--neutral-150);
 }
 
 /* Density modes -- 00 §5.2: comfortable/compact/dense, default compact. */
@@ -270,6 +298,8 @@ body {
   background: var(--paper);
   color: var(--ink);
   border-left: 1px solid var(--neutral-200);
+  background: var(--surface-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   transform: translateX(100%);
   transition: transform 180ms ease;
   overflow-y: auto;
@@ -348,18 +378,23 @@ body {
 }
 .bok-severity-critical {
   color: var(--severity-critical);
+  background: color-mix(in oklch, var(--severity-critical) 12%, transparent);
 }
 .bok-severity-high {
   color: var(--severity-high);
+  background: color-mix(in oklch, var(--severity-high) 12%, transparent);
 }
 .bok-severity-medium {
   color: var(--severity-medium);
+  background: color-mix(in oklch, var(--severity-medium) 12%, transparent);
 }
 .bok-severity-low {
   color: var(--severity-low);
+  background: color-mix(in oklch, var(--severity-low) 12%, transparent);
 }
 .bok-severity-info {
   color: var(--severity-info);
+  background: color-mix(in oklch, var(--severity-info) 12%, transparent);
 }
 
 /* FindingsTable. */
@@ -420,6 +455,8 @@ body {
   padding: var(--density-cell-y) var(--density-cell-x);
   overflow-x: auto;
   font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+  background: var(--surface-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 .bok-evidence mark {
   background: color-mix(in oklch, var(--accent) 35%, transparent);
@@ -466,6 +503,8 @@ body {
   border: 1px solid var(--neutral-150);
   border-radius: var(--radius-control);
   padding: var(--density-cell-y) var(--density-cell-x);
+  background: var(--surface-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 .bok-quota-ok {
   color: var(--provenance-verified);
@@ -729,6 +768,8 @@ body {
   border: 1px solid var(--neutral-200);
   border-radius: var(--radius-control);
   padding: var(--density-gap);
+  background: var(--surface-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 .bok-phase-group-heading {
   text-transform: capitalize;
@@ -817,6 +858,8 @@ body {
   flex-direction: column;
   gap: calc(var(--density-gap) * 2);
   max-width: 640px;
+  background: var(--surface-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 .bok-graph-canvas {
   width: 100%;
