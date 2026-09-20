@@ -84,11 +84,21 @@ Added to `:root` in `globals.css`, alongside the existing `--neutral-*` ramp
 pattern the file already follows for `--paper`/`--ink`/`--neutral-*`):
 
 ```
---surface-0: var(--paper);        /* page background, unchanged */
---surface-1: var(--neutral-50);   /* panel/card background */
---surface-2: var(--neutral-100);  /* nested/hover state */
+--surface-0: var(--paper);         /* page background, unchanged */
+--surface-1: var(--neutral-100);   /* panel/card background */
+--surface-2: var(--neutral-150);   /* nested/hover state */
 --border-subtle: var(--neutral-150);
 ```
+
+**Corrected during implementation (Task 2, 2026-09-20):** the values above
+were originally specified as `--neutral-50`/`--neutral-100`. In the light
+theme, `--neutral-50` is byte-identical to `--paper`
+(`oklch(0.985 0.004 85)`, `globals.css`'s existing token block) — using it
+for `--surface-1` would have made panels indistinguishable from the page
+background, a no-op for the entire elevation feature this section
+describes. The ramp was shifted up one step (`--neutral-100`/`--neutral-150`)
+and verified to produce a correctly-ordered, visible lightness step in all
+three theme blocks (light `:root`, dark `@media`, `:root[data-theme="dark"]`).
 
 Panel treatment (applied to `.bok-phase-group`, `.bok-graph`, `.bok-evidence`,
 `.bok-rail`, `.bok-quota-item`, and the new `StatTileGrid` wrapper):
