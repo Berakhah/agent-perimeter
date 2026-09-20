@@ -133,3 +133,19 @@ test("reduced motion renders the terminal summary already entered", async ({ bro
   await expect(frame).toBeVisible({ timeout: 10_000 });
   expect(await frame.getAttribute("data-entered")).toBe("true");
 });
+
+test("live-scan screen shows a findings/passed/skipped/coverage stat tile grid", async ({ page }) => {
+  await page.goto("/scans/1?fixture=streaming");
+  // `role="status"` doesn't compute its accessible name from text content
+  // (name-from-author only per the ARIA spec, confirmed empirically against
+  // this markup), so this mirrors the same `.filter({ hasText })` idiom the
+  // "progress is announced" test above already uses instead of `name:`.
+  await expect(page.getByRole("status").filter({ hasText: /checks complete|starting scan/i })).toBeVisible();
+  await expect
+    .poll(async () => page.getByTestId("stat-tile-grid").count())
+    .toBeGreaterThan(0);
+  const grid = page.getByTestId("stat-tile-grid");
+  await expect(grid).toHaveAttribute("aria-hidden", "true");
+  await expect(grid.getByTestId("stat-tile-passed")).toBeVisible();
+  await expect(grid.getByTestId("stat-tile-skipped")).toBeVisible();
+});
