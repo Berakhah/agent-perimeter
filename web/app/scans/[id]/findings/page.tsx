@@ -28,6 +28,7 @@ import {
   type ProvenanceChainEntry,
 } from "@/src/lib/_bok-ui";
 import { getFindings, getScan, type Finding } from "@/src/lib/api";
+import { StatTileGrid } from "@/src/lib/_bok-viz";
 import { FIXTURES, type FindingsFixture } from "./fixtures";
 
 // EvidencePane's kind vocabulary (code/dom/document) predates the backend's
@@ -183,6 +184,14 @@ export default function FindingsPage({
     [findings],
   );
 
+  const severityCounts = useMemo(() => {
+    const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const f of findings) {
+      if (f.severity in counts) counts[f.severity as keyof typeof counts] += 1;
+    }
+    return counts;
+  }, [findings]);
+
   function handleClaimActivate(row: FindingsTableRow) {
     const finding = findingById.get(row.id);
     if (!finding) return;
@@ -203,6 +212,14 @@ export default function FindingsPage({
   return (
     <main className="bok-findings">
       <h1>Findings</h1>
+      <StatTileGrid
+        tiles={[
+          { label: "Critical", value: severityCounts.critical, tone: "critical" },
+          { label: "High", value: severityCounts.high, tone: "high" },
+          { label: "Medium", value: severityCounts.medium, tone: "medium" },
+          { label: "Low", value: severityCounts.low, tone: "low" },
+        ]}
+      />
       <ConformanceStrip
         revisionClaimed={scan?.revisionClaimed}
         featuresObserved={scan?.featuresObserved}
