@@ -60,6 +60,18 @@
   --density-cell-y: 6px;
   --density-cell-x: 10px;
   --density-gap: 8px;
+
+  /* Type scale (spec 2026-09-20-ops-console-design.md §3) -- headings and
+     the new StatTileGrid/Sparkline components step through this; existing
+     hardcoded em/rem sizes elsewhere are unchanged (not a full audit). */
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-base: 0.8125rem;
+  --text-md: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.125rem;
+  --text-2xl: 1.375rem;
+  --text-3xl: 1.75rem;
 }
 
 @theme inline {
@@ -97,6 +109,23 @@
   --font-display: var(--font-newsreader);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-ibm-plex-mono);
+}
+
+/* Two-voice typography (spec §3): Newsreader for titles/section heads,
+   IBM Plex Mono for data (unchanged, .bok-numeric), Geist Sans for body
+   (unchanged, `body` rule below). More specific existing rules --
+   .bok-phase-group-heading, .bok-rail-header, .bok-graph-table caption --
+   already set this family; this is the new default for every other h1/h2. */
+h1,
+h2 {
+  font-family: var(--font-newsreader), serif;
+  font-weight: 600;
+}
+h1 {
+  font-size: var(--text-2xl);
+}
+h2 {
+  font-size: var(--text-lg);
 }
 
 @media (prefers-color-scheme: dark) {
