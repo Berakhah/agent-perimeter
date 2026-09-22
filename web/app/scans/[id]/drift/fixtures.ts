@@ -23,6 +23,8 @@ export interface DriftScan {
   id: string;
   /** ISO 8601 timestamp -- absolute dates only, this is an audit artifact. */
   startedAt: string;
+  /** Total findings from this scan -- drives the Sparkline (spec §5.2). */
+  findingsCount: number;
 }
 
 export interface DriftedTool {
@@ -55,14 +57,14 @@ const READ_TOOL_ID = "b3e6c1e2-6f2a-4b7e-8b8a-2f6c1a9d4e10";
 export const FIXTURES: Record<string, DriftFixture> = {
   "single-scan": {
     target: "demo-mcp-server",
-    scans: [{ id: "scan-1", startedAt: "2026-08-20T09:00:00Z" }],
+    scans: [{ id: "scan-1", startedAt: "2026-08-20T09:00:00Z", findingsCount: 3 }],
     driftedTools: [],
   },
   "changed-description": {
     target: "demo-mcp-server",
     scans: [
-      { id: "scan-1", startedAt: "2026-08-20T09:00:00Z" },
-      { id: "scan-2", startedAt: "2026-09-03T14:30:00Z" },
+      { id: "scan-1", startedAt: "2026-08-20T09:00:00Z", findingsCount: 3 },
+      { id: "scan-2", startedAt: "2026-09-03T14:30:00Z", findingsCount: 5 },
     ],
     driftedTools: [
       {
