@@ -1076,3 +1076,10 @@ body {
 .bok-stat-tile-low .bok-stat-tile-value {
   color: var(--severity-low);
 }
+
+/* Sparkline -- decorative findings-over-time trend (spec §5.2). */
+.bok-sparkline {
+  width: 120px;
+  height: 28px;
+  overflow: visible;
+}
