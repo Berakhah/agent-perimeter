@@ -98,6 +98,19 @@ test("a severity badge lifts on hover, keeping glyph and label", async ({ page }
   await expect(badge).not.toHaveText("");
 });
 
+test("findings screen shows a severity stat tile grid backed by accessible counts", async ({ page }) => {
+  await page.goto("/scans/1/findings?fixture=mixed");
+  const grid = page.getByTestId("stat-tile-grid");
+  await expect(grid).toBeVisible();
+  await expect(grid).toHaveAttribute("aria-hidden", "true");
+  const criticalTile = grid.getByTestId("stat-tile-critical");
+  const criticalCount = await criticalTile.getByTestId("stat-tile-value").innerText();
+  // The tile is decorative -- the same count must exist as accessible text
+  // via the real severity badges already rendered in the table.
+  const badgeCount = await page.getByTestId("severity-badge").filter({ hasText: "Critical" }).count();
+  expect(Number(criticalCount)).toBe(badgeCount);
+});
+
 test("reduced motion renders rows and expansions already entered", async ({ browser }) => {
   const page = await (await browser.newContext({ reducedMotion: "reduce" })).newPage();
   await page.goto("/scans/1/findings?fixture=mixed");

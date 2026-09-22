@@ -131,6 +131,19 @@ test("a timeline item responds to hover", async ({ page }) => {
   await expect.poll(async () => item.evaluate((el) => getComputedStyle(el).borderLeftColor)).not.toBe(before);
 });
 
+test("drift screen shows a findings-over-time sparkline when scan history exists", async ({ page }) => {
+  await page.goto("/scans/2/drift?fixture=changed-description");
+  await expect(page.getByTestId("findings-sparkline")).toBeVisible();
+  await expect(page.getByTestId("findings-sparkline")).toHaveAttribute("aria-hidden", "true");
+});
+
+test("drift screen shows no sparkline for a single scan (no fabricated flat line)", async ({ page }) => {
+  await page.goto("/scans/1/drift?fixture=single-scan");
+  // single-scan already renders the "not enough scan history" EmptyState,
+  // before any sparkline call site is reached.
+  await expect(page.getByTestId("findings-sparkline")).toHaveCount(0);
+});
+
 test("reduced motion renders the diff highlight immediately", async ({ browser }) => {
   const page = await (await browser.newContext({ reducedMotion: "reduce" })).newPage();
   await page.goto("/scans/2/drift?fixture=changed-description");

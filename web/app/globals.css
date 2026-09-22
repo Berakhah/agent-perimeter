@@ -60,6 +60,32 @@
   --density-cell-y: 6px;
   --density-cell-x: 10px;
   --density-gap: 8px;
+
+  /* Type scale (spec 2026-09-20-ops-console-design.md §3) -- headings and
+     the new StatTileGrid/Sparkline components step through this; existing
+     hardcoded em/rem sizes elsewhere are unchanged (not a full audit). */
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-base: 0.8125rem;
+  --text-md: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.125rem;
+  --text-2xl: 1.375rem;
+  --text-3xl: 1.75rem;
+
+  /* Elevation surfaces (spec §4) -- lightness steps, not shadows (shadows
+     read poorly on the dark theme's near-black background).
+     --surface-1 maps to --neutral-100, not --neutral-50 as first drafted:
+     --neutral-50 is defined identically to --paper in this (light) block
+     (both oklch(0.985 0.004 85), line 14 vs 18), so a panel using
+     --neutral-50 would be visually indistinguishable from the page
+     background -- the elevation this token exists to produce would be a
+     no-op in light mode. --neutral-100 is the first step that is actually
+     distinct from --paper in every theme block. */
+  --surface-0: var(--paper);
+  --surface-1: var(--neutral-100);
+  --surface-2: var(--neutral-150);
+  --border-subtle: var(--neutral-150);
 }
 
 @theme inline {
@@ -99,6 +125,23 @@
   --font-mono: var(--font-ibm-plex-mono);
 }
 
+/* Two-voice typography (spec §3): Newsreader for titles/section heads,
+   IBM Plex Mono for data (unchanged, .bok-numeric), Geist Sans for body
+   (unchanged, `body` rule below). More specific existing rules --
+   .bok-phase-group-heading, .bok-rail-header, .bok-graph-table caption --
+   already set this family; this is the new default for every other h1/h2. */
+h1,
+h2 {
+  font-family: var(--font-newsreader), serif;
+  font-weight: 600;
+}
+h1 {
+  font-size: var(--text-2xl);
+}
+h2 {
+  font-size: var(--text-lg);
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --paper: oklch(0.22 0.012 85);
@@ -116,6 +159,13 @@
     --neutral-800: oklch(0.9 0.006 85);
     --neutral-900: oklch(0.95 0.005 85);
     --neutral-950: oklch(0.985 0.004 85);
+
+    /* Surface mapping matches the light :root block above (see its comment)
+       for a consistent elevation step across themes. */
+    --surface-0: var(--paper);
+    --surface-1: var(--neutral-100);
+    --surface-2: var(--neutral-150);
+    --border-subtle: var(--neutral-150);
   }
 }
 
@@ -135,6 +185,13 @@
   --neutral-800: oklch(0.9 0.006 85);
   --neutral-900: oklch(0.95 0.005 85);
   --neutral-950: oklch(0.985 0.004 85);
+
+  /* Surface mapping matches the light :root block above (see its comment)
+     for a consistent elevation step across themes. */
+  --surface-0: var(--paper);
+  --surface-1: var(--neutral-100);
+  --surface-2: var(--neutral-150);
+  --border-subtle: var(--neutral-150);
 }
 
 /* Density modes -- 00 §5.2: comfortable/compact/dense, default compact. */
@@ -241,6 +298,8 @@ body {
   background: var(--paper);
   color: var(--ink);
   border-left: 1px solid var(--neutral-200);
+  background: var(--surface-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   transform: translateX(100%);
   transition: transform 180ms ease;
   overflow-y: auto;
@@ -319,18 +378,23 @@ body {
 }
 .bok-severity-critical {
   color: var(--severity-critical);
+  background: color-mix(in oklch, var(--severity-critical) 12%, transparent);
 }
 .bok-severity-high {
   color: var(--severity-high);
+  background: color-mix(in oklch, var(--severity-high) 12%, transparent);
 }
 .bok-severity-medium {
   color: var(--severity-medium);
+  background: color-mix(in oklch, var(--severity-medium) 12%, transparent);
 }
 .bok-severity-low {
   color: var(--severity-low);
+  background: color-mix(in oklch, var(--severity-low) 12%, transparent);
 }
 .bok-severity-info {
   color: var(--severity-info);
+  background: color-mix(in oklch, var(--severity-info) 12%, transparent);
 }
 
 /* FindingsTable. */
@@ -391,6 +455,8 @@ body {
   padding: var(--density-cell-y) var(--density-cell-x);
   overflow-x: auto;
   font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
+  background: var(--surface-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 .bok-evidence mark {
   background: color-mix(in oklch, var(--accent) 35%, transparent);
@@ -437,6 +503,8 @@ body {
   border: 1px solid var(--neutral-150);
   border-radius: var(--radius-control);
   padding: var(--density-cell-y) var(--density-cell-x);
+  background: var(--surface-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 .bok-quota-ok {
   color: var(--provenance-verified);
@@ -700,6 +768,8 @@ body {
   border: 1px solid var(--neutral-200);
   border-radius: var(--radius-control);
   padding: var(--density-gap);
+  background: var(--surface-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 .bok-phase-group-heading {
   text-transform: capitalize;
@@ -788,6 +858,8 @@ body {
   flex-direction: column;
   gap: calc(var(--density-gap) * 2);
   max-width: 640px;
+  background: var(--surface-1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 .bok-graph-canvas {
   width: 100%;
@@ -960,4 +1032,54 @@ body {
   flex-direction: column;
   gap: calc(var(--density-gap) * 2);
   max-width: 48rem;
+}
+
+/* StatTileGrid -- decorative severity/coverage summary (spec §5.1). */
+.bok-stat-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--density-gap);
+  margin-bottom: calc(var(--density-gap) * 2);
+}
+@media (max-width: 480px) {
+  .bok-stat-tile-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+.bok-stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--density-cell-y) var(--density-cell-x);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-control);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+.bok-stat-tile-value {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+}
+.bok-stat-tile-label {
+  font-size: var(--text-sm);
+  color: var(--neutral-600);
+}
+.bok-stat-tile-critical .bok-stat-tile-value {
+  color: var(--severity-critical);
+}
+.bok-stat-tile-high .bok-stat-tile-value {
+  color: var(--severity-high);
+}
+.bok-stat-tile-medium .bok-stat-tile-value {
+  color: var(--severity-medium);
+}
+.bok-stat-tile-low .bok-stat-tile-value {
+  color: var(--severity-low);
+}
+
+/* Sparkline -- decorative findings-over-time trend (spec §5.2). */
+.bok-sparkline {
+  width: 120px;
+  height: 28px;
+  overflow: visible;
 }

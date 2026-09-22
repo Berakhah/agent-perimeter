@@ -20,6 +20,7 @@
 import { use, useEffect, useState } from "react";
 
 import { DiffView, EmptyState, RunTimeline, type RunTimelineEvent } from "@/src/lib/_bok-ui";
+import { Sparkline } from "@/src/lib/_bok-viz";
 import { getDrift, type DriftResponse } from "@/src/lib/api";
 import { FIXTURES } from "./fixtures";
 
@@ -57,7 +58,16 @@ export default function DriftPage({
 
   const data = fixture ? FIXTURES[fixture] : undefined;
   const target = data?.target ?? live?.target_ref ?? "";
-  const scans = data?.scans ?? (live?.scans ?? []).map((s) => ({ id: s.id, startedAt: s.started_at }));
+  // The live (non-fixture) API response carries no findings-count field
+  // (`DriftResponse`/`DriftScanSummary`, src/lib/api.ts) -- `findingsCount`
+  // is only ever real for fixture data. Defaulting the live path to 0 would
+  // make the Sparkline draw a fabricated flat zero line for any real target
+  // with two or more scans, which is exactly what its own contract forbids
+  // (spec D6, "never a fabricated flat line"). `hasFindingsHistory` below
+  // gates the Sparkline on this distinction.
+  const hasFindingsHistory = Boolean(data);
+  const scans =
+    data?.scans ?? (live?.scans ?? []).map((s) => ({ id: s.id, startedAt: s.started_at, findingsCount: 0 }));
   const driftedTools =
     data?.driftedTools ??
     (live?.drifted_tools ?? []).map((t) => ({
@@ -111,6 +121,15 @@ export default function DriftPage({
     <main className="bok-drift">
       <h1>Description drift — scan {id}</h1>
       <RunTimeline events={timelineEvents} />
+      {hasFindingsHistory && (
+        <Sparkline
+          points={scans
+            .slice()
+            .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+            .map((s) => s.findingsCount)}
+          label={`Findings per scan, ${target}`}
+        />
+      )}
 
       {driftedTools.length === 0 ? (
         <EmptyState
