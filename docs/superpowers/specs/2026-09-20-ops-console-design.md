@@ -1,7 +1,7 @@
 # Agent Perimeter — Data-Dense Ops Console (Serif Accent)
 
 **Date:** 20 September 2026
-**Status:** brainstormed, plan pending execution
+**Status:** implemented 2026-09-22 (plan `docs/superpowers/plans/2026-09-20-ops-console-redesign.md`)
 **Scope:** typography scale, elevation/surface tokens, and three new
 decorative data-visualization components in the five Next.js screens under
 `web/app/**` and the shared component library (`web/src/lib/_bok-ui.tsx` and
