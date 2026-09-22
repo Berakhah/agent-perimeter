@@ -55,6 +55,7 @@ import { motion } from "motion/react";
 
 import { PhaseGroup, type PhaseGroupCheck } from "@/app/components/PhaseGroup";
 import { EmptyState, ErrorState, QuotaStrip, Skeleton, type ProviderQuota } from "@/src/lib/_bok-ui";
+import { StatTileGrid } from "@/src/lib/_bok-viz";
 import { getScan, isTerminalEvent, subscribeToScanEvents, type ScanEvent, type ScanTerminalEvent } from "@/src/lib/api";
 import { useFadeIn } from "@/src/lib/motion";
 import { FIXTURES } from "./fixtures";
@@ -200,6 +201,9 @@ export default function LiveScanPage({
   // and the terminal frame is the actual "nothing more is coming" signal.
   const hasPending = terminalEvent === null && (progress === null || progress.completed < progress.total);
   const skippedCount = terminalEvent?.skipped.length ?? 0;
+  const passedCount = rows.filter((r) => r.status === "passed").length;
+  const coverage =
+    progress && progress.total > 0 ? `${Math.round((passedCount / progress.total) * 100)}%` : "—";
 
   return (
     <main className="bok-live-scan">
@@ -248,6 +252,15 @@ export default function LiveScanPage({
           )}
         </TerminalFrame>
       )}
+
+      <StatTileGrid
+        tiles={[
+          { label: "Findings", value: typeof findingsCount === "number" ? findingsCount : "—" },
+          { label: "Passed", value: passedCount },
+          { label: "Skipped", value: skippedCount, tone: skippedCount > 0 ? "medium" : "neutral" },
+          { label: "Coverage", value: coverage },
+        ]}
+      />
 
       {connectionError && (
         <ErrorState

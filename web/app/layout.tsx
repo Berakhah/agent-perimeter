@@ -9,7 +9,7 @@ import { MotionProvider } from "./components/MotionProvider";
 // src/fonts/ (see web/README.md-equivalent note in the task-10 report) --
 // those packages are not runtime dependencies, only a source of .woff2 files.
 
-const displayFont = localFont({
+const displayNewsreaderFont = localFont({
   src: [
     { path: "../src/fonts/newsreader/newsreader-latin-400-normal.woff2", weight: "400", style: "normal" },
     { path: "../src/fonts/newsreader/newsreader-latin-400-italic.woff2", weight: "400", style: "italic" },
@@ -49,7 +49,7 @@ export default function RootLayout({
   return (
     <html lang="en" data-density="compact">
       <body
-        className={`${displayFont.variable} ${uiFont.variable} ${monoFont.variable} antialiased`}
+        className={`${displayNewsreaderFont.variable} ${uiFont.variable} ${monoFont.variable} antialiased`}
       >
         <MotionProvider>{children}</MotionProvider>
       </body>
