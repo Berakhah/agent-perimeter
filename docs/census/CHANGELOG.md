@@ -7,14 +7,37 @@ a new dated entry, never an edit to an old one.
 
 ## Unreleased
 
-Nothing pending. The first published run is the dated entry below
-(`## 2026-09-14`). Tier 3 (the live-discover stratum,
-`agent_perimeter/census/tier3.py`) remains deliberately unwired — a
-human-partner decision (2026-09-09, ratified in `docs/open-decisions.md`
-decision 5): it makes real contact with third-party servers and has not been
-through code review. It remains a self-contained, tested module with no
-integration into `run_census`. Every published report's live-discover section
-reads "not yet run", per the report's own empty-state copy.
+**2026-09-23 — Tier 3 (live-discover stratum) dropped permanently,
+human-partner ruling, superseding the 2026-09-09 "pending code review"
+gate.** Code review of `agent_perimeter/census/tier3.py` found
+`probe_host()`/`run_tier3()` sent a live, unauthenticated `server/discover`
+JSON-RPC probe to each sampled host with no `ScopeFile` gate — every other
+active-probe path in the codebase (`checks/registry.py`, `scan_runner.py`,
+`checks/active/base.py`) calls `require_scope(scope, target=...)` first;
+tier3.py did not. That is a direct conflict with CLAUDE.md Never-rule 1
+("No active probe without a scope file... Fails closed"), and not a
+one-line fix: `ScopeFile`/`require_scope` model one authorising party
+consenting to one named `target`, and Tier 3's whole design was a seeded
+random sample of ~100 *unowned, unrelated* third-party servers drawn from
+the public registry — there is no single party who could sign a scope file
+covering an arbitrary sample of servers the project has no relationship
+with. Redesigning around this would mean abandoning either random sampling
+(defeating the population-representativeness claim) or per-target consent
+(defeating the rule); Never-rule 1 is written unconditionally, with no
+stated carve-out mechanism, and Tier 3 was already the one deliberate
+tension against Never-rule 2 (passive-only) before this review even
+started. Ruling: dropped, not redesigned. `agent_perimeter/census/tier3.py`
+and `tests/census/test_tier3.py` are deleted; the report's live-discover
+section is generic infrastructure that stays (in case a future,
+differently-authorised design ever populates it) but its empty-state copy
+now says "not run" rather than "not yet run" — this stratum is not merely
+unwired, it has no implementation and no path to one that clears Never-rule
+1 in its current form. See `docs/open-decisions.md` decision 5 for the
+cross-reference.
+
+Nothing else pending. The first published run is the dated entry below
+(`## 2026-09-14`), Tier 1 + Tier 2 only — unaffected by the above, since
+Tier 3 was never wired into `run_census` or any published report.
 
 Historical note: `agent_perimeter.census.detect.SDK_FLOOR` was marked
 placeholder/unverified until **2026-09-09**, when it was verified against the

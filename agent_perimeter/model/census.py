@@ -21,11 +21,17 @@ class FetchStatus(StrEnum):
     PARSE_ERROR = "parse_error"
     UNSUPPORTED_COORDS = "unsupported_coords"
     TOO_LARGE = "too_large"
-    # A tier-3 server/discover probe got no usable answer - network failure, a
+    # A live-discover probe got no usable answer - network failure, a
     # non-200 status, an unparseable body, or a JSON-RPC response with no
-    # `result` (including a well-formed JSON-RPC error). Tier 3 does not try
-    # to distinguish those causes: every one of them means the host is never
-    # drawn into a future sample again (agent_perimeter.census.tier3).
+    # `result` (including a well-formed JSON-RPC error), all folded into one
+    # value rather than distinguished further. No code path in this project
+    # currently produces this status: the one live-discover stratum that did
+    # (agent_perimeter.census.tier3) was removed after code review found it
+    # sent unauthorised active probes to third-party servers, conflicting
+    # with CLAUDE.md Never-rule 1 - see docs/census/CHANGELOG.md and
+    # docs/open-decisions.md decision 5. Kept for the report's generic
+    # artifact/probe two-stratum rendering path (report/census_report.py),
+    # exercised by synthetic records in tests/report/factories.py.
     UNREACHABLE = "unreachable"
 
     @property

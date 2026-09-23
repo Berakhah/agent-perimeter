@@ -6,10 +6,16 @@ percentage:
 - **Artifact stratum** - npm/PyPI packages downloaded and feature-detected
   from source (`census/detect.detect_features`, `Derivation.ARTIFACT`).
   `CensusRecord.feature_set_json["derivation"] == "artifact"`.
-- **Live-discover stratum** - a random sample of remote-only servers that
-  each answered (or didn't) one live `server/discover` call
-  (`census/tier3.py`, `Derivation.PROBE`).
-  `CensusRecord.feature_set_json["derivation"] == "probe"`.
+- **Live-discover stratum** (`Derivation.PROBE`,
+  `CensusRecord.feature_set_json["derivation"] == "probe"`) - a random
+  sample of remote-only servers, each answered (or not) by one live
+  `server/discover` call. No code currently populates this: the module that
+  would have (`census/tier3.py`) was removed after code review found it sent
+  unauthorised active probes to third-party servers with no `ScopeFile`
+  gate, conflicting with CLAUDE.md Never-rule 1 - see
+  `docs/census/CHANGELOG.md` and `docs/open-decisions.md` decision 5. The
+  rendering path below stays generic rather than hardcoded to "always
+  empty," in case a future, differently-authorised design ever populates it.
 
 A majority of registry entries (56% in the 2026-09-14 run) have no fetchable
 package at all (only a `remotes` URL - see docs/methodology.md), so the artifact stratum alone
@@ -158,11 +164,12 @@ def _classify(record: CensusRecord) -> tuple[str, str] | None:
         return (ARTIFACT_DERIVATION, "supports" if supports_feature else "does_not_support")
 
     if derivation == PROBE_DERIVATION:
-        # One server/discover request, no retry (census/tier3.py). A
-        # non-answer is indistinguishable from an explicit rejection by
-        # that module's own design (its requirement 3), so this stratum can
-        # confirm support but never its absence - does_not_support is
-        # structurally always 0 here, not a rounding artefact.
+        # One server/discover request, no retry - by the design of the
+        # module that would have produced these records (removed; see the
+        # module docstring above). A non-answer is indistinguishable from an
+        # explicit rejection, so this stratum can confirm support but never
+        # its absence - does_not_support is structurally always 0 here, not
+        # a rounding artefact.
         return (PROBE_DERIVATION, "supports" if supports_feature else "unknown")
 
     return None

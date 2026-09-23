@@ -165,21 +165,26 @@ def test_from_agent_perimeter_import_subpackage_is_caught_transitively(
     assert any("agent_perimeter.transport" in offence for offence in offences), offences
 
 
-TIER3 = Path("agent_perimeter/census/tier3.py")
-_METHOD_RE = re.compile(r"^[a-z]+/[a-zA-Z]+$")
+def test_every_census_module_talks_only_to_the_allowed_hosts() -> None:
+    """The whole census package is artifact-only: the host list is closed and literal.
 
+    `agent_perimeter/census/tier3.py` (a live-discover stratum sending one
+    unauthenticated `server/discover` request per sampled third-party host)
+    was removed after code review found it had no `ScopeFile` authorisation
+    gate, conflicting with CLAUDE.md Never-rule 1 ("No active probe without a
+    scope file... Fails closed") - see `docs/census/CHANGELOG.md` and
+    `docs/open-decisions.md` decision 5 for the full ruling. With it gone,
+    this scan needs no carve-out: no file under `agent_perimeter/census`
+    contacts any host outside the allowed set, no exceptions.
 
-def test_every_module_but_tier3_talks_only_to_the_allowed_hosts() -> None:
-    """Tiers 1-2 are artifact-only: the host list is closed and literal.
-
-    `github.com` is allowed alongside the three hosts tiers 1-2 actually send
-    requests to (tier-2 selection is a seeded draw and contacts nothing): it
-    never appears as a request target in this package, only as the contact
-    URL baked into every `USER_AGENT` constant (fetch.py, artifacts.py) per
-    the registry-collection convention of
-    identifying the tool with a contact URL. A regex over raw source can't
-    tell "host embedded in a header value" from "host requested," so it has
-    to be told this one is the former.
+    `github.com` is allowed alongside the three hosts census modules actually
+    send requests to (tier-2 selection is a seeded draw and contacts
+    nothing): it never appears as a request target in this package, only as
+    the contact URL baked into every `USER_AGENT` constant (fetch.py,
+    artifacts.py) per the registry-collection convention of identifying the
+    tool with a contact URL. A regex over raw source can't tell "host
+    embedded in a header value" from "host requested," so it has to be told
+    this one is the former.
     """
     allowed = {
         "registry.modelcontextprotocol.io",
@@ -188,30 +193,7 @@ def test_every_module_but_tier3_talks_only_to_the_allowed_hosts() -> None:
         "github.com",
     }
     src = "\n".join(
-        p.read_text(encoding="utf-8")
-        for p in Path("agent_perimeter/census").rglob("*.py")
-        if p != TIER3
+        p.read_text(encoding="utf-8") for p in Path("agent_perimeter/census").rglob("*.py")
     )
     hosts = set(re.findall(r"https://([a-z0-9.\-]+)/", src))
     assert hosts <= allowed, f"unexpected host in census: {hosts - allowed}"
-
-
-def test_tier3_sends_exactly_one_method_and_owns_no_host() -> None:
-    """Tier 3's targets come from the frame, so it is constrained by shape, not by host.
-
-    This is the guarantee that makes a live `server/discover` passive discovery
-    rather than an active probe. It must be impossible to widen by accident.
-    """
-    src = TIER3.read_text(encoding="utf-8")
-
-    methods = {
-        node.value
-        for node in ast.walk(ast.parse(src))
-        if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and _METHOD_RE.fullmatch(node.value)
-    }
-    assert methods == {"server/discover"}, f"tier3 may send only server/discover, found {methods}"
-
-    hosts = set(re.findall(r"https://([a-z0-9.\-]+)/", src))
-    assert hosts == set(), f"tier3 must take every target from the frame, found {hosts}"
