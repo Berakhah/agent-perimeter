@@ -1,7 +1,7 @@
 # Agent Perimeter — Description Drift Detection
 
 **Date:** 15 September 2026
-**Status:** design approved in brainstorming; awaiting implementation plan
+**Status:** implemented and shipped
 **Scope:** the v2 "drift" surface that Weeks 1–4 stubbed (brief §7 screen 5, §9 `drift_event`, §11 "continuous monitoring").
 **Supersedes:** the `web/app/scans/[id]/drift/page.tsx` ruling that "there is no live backend for this screen".
 
