@@ -27,9 +27,10 @@ means this figure does not describe either ecosystem: of {{ artifact_n_examined 
 {{ share_ci(artifact_agg) }}.</p>
 
 {% if probe_agg is none %}
-<p><strong>Live-discover stratum.</strong> Tier 3 remote-stratum sample: not yet run. This
-report does not estimate live, ecosystem-wide support from artifact evidence alone — when Tier
-3 runs, its result will appear here as its own, separately labelled figure.</p>
+<p><strong>Live-discover stratum.</strong> Not run. This project does not send unauthorised
+active probes to third-party servers it has no relationship with; the live-discover stratum
+this section could report requires exactly that, so no figure is stated here. This report does
+not estimate live, ecosystem-wide support from artifact evidence alone.</p>
 {% else %}
 <p><strong>Live-discover stratum.</strong> Of a random sample of {{ probe_n }} remote MCP
 servers, {{ probe_agg.supports }} answered a live discovery request in a way consistent with
@@ -158,8 +159,8 @@ statement about a published artifact, not about any deployment's observed behavi
 
 <h2>Live-discover stratum</h2>
 {% if probe_agg is none %}
-<p>Tier 3 remote-stratum sample: not yet run. No live-discover records exist in this
-publication.</p>
+<p>Not run. This project does not send unauthorised active probes to third-party servers it
+has no relationship with, so no live-discover records exist in this publication.</p>
 {% else %}
 <table>
 <tr><th class="num">Sampled</th><th class="num">Supports</th><th class="num">Unknown</th></tr>

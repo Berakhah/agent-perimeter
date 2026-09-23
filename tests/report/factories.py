@@ -7,14 +7,17 @@ Two strata, matching the two shapes real code actually produces:
 - Artifact stratum (census/run.py's `_record_for` + `detect.detect_features`):
   `feature_set_json = {"features": [...], "derivation": "artifact",
   "confidence": 0.6, "caveat": ..., "is_unknown": bool}`.
-- Live-discover stratum (census/tier3.py's `Tier3Fingerprint`, not wired into
-  any real CensusRecord yet): `feature_set_json = {"features": [...],
+- Live-discover stratum (the shape `census/tier3.py`'s `Tier3Fingerprint`
+  produced before that module was removed - see `docs/census/CHANGELOG.md`
+  and `docs/open-decisions.md` decision 5 - never wired into any real
+  CensusRecord): `feature_set_json = {"features": [...],
   "derivation": "probe", "confidence": 0.95, "caveat": ...}`.
 
 `census_fixture()` defaults to zero live-discover records, matching this
-project's actual current state - Tier 3 has never been run. Pass
-`probe_supports`/`probe_unknown` to build synthetic Tier-3 data for tests
-that exercise the two-stratum render path.
+project's actual current state - no live-discover stratum has ever run, and
+none can under the current authorisation rules. Pass
+`probe_supports`/`probe_unknown` to build synthetic live-discover data for
+tests that exercise the two-stratum render path.
 """
 
 from __future__ import annotations

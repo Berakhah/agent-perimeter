@@ -48,7 +48,18 @@ full census of the official MCP Registry (Tier 1, full pagination — not a
 sample), Tier 1 + Tier 2 (static artifact analysis) only for the first
 publication. Tier 3 (live-discover, contacts real third-party servers)
 stays unwired, per the existing 2026-09-09 human-partner decision recorded
-in `docs/census/CHANGELOG.md`, until it clears code review.** Rationale: a
+in `docs/census/CHANGELOG.md`, until it clears code review.**
+
+*Update, 2026-09-23 (human-partner ruling, supersedes the above).* Code
+review found `probe_host()`/`run_tier3()` sent live probes with no
+`ScopeFile` gate, conflicting with Never-rule 1, and the existing
+per-target scope-file model does not fit a sample of unowned third-party
+servers by construction — no redesign closes that gap without abandoning
+either random sampling or per-target consent, and Never-rule 1 states no
+carve-out mechanism. Ruling: **Tier 3 is dropped, not redesigned.**
+`agent_perimeter/census/tier3.py` and its tests are deleted. See
+`docs/census/CHANGELOG.md` "## Unreleased" (2026-09-23 entry) for the full
+writeup. Rationale for the original Tier 1+2-only scope: a
 "top-N by stars" or random-sample selection is exactly the kind of choice
 the brief says to decide *before* collecting, and it also introduces a
 selection-bias claim this project would then have to defend. Full-population

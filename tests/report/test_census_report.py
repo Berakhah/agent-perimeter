@@ -90,18 +90,23 @@ def test_two_strata_render_as_separate_never_pooled_sections() -> None:
 
 
 def test_live_discover_stratum_honest_empty_state() -> None:
-    """No Tier 3 data exists anywhere in this codebase yet - the report must
-    say so plainly rather than rendering a broken '0 of 0' percentage."""
+    """No live-discover data exists anywhere in this codebase - the module
+    that would have produced it (census/tier3.py) was removed after code
+    review found it sent unauthorised active probes with no ScopeFile gate
+    (docs/census/CHANGELOG.md, docs/open-decisions.md decision 5) - so the
+    report must say so plainly rather than rendering a broken '0 of 0'
+    percentage."""
     run, records = census_fixture(probe_supports=0, probe_unknown=0)
     html = render_census(run, records)
-    assert "not yet run" in html.lower()
+    assert "not run" in html.lower()
     assert "0 of 0" not in html
 
 
 def test_probe_stratum_never_reports_a_does_not_support_count() -> None:
-    """A single unauthenticated server/discover request (census/tier3.py)
-    can confirm support; it structurally cannot confirm absence - a
-    non-answer is indistinguishable from a rejection by tier3's own design.
+    """A single unauthenticated server/discover request (the design the now-
+    removed census/tier3.py used) can confirm support; it structurally
+    cannot confirm absence - a non-answer is indistinguishable from a
+    rejection.
     """
     run, records = census_fixture(probe_supports=2, probe_unknown=5)
     probe_records = [r for r in records if r.feature_set_json.get("derivation") == "probe"]
