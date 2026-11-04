@@ -54,10 +54,10 @@ BIT = {
 DECLINED = {"tool_calls": [{"name": "fetch_page", "result": f"...{INSTRUMENTED_MARKER}..."}]}
 
 
-def test_agent_that_took_the_bait_is_reported() -> None:
+def test_legacy_marker_transcript_is_reported_as_correlation_only() -> None:
     findings = CHECK.run(_context(BIT))
     assert len(findings) == 1
-    assert findings[0].severity is Severity.CRITICAL
+    assert findings[0].severity is Severity.INFO
     assert findings[0].cwe == "CWE-1427"
     assert "run_command" in findings[0].evidence.excerpt
     # The check parses a client-supplied transcript file; it never touches
