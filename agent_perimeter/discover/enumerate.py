@@ -62,19 +62,7 @@ def enumerate_tools(transport: Transport, notes: list[str] | None = None) -> lis
                     "Re-run once the server answers every page.",
                 )
             break
-        raw_tools = listing.get("tools")
-        if isinstance(raw_tools, list):
-            earlier = dict(index)
-            for entry in raw_tools:
-                record = _parse(entry)
-                if record is None:
-                    continue
-                if record.name in earlier:
-                    records[earlier[record.name]] = record
-                else:
-                    # Same-page duplicates are kept: drift and rug-pull checks key on them.
-                    index.setdefault(record.name, len(records))
-                    records.append(record)
+        merge_page(records, index, parse_tools(listing))
         following = listing.get("nextCursor")
         if not isinstance(following, str) or not following:
             break
@@ -107,6 +95,30 @@ def enumerate_tools(transport: Transport, notes: list[str] | None = None) -> lis
 def _note(notes: list[str] | None, text: str) -> None:
     if notes is not None:
         notes.append(text)
+
+
+def parse_tools(listing: dict[str, object]) -> list[ToolRecord]:
+    """The well-formed tool entries of one tools/list page, in order."""
+    raw_tools = listing.get("tools")
+    if not isinstance(raw_tools, list):
+        return []
+    return [record for record in map(_parse, raw_tools) if record is not None]
+
+
+def merge_page(records: list[ToolRecord], index: dict[str, int], page: list[ToolRecord]) -> None:
+    """Fold one page into `records` in place; `index` maps name -> first-seen slot.
+
+    A name seen on an earlier page is replaced in its slot; duplicate names
+    within one page are all kept (drift and rug-pull checks key on them).
+    Shared with the instrument proxy so both see the same listing.
+    """
+    earlier = dict(index)
+    for record in page:
+        if record.name in earlier:
+            records[earlier[record.name]] = record
+        else:
+            index.setdefault(record.name, len(records))
+            records.append(record)
 
 
 def _parse(entry: object) -> ToolRecord | None:

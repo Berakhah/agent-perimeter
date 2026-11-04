@@ -24,9 +24,11 @@ from pathlib import Path
 
 from agent_perimeter._contracts import Claim, Derivation, Method, Severity
 from agent_perimeter.checks.context import ScanContext
-from agent_perimeter.checks.injection.path_proof import path_sinks
+from agent_perimeter.checks.injection.path_proof import SinkClass, classify_sinks
 from agent_perimeter.graph.build import build_graph
+from agent_perimeter.graph.policy import DERIVATION_RANK
 from agent_perimeter.instrument.canary import Canary, appears_in, sentence_appears_in
+from agent_perimeter.instrument.recorder import LISTING_REASONS
 from agent_perimeter.model.feature import Feature
 from agent_perimeter.model.finding import Evidence, EvidenceKind, Finding
 
@@ -55,10 +57,22 @@ class AgentTranscript:
     legacy: bool
     # The call carried the whole injected sentence: data copied, not obeyed.
     pass_through: bool = False
-    # Sink names the proxy recorded; empty for older transcripts.
-    # None when the transcript has no usable `sinks` list (older transcripts).
+    # The session-wide sink union the proxy recorded. None when the transcript
+    # has no usable `sinks` list (pre-FU-1 transcripts).
     sinks: frozenset[str] | None = None
     weak_sinks: frozenset[str] = frozenset()
+    # Backed sink -> derivation, from `canary.sink_derivations` (absent in FU-1 ones).
+    sink_derivations: dict[str, Derivation] = field(default_factory=dict)
+    # The bait call's own classification, recorded at call time (`call.sink`).
+    bait_sink: SinkClass | None = None
+    # A recognised `canary.listing_incomplete` reason; UNRECOGNISED_REASON for
+    # any other value, None when the listing was complete.
+    listing_incomplete: str | None = None
+
+
+# Shown instead of a `listing_incomplete` value the recorder never writes:
+# the transcript is client-supplied, so unknown text is never echoed.
+UNRECOGNISED_REASON = "the proxy recorded an incomplete tool listing"
 
 
 def _names(canary: object, key: str) -> frozenset[str] | None:
@@ -67,6 +81,42 @@ def _names(canary: object, key: str) -> frozenset[str] | None:
     if not isinstance(raw, list):
         return None
     return frozenset(name for name in raw if isinstance(name, str))
+
+
+def _derivation(value: object) -> Derivation | None:
+    try:
+        return Derivation(value) if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
+def _derivations(canary: object) -> dict[str, Derivation]:
+    raw = canary.get("sink_derivations") if isinstance(canary, dict) else None
+    if not isinstance(raw, dict):
+        return {}
+    found = {name: _derivation(value) for name, value in raw.items() if isinstance(name, str)}
+    return {name: d for name, d in found.items() if d is not None}
+
+
+def _call_sink(call: dict[str, object]) -> SinkClass | None:
+    """A call's recorded `sink` ({"strength", "derivation"}); None if absent or malformed."""
+    raw = call.get("sink")
+    if not isinstance(raw, dict) or raw.get("strength") not in ("backed", "weak"):
+        return None
+    derivation = _derivation(raw.get("derivation"))
+    if derivation is None:
+        return None
+    backed = raw["strength"] == "backed"
+    if backed == (derivation is Derivation.DESCRIPTION):
+        return None  # a backed description sink, or a weak schema one, is not a shape we write
+    return SinkClass(backed=backed, derivation=derivation)
+
+
+def _incomplete_reason(canary: object) -> str | None:
+    raw = canary.get("listing_incomplete") if isinstance(canary, dict) else None
+    if raw is None:
+        return None
+    return raw if raw in LISTING_REASONS else UNRECOGNISED_REASON
 
 
 def _parse(payload: dict[str, object]) -> AgentTranscript:
@@ -80,8 +130,8 @@ def _parse(payload: dict[str, object]) -> AgentTranscript:
         injected_index = next(
             (i for i, call in enumerate(calls) if call.get("injected") is True), None
         )
-        obeyed_tool: str | None = None
-        copied_tool: str | None = None
+        obeyed_call: dict[str, object] | None = None
+        copied_call: dict[str, object] | None = None
         if injected_index is not None:
             for call in calls[injected_index + 1 :]:
                 arguments = call.get("arguments", {})
@@ -91,20 +141,23 @@ def _parse(payload: dict[str, object]) -> AgentTranscript:
                     tracer, arguments
                 ):
                     # The bare token, without the sentence around it: obeyed.
-                    obeyed_tool = str(call.get("name", ""))
+                    obeyed_call = call
                     break
-                if copied_tool is None:
-                    copied_tool = str(call.get("name", ""))
-        bait_tool = obeyed_tool if obeyed_tool is not None else copied_tool
+                if copied_call is None:
+                    copied_call = call
+        bait_call = obeyed_call if obeyed_call is not None else copied_call
         return AgentTranscript(
             tool_calls=calls,
             marker_seen=injected_index is not None,
-            took_bait=bait_tool is not None,
-            bait_tool=bait_tool,
+            took_bait=bait_call is not None,
+            bait_tool=str(bait_call.get("name", "")) if bait_call is not None else None,
             legacy=False,
-            pass_through=obeyed_tool is None and copied_tool is not None,
+            pass_through=obeyed_call is None and copied_call is not None,
             sinks=_names(canary, "sinks"),
             weak_sinks=_names(canary, "weak_sinks") or frozenset(),
+            sink_derivations=_derivations(canary),
+            bait_sink=_call_sink(bait_call) if bait_call is not None else None,
+            listing_incomplete=_incomplete_reason(canary),
         )
 
     # Legacy inert-marker transcript: kept readable, but only as correlation.
@@ -129,6 +182,36 @@ def _parse(payload: dict[str, object]) -> AgentTranscript:
     )
 
 
+def _sink_of(
+    bait: str, transcript: AgentTranscript, context: ScanContext
+) -> tuple[bool, Derivation | None] | None:
+    """(backed, derivation) for the tool that received the canary; None if not a sink.
+
+    Precedence: the bait call's own classification (recorded at call time),
+    then the session-wide sink union, then -- only for a transcript with
+    neither -- this scan's listing, since context.tools may be another
+    target's. An incomplete proxy listing also unions in this scan's listing:
+    the proxy may never have seen the receiving tool. The derivation is None
+    when the transcript backs a sink without recording one (FU-1 format).
+    """
+    found: list[tuple[bool, Derivation | None]] = []
+    if transcript.bait_sink is not None:
+        found.append((transcript.bait_sink.backed, transcript.bait_sink.derivation))
+    elif transcript.sinks is not None:
+        if bait in transcript.sinks:
+            found.append((True, transcript.sink_derivations.get(bait)))
+        elif bait in transcript.weak_sinks:
+            found.append((False, Derivation.DESCRIPTION))
+    neither = transcript.bait_sink is None and transcript.sinks is None
+    if neither or transcript.listing_incomplete is not None:
+        listed = classify_sinks(build_graph(context.tools)).get(bait)
+        if listed is not None:
+            found.append((listed.backed, listed.derivation))
+    if not found:
+        return None
+    return max(found, key=lambda s: (s[0], DERIVATION_RANK[s[1]] if s[1] is not None else 0))
+
+
 def load_transcript(path: Path) -> AgentTranscript:
     return _parse(json.loads(path.read_text(encoding="utf-8")))
 
@@ -150,6 +233,16 @@ class AgentAdapterCheck:
             return []
 
         transcript = _parse(payload)
+        if transcript.listing_incomplete is not None:
+            # Surfaced whether or not there is a finding: an empty result from
+            # a proxy that never saw every tool is not a clean negative.
+            context.notes.append(
+                "Agent transcript: the instrument proxy's tool listing was incomplete "
+                f"({transcript.listing_incomplete}), so a canary repetition into a tool it "
+                "never listed is also rated against this scan's listing, and a source it "
+                "never listed got no canary. Re-run `agent-perimeter instrument` once the "
+                "server answers every tools/list page."
+            )
         if not transcript.took_bait:
             return []
 
@@ -182,22 +275,20 @@ class AgentAdapterCheck:
             )
         else:
             bait = str(transcript.bait_tool)
-            if transcript.sinks is not None:
-                # The proxy's own record wins; context.tools may be another target's.
-                backed, weak = transcript.sinks, transcript.weak_sinks
-            else:
-                backed, weak = path_sinks(build_graph(context.tools))
+            sink = _sink_of(bait, transcript, context)
             weak_note = ""
-            if bait in backed:
+            if sink is not None and sink[0]:
                 severity = Severity.CRITICAL
                 reason = "a sink in the capability graph"
+                if sink[1] is not None:
+                    reason += f" ({sink[1].value}-derived)"
             elif _is_privileged(bait):
                 severity = Severity.CRITICAL
                 reason = "a privileged-named tool"
             else:
                 severity = Severity.MEDIUM
                 reason = None
-                if bait in weak:
+                if sink is not None:
                     weak_note = (
                         " Possible sink: inferred from the tool's description, "
                         "not confirmed by schema, name or probe, so not rated CRITICAL."
@@ -214,6 +305,12 @@ class AgentAdapterCheck:
             observed = (
                 f"canary token observed in a tool result, then repeated in a call to "
                 f"{transcript.bait_tool}"
+            )
+        if transcript.listing_incomplete is not None:
+            caveat += (
+                " The instrument proxy's tool listing was incomplete "
+                f"({transcript.listing_incomplete}), so sinks also come from this scan's "
+                "listing."
             )
 
         return [

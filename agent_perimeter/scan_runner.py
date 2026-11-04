@@ -274,6 +274,7 @@ def run_scan(
             invocation_flags=invocation_flags,
             baseline=baseline,
             drift_events=drift_events,
+            notes=notes,  # the same list: checks' notes land in ScanOutcome.notes
         )
 
         # No real model provider is wired anywhere in this plan yet

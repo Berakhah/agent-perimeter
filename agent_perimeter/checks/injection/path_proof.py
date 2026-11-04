@@ -42,6 +42,49 @@ def find_paths(edges: list[CapabilityEdge]) -> list[tuple[str, str]]:
     return [(s, k) for s in sources for k in sinks if s != k]
 
 
+@dataclass(frozen=True)
+class SinkClass:
+    """How one sink of a source->sink path is backed.
+
+    `backed` is True when at least one of its privileged-capability edges is
+    schema-, name- or probe-derived; `derivation` is then the strongest such
+    edge's (DERIVATION_RANK). A description-only sink has `backed` False and
+    `derivation` DESCRIPTION: only a possible sink.
+    """
+
+    backed: bool
+    derivation: Derivation
+
+    @property
+    def strength(self) -> str:
+        return "backed" if self.backed else "weak"
+
+    def to_json(self) -> dict[str, str]:
+        return {"strength": self.strength, "derivation": self.derivation.value}
+
+    def stronger(self, other: SinkClass | None) -> SinkClass:
+        """The better-backed of the two: backed over weak, then derivation rank."""
+        if other is None:
+            return self
+        mine = (self.backed, DERIVATION_RANK[self.derivation], self.derivation.value)
+        theirs = (other.backed, DERIVATION_RANK[other.derivation], other.derivation.value)
+        return self if mine >= theirs else other
+
+
+def classify_sinks(edges: list[CapabilityEdge]) -> dict[str, SinkClass]:
+    """Every sink of a source->sink path, with how it is backed."""
+    sinks = {sink for _, sink in find_paths(edges)}
+    classes: dict[str, SinkClass] = {}
+    for e in edges:
+        if e.tool not in sinks or e.capability not in PRIVILEGED_SINKS:
+            continue
+        found = SinkClass(
+            backed=e.derivation is not Derivation.DESCRIPTION, derivation=e.derivation
+        )
+        classes[e.tool] = found.stronger(classes.get(e.tool))
+    return classes
+
+
 def path_sinks(edges: list[CapabilityEdge]) -> tuple[frozenset[str], frozenset[str]]:
     """Split the sinks of source->sink paths into (backed, description_only).
 
@@ -49,15 +92,9 @@ def path_sinks(edges: list[CapabilityEdge]) -> tuple[frozenset[str], frozenset[s
     schema-, name- or probe-derived. One whose privileged edges all come from
     description prose is only a possible sink.
     """
-    sinks = {sink for _, sink in find_paths(edges)}
-    backed = {
-        e.tool
-        for e in edges
-        if e.tool in sinks
-        and e.capability in PRIVILEGED_SINKS
-        and e.derivation is not Derivation.DESCRIPTION
-    }
-    return frozenset(backed), frozenset(sinks - backed)
+    classes = classify_sinks(edges)
+    backed = {name for name, c in classes.items() if c.backed}
+    return frozenset(backed), frozenset(set(classes) - backed)
 
 
 @dataclass(frozen=True)

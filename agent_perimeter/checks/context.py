@@ -47,6 +47,11 @@ class ScanContext:
     drift_events: tuple[DriftEvent, ...] = ()
     """Computed once by the runner; `drift.description_drift` formats these,
     it never re-computes them."""
+    notes: list[str] = field(default_factory=list)
+    """Scan-level caveats. The runner seeds it with discovery's notes and a
+    check may append one (e.g. `injection.agent_adapter` for a transcript
+    whose proxy listing was incomplete); the runner reports the list as
+    `ScanOutcome.notes`, rendered wherever skipped checks are. Append only."""
 
     def reproduction(self, check_id: str) -> str:
         """The command a sceptic runs to reproduce one finding.
