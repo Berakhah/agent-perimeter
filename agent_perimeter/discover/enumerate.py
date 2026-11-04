@@ -28,21 +28,25 @@ class ToolRecord:
 def enumerate_tools(transport: Transport, notes: list[str] | None = None) -> list[ToolRecord]:
     """List every tool, following `nextCursor` across pages.
 
-    `notes`, when given, receives one sentence for each early stop (repeat
-    cursor, page cap, later-page failure) so the caller can surface that the
-    listing is incomplete.
+    `notes`, when given, receives one sentence for each early stop (page
+    failure, a reply with no tools list, repeat cursor, page cap) so the
+    caller can surface that the listing is incomplete.
 
     A later page's entry for a name seen on an earlier page replaces it, keeping
     first-seen order. Duplicate names within one page are all kept. Paging
     stops when the cursor is absent, or early when it repeats, MAX_TOOL_PAGES
-    is reached, or a later page raises TransportError (which keeps what
-    earlier pages returned). All three early stops log a warning and add a
-    note; run_scan surfaces the notes in the HTML report, the CLI summary, the
-    API status body, the SSE terminal frame, SARIF toolExecutionNotifications
-    and the web live-scan screen, skips drift, and marks the scan
-    listing-incomplete so it never becomes a drift baseline. A TransportError
-    on page 1 yields no tools and no note: an unlisted server is a finding
-    for `static/`, not a truncated listing.
+    is reached, a page raises TransportError, or a page's reply has no `tools`
+    list (both keep what earlier pages returned). Every early stop logs a
+    warning and adds a note; run_scan surfaces the notes in the HTML report,
+    the CLI summary, the API status body, the SSE terminal frame, SARIF
+    toolExecutionNotifications and the web live-scan screen, skips drift, and
+    marks the scan listing-incomplete so it never becomes a drift baseline.
+
+    A failure on page 1 is not fatal (the scan's other checks still run on
+    what is known) but it is an incomplete listing, not an empty one: read as
+    "zero tools" it would report every baseline tool removed and, kept as a
+    baseline, every tool added on the next full scan. Only a successful reply
+    carrying `"tools": []` is a complete, empty listing.
     """
     records: list[ToolRecord] = []
     index: dict[str, int] = {}  # name -> position of its first-seen record
@@ -53,19 +57,18 @@ def enumerate_tools(transport: Transport, notes: list[str] | None = None) -> lis
         try:
             listing = transport.request("tools/list", params)
         except TransportError as exc:
-            if page > 1:
-                logger.warning(
-                    "tools/list page %d failed (%s); keeping %d tools from earlier pages",
-                    page,
-                    exc,
-                    len(records),
-                )
-                _note(
-                    notes,
-                    f"Tool listing incomplete: page {page} of tools/list failed with a "
-                    f"transport error; checks ran on the {page - 1} page(s) received. "
-                    "Re-run once the server answers every page.",
-                )
+            logger.warning(
+                "tools/list page %d failed (%s); keeping %d tools from earlier pages",
+                page,
+                exc,
+                len(records),
+            )
+            # The error text is server-influenced: the note names only the cause.
+            _note(notes, _failed_page_note(page, "failed with a transport error"))
+            break
+        if not isinstance(listing.get("tools"), list):
+            logger.warning("tools/list page %d had no tools list; listing is incomplete", page)
+            _note(notes, _failed_page_note(page, "answered with no tools list"))
             break
         merge_page(records, index, parse_tools(listing))
         following = listing.get("nextCursor")
@@ -95,6 +98,19 @@ def enumerate_tools(transport: Transport, notes: list[str] | None = None) -> lis
             "pages received. Re-run against a server that returns a bounded listing.",
         )
     return records
+
+
+def _failed_page_note(page: int, cause: str) -> str:
+    if page == 1:
+        return (
+            f"Tool listing incomplete: page 1 of tools/list {cause}, so no tools were "
+            "listed and checks that read the listing saw none. "
+            "Re-run once the server answers tools/list."
+        )
+    return (
+        f"Tool listing incomplete: page {page} of tools/list {cause}; checks ran on "
+        f"the {page - 1} page(s) received. Re-run once the server answers every page."
+    )
 
 
 def _note(notes: list[str] | None, text: str) -> None:

@@ -275,3 +275,10 @@ graph-sink change was ruled out of that wave on purpose.
   duplicate names are kept for source detection there too. The eval harness
   raises `IncompleteFixtureListing` instead of scoring a fixture whose
   listing stopped early.
+  **Residual-review follow-up (2026-11-04).** A page-1 failure is now an
+  incomplete listing too, not an empty one: a `TransportError` on page 1, or
+  a page-1 reply with no `tools` list, adds a scan note and sets
+  `listing_complete = false`, so drift is skipped, the scan is never a
+  baseline and `--snapshot` refuses it (exit 2). The scan itself still runs.
+  Only a successful reply carrying `"tools": []` is a complete, empty
+  listing. A later page with no `tools` list stops paging the same way.

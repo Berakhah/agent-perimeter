@@ -193,3 +193,59 @@ def test_an_incomplete_listing_skips_drift_visibly_instead_of_reporting_removals
 def test_a_complete_listing_reports_itself_complete(stub: None) -> None:
     outcome = run_scan(TARGET, ScanMode.PASSIVE, None, checks=[], now=NOW)
     assert outcome.listing_complete is True
+
+
+class _PageOneFails:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        from agent_perimeter.transport.base import TransportError
+
+        if method == "tools/list":
+            raise TransportError("page 1 down")
+        return {}
+
+    def close(self) -> None: ...
+
+
+class _EmptyListing:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        return {"tools": []} if method == "tools/list" else {}
+
+    def close(self) -> None: ...
+
+
+def test_a_page_one_failure_skips_drift_visibly_instead_of_removing_every_tool(
+    stub: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_perimeter.checks.all_checks import ALL_CHECKS
+
+    monkeypatch.setattr(
+        "agent_perimeter.scan_runner.build_transport", lambda t, i, e: _PageOneFails()
+    )
+    drift_checks = [c for c in ALL_CHECKS if c.requires_baseline]
+    outcome = run_scan(
+        TARGET, ScanMode.PASSIVE, None, checks=drift_checks, baseline=_two_tool_baseline(), now=NOW
+    )
+    assert outcome.tools == []
+    assert outcome.listing_complete is False
+    assert any("page 1 of tools/list failed" in note for note in outcome.notes)
+    assert outcome.drift_events == ()
+    assert outcome.findings == []
+    assert {s.reason for s in outcome.skipped} == {SkipReason.LISTING_INCOMPLETE}
+
+
+def test_a_successful_empty_listing_is_complete_and_still_compared(
+    stub: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_perimeter.checks.all_checks import ALL_CHECKS
+
+    monkeypatch.setattr(
+        "agent_perimeter.scan_runner.build_transport", lambda t, i, e: _EmptyListing()
+    )
+    drift_checks = [c for c in ALL_CHECKS if c.requires_baseline]
+    outcome = run_scan(
+        TARGET, ScanMode.PASSIVE, None, checks=drift_checks, baseline=_two_tool_baseline(), now=NOW
+    )
+    assert outcome.listing_complete is True
+    assert outcome.notes == ()
+    # The server really did drop both tools: that is drift, not a gap.
+    assert {e.field for e in outcome.drift_events} == {DriftField.TOOL_REMOVED}
