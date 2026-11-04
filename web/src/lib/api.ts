@@ -47,6 +47,12 @@ export interface ScanStatus {
   findings_count?: number;
   skipped_count?: number;
   errored_count?: number;
+  /**
+   * Scan-level caveats (`ScanOutcome.notes`), e.g. a tool listing that
+   * stopped early. Optional like the other completed-only fields: the
+   * backend sends it, always as a list, once the scan has a result.
+   */
+  notes?: string[];
 }
 
 /** 400 body for a non-http(s) target (`POST /api/scans` classifies before any transport logic runs). */
@@ -90,9 +96,15 @@ export interface ScanTerminalEvent {
   total: number;
   skipped: Array<{
     check_id: string;
-    reason: "feature_absent" | "not_authorised" | "model_unavailable" | "no_baseline";
+    reason: "feature_absent" | "not_authorised" | "model_unavailable" | "no_baseline" | "listing_incomplete";
     detail: string;
   }>;
+  /**
+   * Scan-level caveats, rendered next to the skipped-checks summary. Always
+   * a list on this frame (`EventLog.finish`), empty when there are none --
+   * a truncated tool listing must never be silent.
+   */
+  notes: string[];
 }
 
 export type ScanEvent = ScanCheckEvent | ScanTerminalEvent;

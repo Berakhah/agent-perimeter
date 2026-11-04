@@ -1,5 +1,5 @@
 /**
- * Canned `ScanEvent[]` sequences for `?fixture=streaming|degraded|deterministic`
+ * Canned `ScanEvent[]` sequences for `?fixture=streaming|degraded|deterministic|incomplete`
  * (task-10's `?fixture=` precedent, `findings/page.tsx`). Check ids are real
  * namespaces verified against the Python modules under `agent_perimeter/checks`
  * (task-12 brief); `phase` on each event is the id's namespace prefix, matching
@@ -72,7 +72,7 @@ function buildCheckEvents(ids: readonly string[], total: number): ScanCheckEvent
 }
 
 const STREAMING_IDS = NON_MODEL_CHECK_IDS.slice(0, 29);
-const streamingTerminal: ScanTerminalEvent = { terminal: true, completed: 29, total: 29, skipped: [] };
+const streamingTerminal: ScanTerminalEvent = { terminal: true, completed: 29, total: 29, skipped: [], notes: [] };
 const STREAMING: ScanEvent[] = [...buildCheckEvents(STREAMING_IDS, 29), streamingTerminal];
 
 const DEGRADED_RUNNABLE_IDS = NON_MODEL_CHECK_IDS.slice(0, 28);
@@ -90,15 +90,39 @@ const degradedTerminal: ScanTerminalEvent = {
       detail: "no model provider is configured for this scan.",
     },
   ],
+  notes: [],
 };
 const DEGRADED: ScanEvent[] = [...buildCheckEvents(DEGRADED_RUNNABLE_IDS, 29), degradedTerminal];
 
 const DETERMINISTIC_IDS = NON_MODEL_CHECK_IDS.slice(0, 29);
-const deterministicTerminal: ScanTerminalEvent = { terminal: true, completed: 29, total: 29, skipped: [] };
+const deterministicTerminal: ScanTerminalEvent = { terminal: true, completed: 29, total: 29, skipped: [], notes: [] };
 const DETERMINISTIC: ScanEvent[] = [...buildCheckEvents(DETERMINISTIC_IDS, 29), deterministicTerminal];
+
+// A server whose tools/list failed on page 2: the note is the exact copy
+// `discover/enumerate.py` writes, and drift is skipped for the same reason
+// (`checks/registry.py`'s LISTING_INCOMPLETE detail).
+const INCOMPLETE_RUNNABLE_IDS = NON_MODEL_CHECK_IDS.slice(0, 28);
+const incompleteTerminal: ScanTerminalEvent = {
+  terminal: true,
+  completed: 28,
+  total: 29,
+  skipped: [
+    {
+      check_id: "drift.description_drift",
+      reason: "listing_incomplete",
+      detail:
+        "the tool listing was incomplete, so a comparison would report the tools it missed as removed — re-run once the server answers every tools/list page",
+    },
+  ],
+  notes: [
+    "Tool listing incomplete: page 2 of tools/list failed with a transport error; checks ran on the 1 page(s) received. Re-run once the server answers every page.",
+  ],
+};
+const INCOMPLETE: ScanEvent[] = [...buildCheckEvents(INCOMPLETE_RUNNABLE_IDS, 29), incompleteTerminal];
 
 export const FIXTURES: Record<string, ScanEvent[]> = {
   streaming: STREAMING,
   degraded: DEGRADED,
   deterministic: DETERMINISTIC,
+  incomplete: INCOMPLETE,
 };

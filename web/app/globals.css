@@ -764,6 +764,32 @@ body {
   font-family: var(--font-ibm-plex-mono), ui-monospace, monospace;
   color: var(--neutral-700);
 }
+/* Scan notes (final-review fix #4): a truncated listing is a caveat on the
+   whole run, so it sits under the terminal summary, marked like a skipped
+   row (left rule) rather than an error. Text stays --neutral-700, the
+   contrast-checked body tone used by .bok-scan-progress above. */
+.bok-scan-notes {
+  margin-top: var(--density-gap);
+  border: 1px solid var(--neutral-200);
+  border-left: 2px solid var(--severity-medium);
+  border-radius: var(--radius-control);
+  padding: var(--density-gap);
+  background: var(--surface-1);
+  color: var(--neutral-700);
+}
+.bok-scan-notes-heading {
+  font-family: var(--font-newsreader), serif;
+  font-size: 1rem;
+  margin: 0 0 var(--density-cell-y);
+}
+.bok-scan-notes-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--density-cell-y);
+  overflow-wrap: anywhere;
+}
 .bok-phase-group {
   border: 1px solid var(--neutral-200);
   border-radius: var(--radius-control);
