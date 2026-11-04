@@ -177,11 +177,64 @@ def test_malformed_per_call_classifications_fall_back_to_the_session_list() -> N
         assert [f.severity for f in findings] == [Severity.CRITICAL], bad
 
 
-def test_session_sink_derivation_is_named_in_the_reason() -> None:
-    transcript = _transcript(WEBHOOK_CALL, sinks=["sync_to_webhook"])
-    transcript["canary"]["sink_derivations"] = {"sync_to_webhook": "schema"}  # type: ignore[index]
-    [finding] = CHECK.run(_context(transcript))
+def _new_format(*calls: dict[str, object], sinks: list[str]) -> dict[str, object]:
+    """A transcript in the per-call scheme: `sink_derivations` is always written."""
+    transcript = _transcript(*calls, sinks=sinks)
+    transcript["canary"]["sink_derivations"] = {name: "schema" for name in sinks}  # type: ignore[index]
+    return transcript
+
+
+def test_a_new_format_call_with_no_sink_key_is_not_upgraded_by_the_session_union() -> None:
+    # The proxy omits `sink` when the tool was not a sink at call time; a later
+    # re-list that made it one must not make the earlier call CRITICAL.
+    [finding] = CHECK.run(_context(_new_format(WEBHOOK_CALL, sinks=["sync_to_webhook"])))
+    assert finding.severity is Severity.MEDIUM
+    assert "sink in the capability graph" not in finding.title
+
+
+def test_a_new_format_call_with_a_sink_key_names_its_derivation() -> None:
+    call = {**WEBHOOK_CALL, "sink": {"strength": "backed", "derivation": "schema"}}
+    [finding] = CHECK.run(_context(_new_format(call, sinks=["sync_to_webhook"])))
+    assert finding.severity is Severity.CRITICAL
     assert "a sink in the capability graph (schema-derived)" in finding.title
+
+
+def test_a_new_format_privileged_name_with_no_sink_key_is_still_critical_by_name() -> None:
+    call = {"name": "run_command", "arguments": {"command": TOKEN}}
+    [finding] = CHECK.run(_context(_new_format(call, sinks=["run_command"])))
+    assert finding.severity is Severity.CRITICAL
+    assert "privileged-named tool" in finding.title
+
+
+def test_a_new_format_complete_listing_ignores_context_tools() -> None:
+    [finding] = CHECK.run(_context(_new_format(WEBHOOK_CALL, sinks=[]), TOOLS))
+    assert finding.severity is Severity.MEDIUM
+
+
+def test_a_new_format_incomplete_listing_still_unions_in_the_scanned_listing() -> None:
+    from agent_perimeter.instrument.recorder import LISTING_PAGE_FAILED
+
+    transcript = _new_format(WEBHOOK_CALL, sinks=[])
+    transcript["canary"]["listing_incomplete"] = LISTING_PAGE_FAILED  # type: ignore[index]
+    [finding] = CHECK.run(_context(transcript, TOOLS))
+    assert finding.severity is Severity.CRITICAL
+    assert "a sink in the capability graph (name-derived)" in finding.title
+
+
+def test_a_malformed_incomplete_reason_counts_as_incomplete_without_crashing() -> None:
+    from agent_perimeter.checks.injection.agent_adapter import UNRECOGNISED_REASON
+
+    for bad in ([], ["x"], {}, {"a": 1}, 7):
+        transcript = _transcript(WEBHOOK_CALL, sinks=[])
+        transcript["canary"]["listing_incomplete"] = bad  # type: ignore[index]
+        context = _context(transcript, TOOLS)
+        [finding] = CHECK.run(context)
+        [note] = context.notes
+        assert UNRECOGNISED_REASON in note, bad
+        assert finding.claim.caveat is not None
+        assert UNRECOGNISED_REASON in finding.claim.caveat, bad
+        # Treated as incomplete: the scanned listing's sinks are unioned in.
+        assert finding.severity is Severity.CRITICAL, bad
 
 
 def test_a_sink_without_a_recorded_derivation_says_so_plainly() -> None:

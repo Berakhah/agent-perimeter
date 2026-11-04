@@ -139,8 +139,11 @@ LISTING_PAGE_FAILED = (
     "a tools/list page after the first failed; sources and sinks were computed from "
     "the pages received before it"
 )
+# Sticky, and true whether or not a later listing recovered: calls before the
+# recovery (all of them, if it never came) were made with no tools known.
 LISTING_FIRST_PAGE_FAILED = (
-    "the first tools/list page failed; no tools were known, so nothing was injected"
+    "the first tools/list page failed; until a later listing succeeded no tools were "
+    "known, so calls made before then got no canary"
 )
 LISTING_REPEAT_CURSOR = (
     "the server repeated a tools/list cursor; sources and sinks were computed from the "

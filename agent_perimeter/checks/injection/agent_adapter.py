@@ -66,8 +66,14 @@ class AgentTranscript:
     # The bait call's own classification, recorded at call time (`call.sink`).
     bait_sink: SinkClass | None = None
     # A recognised `canary.listing_incomplete` reason; UNRECOGNISED_REASON for
-    # any other value, None when the listing was complete.
+    # any other present value (wrong type included), None when absent.
     listing_incomplete: str | None = None
+    # The transcript uses the per-call scheme (it has `canary.sink_derivations`):
+    # the proxy writes `call.sink` whenever the tool was a sink at call time,
+    # so a call without the key was not one.
+    per_call_sinks: bool = False
+    # The bait call carried a `sink` key at all, well-formed or not.
+    bait_sink_key: bool = False
 
 
 # Shown instead of a `listing_incomplete` value the recorder never writes:
@@ -113,10 +119,17 @@ def _call_sink(call: dict[str, object]) -> SinkClass | None:
 
 
 def _incomplete_reason(canary: object) -> str | None:
+    """The recorded reason, or UNRECOGNISED_REASON for any other present value.
+
+    A present but malformed value (unknown text, a list, a dict, a number)
+    still counts as incomplete: the recorder only writes the key when the
+    listing stopped early, and treating it as complete would drop the
+    scanned-listing union and the note. That is the safe direction.
+    """
     raw = canary.get("listing_incomplete") if isinstance(canary, dict) else None
     if raw is None:
         return None
-    return raw if raw in LISTING_REASONS else UNRECOGNISED_REASON
+    return raw if isinstance(raw, str) and raw in LISTING_REASONS else UNRECOGNISED_REASON
 
 
 def _parse(payload: dict[str, object]) -> AgentTranscript:
@@ -158,6 +171,9 @@ def _parse(payload: dict[str, object]) -> AgentTranscript:
             sink_derivations=_derivations(canary),
             bait_sink=_call_sink(bait_call) if bait_call is not None else None,
             listing_incomplete=_incomplete_reason(canary),
+            per_call_sinks=isinstance(canary, dict)
+            and isinstance(canary.get("sink_derivations"), dict),
+            bait_sink_key=bait_call is not None and "sink" in bait_call,
         )
 
     # Legacy inert-marker transcript: kept readable, but only as correlation.
@@ -193,16 +209,24 @@ def _sink_of(
     target's. An incomplete proxy listing also unions in this scan's listing:
     the proxy may never have seen the receiving tool. The derivation is None
     when the transcript backs a sink without recording one (FU-1 format).
+
+    In the per-call scheme (`per_call_sinks`) a bait call with no `sink` key
+    was not a sink at call time, so the session union is not consulted: a
+    tool that only became a sink on a later re-list stays MEDIUM. A present
+    but malformed key still falls back to the union, as in older formats.
     """
     found: list[tuple[bool, Derivation | None]] = []
+    not_a_sink_at_call_time = transcript.per_call_sinks and not transcript.bait_sink_key
     if transcript.bait_sink is not None:
         found.append((transcript.bait_sink.backed, transcript.bait_sink.derivation))
-    elif transcript.sinks is not None:
+    elif transcript.sinks is not None and not not_a_sink_at_call_time:
         if bait in transcript.sinks:
             found.append((True, transcript.sink_derivations.get(bait)))
         elif bait in transcript.weak_sinks:
             found.append((False, Derivation.DESCRIPTION))
-    neither = transcript.bait_sink is None and transcript.sinks is None
+    neither = (
+        transcript.bait_sink is None and transcript.sinks is None and not transcript.per_call_sinks
+    )
     if neither or transcript.listing_incomplete is not None:
         listed = classify_sinks(build_graph(context.tools)).get(bait)
         if listed is not None:
