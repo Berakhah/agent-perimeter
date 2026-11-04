@@ -7,7 +7,7 @@
  * decorative-only layer with no shared state or props with the rest of the
  * library). Every component here is `aria-hidden="true"`: the numbers it
  * renders already exist as accessible text elsewhere on the page (spec
- * `docs/superpowers/specs/2026-09-20-ops-console-design.md` §5).
+ * `docs/process/specs/2026-09-20-ops-console-design.md` §5).
  */
 
 export type StatTileTone = "critical" | "high" | "medium" | "low" | "neutral";

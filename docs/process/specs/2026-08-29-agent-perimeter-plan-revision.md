@@ -1,7 +1,7 @@
 # Agent Perimeter — Plan Revision and Audit
 
 **Date:** 29 August 2026
-**Scope:** `docs/superpowers/specs/2026-08-11-agent-perimeter-design.md` and the four week plans.
+**Scope:** `docs/process/specs/2026-08-11-agent-perimeter-design.md` and the four week plans.
 **Method:** every external claim re-verified against the primary source, live, on the date above. Every code path in the plans read in full. Findings below carry the evidence that produced them.
 
 This document supersedes the plans where they disagree. It does not supersede the briefs.

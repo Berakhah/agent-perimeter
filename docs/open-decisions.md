@@ -38,7 +38,7 @@ harness". That never matched the code: `agent_perimeter/checks/injection/agent_a
 bundles no agent and calls no model. It reads a transcript the client exports
 from *their own* agent run against a server carrying the tracer marker
 (`docs/byo-agent.md`; the instrumenting proxy it describes, the `instrument` command, was
-implemented 2026-11-04, see `docs/superpowers/specs/2026-11-04-instrument-proxy-design.md`). The split is: Claim A (an injection path exists) is
+implemented 2026-11-04, see `docs/process/specs/2026-11-04-instrument-proxy-design.md`). The split is: Claim A (an injection path exists) is
 proven by the scan itself, deterministically, with no agent
 (`injection.path_proof`); Claim B (the client's agent acts on it) is measured
 from the client's transcript. Rationale for BYO: no quota or model cost, cannot
@@ -118,7 +118,7 @@ being caught overstating a number.
 
 ### Drift detection (15 Sep 2026)
 
-Decided in `docs/superpowers/specs/2026-09-15-drift-detection-design.md` §2 (D1–D5): compare-on-scan, five drift fields, description text persisted, drift is a Finding, snapshot source is pluggable. One standing exception recorded: `GET /api/scans/{id}/drift` reads from the database. Task 9's "DB is audit-only" ruling still holds for findings/graph/SARIF; drift is history and the in-process cache cannot hold history across restarts.
+Decided in `docs/process/specs/2026-09-15-drift-detection-design.md` §2 (D1–D5): compare-on-scan, five drift fields, description text persisted, drift is a Finding, snapshot source is pluggable. One standing exception recorded: `GET /api/scans/{id}/drift` reads from the database. Task 9's "DB is audit-only" ruling still holds for findings/graph/SARIF; drift is history and the in-process cache cannot hold history across restarts.
 
 ## `00-SHARED-FOUNDATION.md` §12 (shared substrate)
 
@@ -191,7 +191,7 @@ blocks acting on any of the 14.
 
 ## Addendum — GitHub Action delivery (2026-09-16)
 
-The drift spec (`docs/superpowers/specs/2026-09-15-drift-detection-design.md`
+The drift spec (`docs/process/specs/2026-09-15-drift-detection-design.md`
 §10) deferred a GitHub Action pending a publishing decision. Decided, with
 the reasoning in `2026-09-16-github-action-design.md` D3/D8:
 

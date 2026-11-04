@@ -38,7 +38,7 @@ over the two current `Ecosystem` members):
 `SELECTION_METHOD` gained a leading sentence: the registry API itself carries no
 popularity/download/star/install-count field on any entry, which is why ranking goes out to
 pypistats.org/api.npmjs.org in the first place. This is the correction from
-`docs/superpowers/specs/2026-08-29-agent-perimeter-plan-revision.md` §Task 5 (confirmed by Task 2's
+`docs/process/specs/2026-08-29-agent-perimeter-plan-revision.md` §Task 5 (confirmed by Task 2's
 own registry fixtures — no such field appears in any row).
 
 ## TDD evidence

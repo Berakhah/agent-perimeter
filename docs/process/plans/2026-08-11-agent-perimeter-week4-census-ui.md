@@ -8,8 +8,8 @@
 
 **Tech Stack:** Python 3.12+, `uv`, `ruff`, `mypy --strict`, `pytest`, `hypothesis`, Pydantic v2, SQLAlchemy 2 + alembic, httpx, Jinja2, FastAPI. Web: Next.js 15 (App Router), TypeScript strict, Tailwind v4, Playwright, axe-core.
 
-**Spec:** `docs/superpowers/specs/2026-08-11-agent-perimeter-design.md`
-**Revision (binding):** `docs/superpowers/specs/2026-08-29-agent-perimeter-plan-revision.md` — **read it first.** Where it and this plan disagree, the revision wins.
+**Spec:** `docs/process/specs/2026-08-11-agent-perimeter-design.md`
+**Revision (binding):** `docs/process/specs/2026-08-29-agent-perimeter-plan-revision.md` — **read it first.** Where it and this plan disagree, the revision wins.
 
 > **Blocking corrections to this week, summarised.** Everything below was verified against the live registry API on 29 August 2026.
 > - **Task 2 — the census stops at 100 servers and reports it as complete.** The plan reads `metadata["next_cursor"]`; the live field is **`nextCursor`**. `.get("next_cursor")` returns `None` on page one, the loop logs "exhausted after 1 pages", and `population_is_complete` is `True`. That publishes a census of 100 of 4,000+ servers **asserting completeness** — the exact failure this product exists to reject, in the artifact that is the marketing. Add a loud guard against single-page termination. Revision §1.4.

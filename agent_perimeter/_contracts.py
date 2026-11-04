@@ -3,7 +3,7 @@
 ponytail: `bok-core` is not published yet. These are concrete mirrors of the
 contract, not permanent code. When the package ships, delete this module and
 import from `bok_core` instead. Requirements raised on `bok-core` are recorded
-in docs/superpowers/specs/2026-08-11-agent-perimeter-design.md section 8.
+in docs/process/specs/2026-08-11-agent-perimeter-design.md section 8.
 """
 
 from __future__ import annotations
