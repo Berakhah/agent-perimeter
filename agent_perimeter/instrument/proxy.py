@@ -92,13 +92,16 @@ class Proxy:
                 result = self._dispatch(method, params)
             except TransportError as exc:
                 return _error(
-                    message_id, exc.code if exc.code is not None else -32603, redact(str(exc))
+                    message_id,
+                    exc.code if exc.code is not None else -32603,
+                    redact(str(exc), self.canary),
                 )
             except Exception as exc:  # noqa: BLE001 -- the HTTP layer must never return a bare 500
                 return _error(
                     message_id,
                     -32603,
-                    f"Upstream request failed with {type(exc).__name__}: {redact(str(exc))}. "
+                    f"Upstream request failed with {type(exc).__name__}: "
+                    f"{redact(str(exc), self.canary)}. "
                     "Check that the target server is running and reachable.",
                 )
         if isinstance(result, tuple):  # (code, text) from a local validation failure

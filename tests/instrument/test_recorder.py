@@ -1,4 +1,5 @@
 import json
+from urllib.parse import quote
 
 from agent_perimeter.instrument.canary import Canary
 from agent_perimeter.instrument.recorder import MAX_RESULT_CHARS, Recorder, redact
@@ -179,3 +180,30 @@ def test_redact_preserves_a_token_only_when_given_its_canary() -> None:
     text = f"https://x.test/desk-{CANARY.token}"
     assert CANARY.token in redact(text, CANARY)
     assert CANARY.token not in redact(text)
+
+
+# --- round 2: token spliced into a secret, deep percent-encoding ---------------
+
+
+def test_a_secret_with_the_canary_token_spliced_inside_is_redacted() -> None:
+    body = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
+    spliced = "sk-" + body[:12] + CANARY.token + body[12:]
+    out = redact(spliced, CANARY)
+    assert _no_fragment(out, body, 8)
+    assert _no_fragment(_recorded({"q": spliced}), body, 8)
+
+
+def test_a_clean_token_next_to_no_secret_is_still_kept() -> None:
+    assert redact(f"x {CANARY.token} y", CANARY) == f"x {CANARY.token} y"
+
+
+def test_deeply_percent_encoded_secrets_are_redacted() -> None:
+    body = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
+    four = "sk%2525252D" + body
+    six = "sk-" + body
+    for _ in range(6):
+        six = quote(six, safe="")
+    for encoded in (four, six):
+        out = redact(encoded)
+        assert _no_fragment(out, body, 8)
+        assert "[REDACTED:" in out

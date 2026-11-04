@@ -25,7 +25,7 @@ from agent_perimeter.checks.secrets.patterns import SECRET_KEY_NAME, SECRET_PATT
 from agent_perimeter.instrument.canary import Canary
 
 MAX_RESULT_CHARS = 2048
-_MAX_DECODE_ROUNDS = 3  # %253D -> %3D -> =
+_MAX_DECODE_ROUNDS = 32  # safety cap; decoding runs to a fixpoint, each round shortens
 
 # The shared patterns anchor on \b for scanner precision (docs/methodology.md
 # depends on that). Here a miss is a leak, so the anchors are dropped.
@@ -50,18 +50,26 @@ def _replacer(name: str) -> Callable[[re.Match[str]], str]:
     return _sub
 
 
+def _apply_patterns(text: str) -> str:
+    for name, pattern in _UNANCHORED:
+        text = pattern.sub(_replacer(name), text)
+    return text
+
+
 def _redact_patterns(text: str, canary: Canary | None) -> str:
     # This run's canary token is split out first so a boundary-free pattern
     # (e.g. "desk-AP-CANARY-..." reading as "sk-...") cannot swallow one. Only
     # the exact token is preserved, never a lookalike.
-    pieces = text.split(canary.token) if canary is not None else [text]
-    redacted: list[str] = []
-    for piece in pieces:
-        for name, pattern in _UNANCHORED:
-            piece = pattern.sub(_replacer(name), piece)
-        redacted.append(piece)
-    separator = canary.token if canary is not None else ""
-    return separator.join(redacted)
+    if canary is None or canary.token not in text:
+        return _apply_patterns(text)
+    split = canary.token.join(_apply_patterns(piece) for piece in text.split(canary.token))
+    # A secret with the token spliced inside leaves both halves below pattern
+    # length. If removing the token reveals more secrets than the split found,
+    # drop the token and keep only the redacted stripped form.
+    stripped = _apply_patterns(text.replace(canary.token, ""))
+    if stripped.count("[REDACTED:") > split.count("[REDACTED:"):
+        return stripped
+    return split
 
 
 def redact(text: str, canary: Canary | None = None) -> str:
