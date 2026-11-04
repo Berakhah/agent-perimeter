@@ -137,3 +137,74 @@ def test_upstream_failure_becomes_a_jsonrpc_error_naming_the_cause() -> None:
     assert reply is not None
     assert reply["error"] == {"code": -32000, "message": "connection refused"}
     assert reply["id"] == 3
+
+
+# --- pagination -------------------------------------------------------------
+# A paginated upstream splits its tools across pages linked by nextCursor.
+# The source tool may sit on a later page than its sink, so the proxy must
+# accumulate every page before deciding which tools are sources.
+
+PAGE_1 = {"tools": [TOOLS[1]], "nextCursor": "c2"}  # sync_to_webhook (sink)
+PAGE_2 = {"tools": [TOOLS[0]]}  # read_file (source), no nextCursor
+
+
+class PagedTransport:
+    def __init__(
+        self, pages: dict[str | None, dict[str, object]], results: dict[str, dict[str, object]]
+    ) -> None:
+        self.pages = pages
+        self.results = results
+        self.calls: list[tuple[str, dict[str, object] | None]] = []
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        self.calls.append((method, params))
+        if method == "tools/list":
+            cursor = params.get("cursor") if params else None
+            return self.pages[cursor]  # type: ignore[index]
+        if method == "tools/call":
+            assert params is not None
+            return self.results[str(params["name"])]
+        return {}
+
+    def close(self) -> None: ...
+
+
+def test_source_on_page_two_with_sink_on_page_one_gets_canary() -> None:
+    proxy = Proxy(PagedTransport({None: PAGE_1, "c2": PAGE_2}, {"read_file": _ok("hello")}), CANARY)
+    first = proxy.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    second = proxy.handle(
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"cursor": "c2"}}
+    )
+    assert first == {"jsonrpc": "2.0", "id": 1, "result": PAGE_1}
+    assert second == {"jsonrpc": "2.0", "id": 2, "result": PAGE_2}
+    reply = _call(proxy, "read_file", {"path": "a"})
+    assert reply is not None
+    assert _texts(reply) == ["hello", CANARY.text]
+
+
+def test_lazy_fetch_follows_cursors_so_a_page_two_source_gets_canary() -> None:
+    upstream = PagedTransport({None: PAGE_1, "c2": PAGE_2}, {"read_file": _ok("hello")})
+    reply = _call(Proxy(upstream, CANARY), "read_file", {"path": "a"})
+    assert reply is not None
+    assert _texts(reply) == ["hello", CANARY.text]
+    assert ("tools/list", {"cursor": "c2"}) in upstream.calls
+
+
+def test_agent_listing_only_page_one_still_finds_page_two_source_before_a_call() -> None:
+    upstream = PagedTransport({None: PAGE_1, "c2": PAGE_2}, {"read_file": _ok("hello")})
+    proxy = Proxy(upstream, CANARY)
+    proxy.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    reply = _call(proxy, "read_file", {"path": "a"})
+    assert reply is not None
+    assert _texts(reply) == ["hello", CANARY.text]
+
+
+def test_repeated_cursor_stops_paging_instead_of_looping() -> None:
+    upstream = PagedTransport(
+        {None: {"tools": [], "nextCursor": "loop"}, "loop": {"tools": [], "nextCursor": "loop"}},
+        {"read_file": _ok("hello")},
+    )
+    reply = _call(Proxy(upstream, CANARY), "read_file", {"path": "a"})
+    assert reply is not None
+    assert _texts(reply) == ["hello"]
+    assert [m for m, _ in upstream.calls].count("tools/list") == 2

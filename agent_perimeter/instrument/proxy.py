@@ -5,6 +5,10 @@ The proxy is an MCP server to the agent and an MCP client (via Transport) to
 the target. It injects the canary only into *successful* results of source
 tools -- tools find_paths reports as the start of a source->sink path -- so a
 tool with no privileged sink behind it is never touched.
+
+Source detection needs every tool, not just the first page: a source on page
+two may have its sink on page one. The proxy therefore accumulates records
+across all pages before computing sources.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ def _error(message_id: object, code: int, text: str) -> dict[str, object]:
     return {"jsonrpc": "2.0", "id": message_id, "error": {"code": code, "message": text}}
 
 
-def _source_names(listing: dict[str, object]) -> frozenset[str]:
+def _records_of(listing: dict[str, object]) -> list[ToolRecord]:
     raw = listing.get("tools")
     records: list[ToolRecord] = []
     for entry in raw if isinstance(raw, list) else []:
@@ -41,7 +45,17 @@ def _source_names(listing: dict[str, object]) -> frozenset[str]:
                 annotations=annotations if isinstance(annotations, dict) else {},
             )
         )
-    return frozenset(source for source, _ in find_paths(build_graph(records)))
+    return records
+
+
+def _next_cursor(listing: dict[str, object]) -> str | None:
+    cursor = listing.get("nextCursor")
+    return cursor if isinstance(cursor, str) and cursor else None
+
+
+def _cursor_of(params: dict[str, object] | None) -> str | None:
+    cursor = params.get("cursor") if params else None
+    return cursor if isinstance(cursor, str) and cursor else None
 
 
 def _text_of(result: dict[str, object]) -> str:
@@ -56,7 +70,10 @@ class Proxy:
         self._upstream = upstream
         self.canary = canary if canary is not None else new_canary()
         self.recorder = Recorder(self.canary)
-        self._sources: frozenset[str] | None = None
+        self._records: dict[str, ToolRecord] = {}  # accumulated across pages, by name
+        self._sources: frozenset[str] = frozenset()
+        self._listed = False  # whether any tools/list reply has been absorbed
+        self._pending: str | None = None  # nextCursor not yet followed
         self._lock = threading.Lock()  # one session; Transport is not re-entrant
 
     def handle(self, message: dict[str, object]) -> dict[str, object] | None:
@@ -91,11 +108,45 @@ class Proxy:
             }
         if method == "tools/list":
             listing = self._upstream.request("tools/list", params)
-            self._sources = _source_names(listing)
+            self._absorb(listing, _cursor_of(params))
             return listing
         if method == "tools/call":
             return self._call_tool(params)
         return self._upstream.request(method, params)
+
+    def _absorb(self, listing: dict[str, object], cursor: str | None) -> None:
+        """Fold one tools/list page into the accumulated listing.
+
+        A reply to a request without a cursor starts a fresh listing; one with
+        a cursor adds to it. A later page's entry for a name replaces the
+        earlier one.
+        """
+        if cursor is None:
+            self._records = {}
+        for record in _records_of(listing):
+            self._records[record.name] = record
+        self._listed = True
+        self._pending = _next_cursor(listing)
+        self._sources = frozenset(
+            source for source, _ in find_paths(build_graph(list(self._records.values())))
+        )
+
+    def _page_through(self, cursor: str | None) -> None:
+        """Follow nextCursor from `cursor` (None = first page) until exhausted.
+
+        Stops when a cursor repeats, so a server that loops cannot hang the proxy.
+        """
+        requested: set[str] = set()
+        while True:
+            params: dict[str, object] | None = {"cursor": cursor} if cursor is not None else None
+            listing = self._upstream.request("tools/list", params)
+            self._absorb(listing, cursor)
+            following = _next_cursor(listing)
+            if following is None or following in requested:
+                self._pending = None
+                return
+            requested.add(following)
+            cursor = following
 
     def _call_tool(self, params: dict[str, object] | None) -> dict[str, object] | tuple[int, str]:
         name = params.get("name") if params else None
@@ -104,8 +155,8 @@ class Proxy:
                 -32602,
                 "tools/call needs a string 'name'. Send params.name with the tool to call.",
             )
-        if self._sources is None:
-            self._sources = _source_names(self._upstream.request("tools/list"))
+        if not self._listed or self._pending is not None:
+            self._page_through(self._pending)
         result = self._upstream.request("tools/call", params)
         inject = name in self._sources and result.get("isError") is not True
         self.recorder.record_call(
