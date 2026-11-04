@@ -39,3 +39,11 @@ def test_agent_adapter_has_a_positive_and_a_clean_control_case() -> None:
     assert cases["agent_followed_canary"].expect_findings == ("injection.agent_adapter",)
     assert cases["agent_ignored_canary_control"].expect_clean == ("injection.agent_adapter",)
     assert cases["agent_followed_canary"].transcript == "obedient.json"
+
+
+def test_agent_adapter_pass_through_case_still_fires() -> None:
+    # The corpus records only whether a check fired; its LOW severity is
+    # asserted in tests/checks/injection/test_agent_adapter_canary.py.
+    case = {c.id: c for c in load_corpus()}["agent_copied_canary_pass_through"]
+    assert case.transcript == "pass_through.json"
+    assert case.expect_findings == ("injection.agent_adapter",)
