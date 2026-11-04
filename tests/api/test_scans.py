@@ -99,6 +99,7 @@ def test_a_passive_scan_completes_and_status_reports_it(client: TestClient) -> N
     assert "server_discover" in body["features_observed"]
     assert body["findings_count"] >= 0
     assert body["skipped_count"] >= 0
+    assert body["notes"] == []  # a clean listing carries no scan notes
 
 
 def test_findings_graph_and_sarif_are_retrievable_once_complete(client: TestClient) -> None:
@@ -137,6 +138,7 @@ def test_event_stream_carries_a_terminal_frame_with_skipped(client: TestClient) 
     assert terminal["skipped"], "passive mode must skip every requires_auth check"
     assert all({"check_id", "reason", "detail"} <= frame.keys() for frame in terminal["skipped"])
     assert terminal["completed"] + len(terminal["skipped"]) == terminal["total"]
+    assert terminal["notes"] == []
 
 
 def test_a_stdio_target_is_refused_with_a_400_naming_the_cli(client: TestClient) -> None:

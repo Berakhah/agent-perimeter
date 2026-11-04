@@ -13,6 +13,7 @@ queue/broker infrastructure anywhere in this repo to reach for.
 from __future__ import annotations
 
 import threading
+from collections.abc import Sequence
 from dataclasses import asdict
 from typing import Any
 
@@ -45,7 +46,15 @@ class EventLog:
         with self._lock:
             self._frames.setdefault(scan_id, []).append(asdict(frame))
 
-    def finish(self, scan_id: str, *, skipped: list[Skipped], completed: int, total: int) -> None:
+    def finish(
+        self,
+        scan_id: str,
+        *,
+        skipped: list[Skipped],
+        completed: int,
+        total: int,
+        notes: Sequence[str] = (),
+    ) -> None:
         """The terminal frame. Skipped checks are in the stream, not
         omitted — spec §7.3: a skipped check is never silently absent from
         the count, and the live screen is where that rule is most tempting
@@ -60,6 +69,7 @@ class EventLog:
                         {"check_id": s.check_id, "reason": s.reason.value, "detail": s.detail}
                         for s in skipped
                     ],
+                    "notes": list(notes),
                 }
             )
             self._done[scan_id] = True

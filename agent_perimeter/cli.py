@@ -260,7 +260,11 @@ def scan(
 
     summary = " ".join(
         part
-        for part in (summarise_skips(outcome.skipped), summarise_errors(outcome.errored))
+        for part in (
+            summarise_skips(outcome.skipped),
+            summarise_errors(outcome.errored),
+            *outcome.notes,
+        )
         if part
     )
     if not findings:
@@ -294,6 +298,7 @@ def scan(
                     tool_version="0.1.0",
                     fingerprint=result,
                     workspace=workspace,
+                    notes=outcome.notes,
                 ),
                 indent=2,
             )
@@ -312,6 +317,7 @@ def scan(
                 fingerprint=result,
                 target=target,
                 skipped=outcome.skipped,
+                notes=outcome.notes,
                 scores=published,
             ),
             encoding="utf-8",

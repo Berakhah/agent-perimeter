@@ -166,3 +166,51 @@ def test_early_stop_is_logged(caplog: pytest.LogCaptureFixture) -> None:
 def test_page_two_transport_error_keeps_page_one_tools() -> None:
     transport = PagedTransport({None: {"tools": [{"name": "a"}], "nextCursor": "gone"}})
     assert [t.name for t in enumerate_tools(transport)] == ["a"]
+
+
+def test_page_n_failure_is_logged_and_noted(caplog: pytest.LogCaptureFixture) -> None:
+    transport = PagedTransport({None: {"tools": [{"name": "a"}], "nextCursor": "gone"}})
+    notes: list[str] = []
+    with caplog.at_level(logging.WARNING):
+        enumerate_tools(transport, notes)
+    assert "page 2 failed" in caplog.text
+    assert len(notes) == 1
+    assert "page 2" in notes[0]
+    assert "1 page(s) received" in notes[0]
+
+
+def test_page_cap_is_logged_and_noted(caplog: pytest.LogCaptureFixture) -> None:
+    class Endless:
+        calls = 0
+
+        def request(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            self.calls += 1
+            return {"tools": [], "nextCursor": f"c{self.calls}"}
+
+        def close(self) -> None: ...
+
+    notes: list[str] = []
+    with caplog.at_level(logging.WARNING):
+        enumerate_tools(Endless(), notes)
+    assert "page cap" in caplog.text or "incomplete" in caplog.text
+    assert len(notes) == 1
+    assert str(MAX_TOOL_PAGES) in notes[0]
+
+
+def test_repeat_cursor_note_names_cursor_and_page_count() -> None:
+    transport = PagedTransport(
+        {None: {"tools": [], "nextCursor": "loop"}, "loop": {"tools": [], "nextCursor": "loop"}}
+    )
+    notes: list[str] = []
+    enumerate_tools(transport, notes)
+    assert len(notes) == 1
+    assert "'loop'" in notes[0]
+    assert "2 page(s)" in notes[0]
+
+
+def test_clean_listing_adds_no_notes() -> None:
+    notes: list[str] = []
+    enumerate_tools(PagedTransport({None: {"tools": [{"name": "a"}]}}), notes)
+    assert notes == []

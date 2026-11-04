@@ -1,4 +1,8 @@
 # tests/instrument/test_proxy.py
+import logging
+
+import pytest
+
 from agent_perimeter.discover.enumerate import MAX_TOOL_PAGES
 from agent_perimeter.instrument.canary import Canary
 from agent_perimeter.instrument.proxy import Proxy
@@ -211,6 +215,21 @@ def test_repeated_cursor_stops_paging_instead_of_looping() -> None:
     assert reply is not None
     assert _texts(reply) == ["hello"]
     assert [m for m, _ in upstream.calls].count("tools/list") == 2
+
+
+def test_page_cap_stop_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    class Endless(PagedTransport):
+        def request(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            self.calls.append((method, params))
+            if method == "tools/list":
+                return {"tools": [], "nextCursor": f"c{len(self.calls)}"}
+            return self.results[str((params or {})["name"])]
+
+    with caplog.at_level(logging.WARNING):
+        _call(Proxy(Endless({}, {"read_file": _ok("hello")}), CANARY), "read_file", {"path": "a"})
+    assert "instrument listing is incomplete" in caplog.text
 
 
 def test_page_cap_stops_a_hostile_upstream_with_endless_distinct_cursors() -> None:

@@ -47,6 +47,15 @@
 <p>No checks were skipped.</p>
 {% endif %}
 
+{% if notes %}
+<h2>Scan notes</h2>
+<ul data-testid="scan-notes">
+{% for n in notes %}
+<li>{{ n }}</li>
+{% endfor %}
+</ul>
+{% endif %}
+
 <h2>Capability graph</h2>
 <table>
 <tr><th>Tool</th><th>Capability</th><th>Derived from</th><th>Why</th></tr>

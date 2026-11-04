@@ -144,6 +144,9 @@ class ScanOutcome:
     """What this scan saw; the CLI writes it with --snapshot, the API
     persists it as tool rows. Always present, even with nothing to compare."""
     drift_events: tuple[DriftEvent, ...] = ()
+    notes: tuple[str, ...] = ()
+    """Scan-level caveats, e.g. a tool listing that stopped early. Rendered
+    wherever skipped checks are, so a truncated listing is never silent."""
 
 
 def run_scan(
@@ -208,6 +211,8 @@ def run_scan(
         from agent_perimeter.checks.static.auth_probe import probe_auth_challenge
 
         raw: dict[str, dict[str, object]] = {}
+        # raw["tools/list"] is page 1 only (cache hints read it); the full
+        # listing comes from enumerate_tools below.
         for method in ("server/discover", "tools/list"):
             try:
                 raw[method] = transport.request(method)
@@ -237,7 +242,8 @@ def run_scan(
         if extra_raw:
             raw.update(extra_raw)
 
-        tools = enumerate_tools(transport)
+        notes: list[str] = []
+        tools = enumerate_tools(transport, notes)
         ambiguous = compute_ambiguous_tools(tools, target)
 
         snapshot = ToolSnapshot.from_tools(target, tools, taken_at=now)
@@ -308,4 +314,5 @@ def run_scan(
         edges=edges,
         snapshot=snapshot,
         drift_events=drift_events,
+        notes=tuple(notes),
     )

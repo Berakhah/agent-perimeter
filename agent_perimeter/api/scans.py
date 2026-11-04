@@ -196,6 +196,7 @@ def _run_and_record(
         skipped=outcome.skipped,
         completed=event_count,
         total=event_count + len(outcome.skipped),
+        notes=outcome.notes,
     )
     _persist(state, scan_id, scan_request, outcome, lookup)
 
@@ -368,6 +369,7 @@ def get_scan(scan_id: str, request: Request) -> dict[str, object]:
             "findings_count": len(outcome.findings),
             "skipped_count": len(outcome.skipped),
             "errored_count": len(outcome.errored),
+            "notes": list(outcome.notes),
         }
     return body
 
@@ -404,6 +406,7 @@ def get_sarif(scan_id: str, request: Request) -> dict[str, object]:
         tool_version="0.1.0",
         fingerprint=outcome.fingerprint,
         workspace=workspace,
+        notes=outcome.notes,
     )
 
 

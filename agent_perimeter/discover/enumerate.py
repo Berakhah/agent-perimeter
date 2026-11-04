@@ -25,8 +25,12 @@ class ToolRecord:
     annotations: dict[str, object] = field(default_factory=dict)
 
 
-def enumerate_tools(transport: Transport) -> list[ToolRecord]:
+def enumerate_tools(transport: Transport, notes: list[str] | None = None) -> list[ToolRecord]:
     """List every tool, following `nextCursor` across pages.
+
+    `notes`, when given, receives one sentence for each early stop (repeat
+    cursor, page cap, later-page failure) so the caller can surface that the
+    listing is incomplete.
 
     A later page's entry for a name seen on an earlier page replaces it, keeping
     first-seen order. Duplicate names within one page are all kept. Paging
@@ -51,6 +55,12 @@ def enumerate_tools(transport: Transport) -> list[ToolRecord]:
                     exc,
                     len(records),
                 )
+                _note(
+                    notes,
+                    f"Tool listing incomplete: page {page} of tools/list failed with a "
+                    f"transport error; checks ran on the {page - 1} page(s) received. "
+                    "Re-run once the server answers every page.",
+                )
             break
         raw_tools = listing.get("tools")
         if isinstance(raw_tools, list):
@@ -70,6 +80,13 @@ def enumerate_tools(transport: Transport) -> list[ToolRecord]:
             break
         if following in seen:
             logger.warning("tools/list cursor repeated; listing may be incomplete")
+            shown = following if len(following) <= 40 else following[:40] + "..."
+            _note(
+                notes,
+                f"Tool listing incomplete: the server repeated cursor {shown!r} after "
+                f"{page} page(s); checks ran on the {page} page(s) received. "
+                "Re-run once the server's pagination is fixed.",
+            )
             break
         seen.add(following)
         cursor = following
@@ -78,7 +95,18 @@ def enumerate_tools(transport: Transport) -> list[ToolRecord]:
             "tools/list still had a nextCursor after %d pages; listing is incomplete",
             MAX_TOOL_PAGES,
         )
+        _note(
+            notes,
+            f"Tool listing incomplete: the server still offered a next page after "
+            f"{MAX_TOOL_PAGES} pages (the page cap); checks ran on the {MAX_TOOL_PAGES} "
+            "pages received. Re-run against a server that returns a bounded listing.",
+        )
     return records
+
+
+def _note(notes: list[str] | None, text: str) -> None:
+    if notes is not None:
+        notes.append(text)
 
 
 def _parse(entry: object) -> ToolRecord | None:
