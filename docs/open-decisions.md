@@ -218,15 +218,18 @@ graph-sink change was ruled out of that wave on purpose.
   token matches. Fix: rate CRITICAL when the receiving tool is a sink in the
   capability graph (`find_paths` over the scanned listing), keeping the name
   heuristic as the fallback when no listing is available.
-  **Resolved 2026-11-04.** The receiving tool now rates CRITICAL when it is a
-  sink in the capability graph or passes `_is_privileged`; otherwise MEDIUM.
-  Sinks come from two places, unioned: the proxy records the sink names it
-  computed under `canary.sinks` in the transcript (refreshed whenever the
-  source set is recomputed), and the adapter runs `find_paths` over
-  `context.tools` when a listing is present. A missing or malformed `sinks`
-  field falls back to the listing plus the name heuristic. The finding title
-  says which reason applied, "a sink in the capability graph" or "a
-  privileged-named tool". Only firing is measured, so the corpus counts in
+  **Resolved 2026-11-04.** The receiving tool rates CRITICAL when it is a
+  backed sink in the capability graph or passes `_is_privileged`; otherwise
+  MEDIUM. A sink is backed when its privileged-capability edge on the
+  source->sink path is schema-, name- or probe-derived; a sink resting only on
+  description prose (for example a net_out edge at confidence 0.4) stays
+  MEDIUM and the finding names it as a possible sink. The proxy records backed
+  sinks under `canary.sinks` and description-only ones under
+  `canary.weak_sinks`, refreshed on every tools/list page. A transcript with a
+  `sinks` list is judged on it plus the name heuristic; only an older
+  transcript without one falls back to `find_paths` over the scanned listing,
+  so a listing from another target cannot upgrade a transcript. The title says
+  which reason applied. Only firing is measured, so the corpus counts in
   `docs/methodology.md` did not move.
 - **FU-2. `agent_perimeter/discover/enumerate.py` ignores `nextCursor`.**
   Discovery reads only the first `tools/list` page, so every check that

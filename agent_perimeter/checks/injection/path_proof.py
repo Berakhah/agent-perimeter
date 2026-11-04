@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from agent_perimeter._contracts import Claim, Method, Severity
+from agent_perimeter._contracts import Claim, Derivation, Method, Severity
 from agent_perimeter.checks.context import ScanContext
 from agent_perimeter.graph.build import build_graph
 from agent_perimeter.graph.policy import DERIVATION_RANK, capabilities_by_tool
@@ -40,6 +40,24 @@ def find_paths(edges: list[CapabilityEdge]) -> list[tuple[str, str]]:
     sources = [t for t, caps in grouped.items() if caps & EXTERNAL_SOURCES]
     sinks = [t for t, caps in grouped.items() if caps & PRIVILEGED_SINKS]
     return [(s, k) for s in sources for k in sinks if s != k]
+
+
+def path_sinks(edges: list[CapabilityEdge]) -> tuple[frozenset[str], frozenset[str]]:
+    """Split the sinks of source->sink paths into (backed, description_only).
+
+    A sink is backed when at least one of its privileged-capability edges is
+    schema-, name- or probe-derived. One whose privileged edges all come from
+    description prose is only a possible sink.
+    """
+    sinks = {sink for _, sink in find_paths(edges)}
+    backed = {
+        e.tool
+        for e in edges
+        if e.tool in sinks
+        and e.capability in PRIVILEGED_SINKS
+        and e.derivation is not Derivation.DESCRIPTION
+    }
+    return frozenset(backed), frozenset(sinks - backed)
 
 
 @dataclass(frozen=True)

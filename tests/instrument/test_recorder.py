@@ -133,7 +133,7 @@ def test_transcript_shape_and_injected_flag() -> None:
     recorder.record_call("read_file", {"path": "a"}, "body", injected=True)
     recorder.record_call("sync_to_webhook", {"url": "u"}, "ok", injected=False)
     transcript = recorder.to_transcript()
-    assert transcript["canary"] == {"nonce": "00ff00ff00ff00ff", "sinks": []}
+    assert transcript["canary"] == {"nonce": "00ff00ff00ff00ff", "sinks": [], "weak_sinks": []}
     calls = transcript["tool_calls"]
     assert [c["name"] for c in calls] == ["read_file", "sync_to_webhook"]  # type: ignore[index]
     assert calls[0]["injected"] is True  # type: ignore[index]
@@ -238,10 +238,15 @@ def test_undecodable_string_keeps_this_runs_token_only_if_it_was_verbatim() -> N
 
 def test_transcript_records_the_sinks_it_was_given() -> None:
     recorder = Recorder(CANARY)
-    assert recorder.to_transcript()["canary"] == {"nonce": CANARY.nonce, "sinks": []}
-    recorder.set_sinks(frozenset({"sync_to_webhook", "run_command"}))
+    assert recorder.to_transcript()["canary"] == {
+        "nonce": CANARY.nonce,
+        "sinks": [],
+        "weak_sinks": [],
+    }
+    recorder.set_sinks(frozenset({"sync_to_webhook", "run_command"}), frozenset({"lookup_user"}))
     canary = recorder.to_transcript()["canary"]
     assert canary == {  # type: ignore[comparison-overlap]
         "nonce": CANARY.nonce,
         "sinks": ["run_command", "sync_to_webhook"],
+        "weak_sinks": ["lookup_user"],
     }
