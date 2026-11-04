@@ -37,8 +37,8 @@ subscription story" path without that tradeoff having been weighed on paper.
 harness". That never matched the code: `agent_perimeter/checks/injection/agent_adapter.py`
 bundles no agent and calls no model. It reads a transcript the client exports
 from *their own* agent run against a server carrying the tracer marker
-(`docs/byo-agent.md`; the instrumenting proxy it describes, an `instrument`
-command, is not implemented yet, so injecting the marker is manual today). The split is: Claim A (an injection path exists) is
+(`docs/byo-agent.md`; the instrumenting proxy it describes, the `instrument` command, was
+implemented 2026-11-04, see `docs/superpowers/specs/2026-11-04-instrument-proxy-design.md`). The split is: Claim A (an injection path exists) is
 proven by the scan itself, deterministically, with no agent
 (`injection.path_proof`); Claim B (the client's agent acts on it) is measured
 from the client's transcript. Rationale for BYO: no quota or model cost, cannot

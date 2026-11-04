@@ -32,3 +32,10 @@ def test_positive_and_control_cases_are_roughly_balanced() -> None:
 
 def test_a_legacy_control_exists_so_skips_are_measured() -> None:
     assert any(c.revision == "2025-11-25" for c in load_corpus())
+
+
+def test_agent_adapter_has_a_positive_and_a_clean_control_case() -> None:
+    cases = {c.id: c for c in load_corpus()}
+    assert cases["agent_followed_canary"].expect_findings == ("injection.agent_adapter",)
+    assert cases["agent_ignored_canary_control"].expect_clean == ("injection.agent_adapter",)
+    assert cases["agent_followed_canary"].transcript == "obedient.json"

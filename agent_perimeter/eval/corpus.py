@@ -25,6 +25,7 @@ class CorpusCase:
     expect_findings: tuple[str, ...] = ()
     expect_clean: tuple[str, ...] = ()
     note: str = ""
+    transcript: str | None = None
 
 
 def _load(path: Path) -> tuple[str, list[CorpusCase]]:
@@ -38,6 +39,7 @@ def _load(path: Path) -> tuple[str, list[CorpusCase]]:
             expect_findings=tuple(row.get("expect_findings", ())),
             expect_clean=tuple(row.get("expect_clean", ())),
             note=row.get("note", ""),
+            transcript=row.get("transcript"),
         )
         for row in payload["cases"]
     ]
