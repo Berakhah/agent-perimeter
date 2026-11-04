@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12+, pydantic v2, SQLAlchemy 2 + alembic, FastAPI, typer, `difflib`; Next.js 15 + `bok-ui` on the web side; pytest, Playwright.
 
-**Spec:** `docs/superpowers/specs/2026-09-15-drift-detection-design.md` (rev 2). Read it first; every task below cites its section.
+**Spec:** `docs/process/specs/2026-09-15-drift-detection-design.md` (rev 2). Read it first; every task below cites its section.
 
 ## Global Constraints
 
@@ -3070,7 +3070,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 - Modify: `tests/test_cli_integration.py`
 - Create: `tests/report/golden/drift_scan.sarif.json`; Modify: `tests/report/test_sarif.py`
 - Modify: `README.md`, `docs/open-decisions.md`, `docs/byo-agent.md`, `docs/security.md`
-- Modify: `docs/superpowers/specs/2026-09-15-drift-detection-design.md` §9a
+- Modify: `docs/process/specs/2026-09-15-drift-detection-design.md` §9a
 
 - [ ] **Step 1: Write the end-to-end test and the golden test**
 
@@ -3132,7 +3132,7 @@ Exit `3` means at least one tool's description, schema or annotations changed, o
 ```markdown
 ### Drift detection (15 Sep 2026)
 
-Decided in `docs/superpowers/specs/2026-09-15-drift-detection-design.md` §2 (D1–D5): compare-on-scan, five drift fields, description text persisted, drift is a Finding, snapshot source is pluggable. One standing exception recorded: `GET /api/scans/{id}/drift` reads from the database. Task 9's "DB is audit-only" ruling still holds for findings/graph/SARIF; drift is history and the in-process cache cannot hold history across restarts.
+Decided in `docs/process/specs/2026-09-15-drift-detection-design.md` §2 (D1–D5): compare-on-scan, five drift fields, description text persisted, drift is a Finding, snapshot source is pluggable. One standing exception recorded: `GET /api/scans/{id}/drift` reads from the database. Task 9's "DB is audit-only" ruling still holds for findings/graph/SARIF; drift is history and the in-process cache cannot hold history across restarts.
 ```
 
 `docs/byo-agent.md` — add a "Snapshots" section: the `ToolSnapshot` JSON fields (`version`, `target`, `taken_at` ISO-8601 UTC, `scan_id`, `tools[]` each with `name`, `description`, `input_schema`, `annotations`, `description_hash`, `schema_hash`, `annotations_hash`); that `drift scan:<id> scan:<id> --database-url …` reads the same rows the API uses; that target identity is the exact target string and `--image` is not part of it.

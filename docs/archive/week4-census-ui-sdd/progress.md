@@ -1,8 +1,8 @@
-# SDD ledger — plan: docs/superpowers/plans/2026-08-11-agent-perimeter-week4-census-ui.md
+# SDD ledger — plan: docs/process/plans/2026-08-11-agent-perimeter-week4-census-ui.md
 
 Worktree: .worktrees/week4-census-ui (branch week4-census-ui, forked from main @ 14a5b24)
-Spec: docs/superpowers/specs/2026-08-11-agent-perimeter-design.md
-Revision (binding): docs/superpowers/specs/2026-08-29-agent-perimeter-plan-revision.md — wins over plan text on conflict.
+Spec: docs/process/specs/2026-08-11-agent-perimeter-design.md
+Revision (binding): docs/process/specs/2026-08-29-agent-perimeter-plan-revision.md — wins over plan text on conflict.
 
 ## Pre-flight scan
 
@@ -885,7 +885,7 @@ Verified against real state before dispatch (same discipline as Tasks 9-14).
    `DriftEvent {tool_id, field, old_hash, new_hash, detected_at, severity}`
    (`agent_perimeter/db/models.py:150-159`) are real DB columns, confirmed — the brief's "already
    in the v1 schema" claim is accurate. But nothing reads either back over HTTP: grepped the
-   entire plan (`docs/superpowers/plans/2026-08-11-agent-perimeter-week4-census-ui.md`) for
+   entire plan (`docs/process/plans/2026-08-11-agent-perimeter-week4-census-ui.md`) for
    `drift`/`DriftEvent`/a scans-by-target listing route — none exists anywhere in the 17-task
    list. Task 9's own "Produces" line (plan line 1480) enumerates the complete, final route set
    this project will ever have (`POST /api/scans`, `GET /api/scans/{id}`, `.../events`,
@@ -1211,7 +1211,7 @@ Task 17: complete (commits f4477ea..e4d9564, review clean — Approved, spec ✅
 
 ## All 17 tasks complete.
 
-Every task in `docs/superpowers/plans/2026-08-11-agent-perimeter-week4-census-ui.md` is now
+Every task in `docs/process/plans/2026-08-11-agent-perimeter-week4-census-ui.md` is now
 `complete` in this ledger, each with a clean final review (0 open Critical/Important). Per
 superpowers:subagent-driven-development, the next step would ordinarily be one final whole-branch
 review followed by superpowers:finishing-a-development-branch — but that final step involves

@@ -1,6 +1,6 @@
 """GitHub Action entry point -- ``python -m agent_perimeter.action``.
 
-Spec: docs/superpowers/specs/2026-09-16-github-action-design.md.
+Spec: docs/process/specs/2026-09-16-github-action-design.md.
 
 Everything here is glue around the unchanged ``agent-perimeter scan`` CLI:
 read the ``INPUT_*`` variables GitHub sets for an action, decide whether

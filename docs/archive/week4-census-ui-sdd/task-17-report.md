@@ -92,7 +92,7 @@ sandbox run**, not a genuine clean-machine run — see below and
 11. **`NOTICE`** (new).
 12. **`README.md`** (new — confirmed truly absent before writing it,
     ruling 4). Content per the brief's Step 6: what it is, the positioning
-    sentence quoted verbatim from `docs/superpowers/specs/2026-08-11-agent-
+    sentence quoted verbatim from `docs/process/specs/2026-08-11-agent-
     perimeter-design.md` ("the first MCP scanner that knows which revision
     of the protocol it is looking at, and the only one that publishes its
     own precision and recall"), the scope-file requirement stated up front

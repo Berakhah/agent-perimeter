@@ -8,8 +8,8 @@
 
 **Tech Stack:** Python 3.12+, `uv`, `ruff`, `mypy --strict`, `pytest`, `hypothesis`, Pydantic v2, SQLAlchemy 2 + `alembic`, Postgres 16, `jsonschema` (SARIF validation).
 
-**Spec:** `docs/superpowers/specs/2026-08-11-agent-perimeter-design.md`
-**Revision (binding):** `docs/superpowers/specs/2026-08-29-agent-perimeter-plan-revision.md` — **read it first.** Where it and this plan disagree, the revision wins.
+**Spec:** `docs/process/specs/2026-08-11-agent-perimeter-design.md`
+**Revision (binding):** `docs/process/specs/2026-08-29-agent-perimeter-plan-revision.md` — **read it first.** Where it and this plan disagree, the revision wins.
 
 > **Blocking corrections to this week, summarised.** Evidence and detail in the revision.
 > - **Task 24 — the SARIF emitter cannot render, and its test enforces the failure.** GitHub code scanning **requires** `physicalLocation` with `artifactLocation.uri` and a four-field `region`, and does not support `logicalLocations` at all. Emit **both**: anchor config-derived findings to the real file and line, and anchor runtime findings to a scan-profile artifact this tool writes (`.agent-perimeter/<slug>.mcp-profile.json`, one JSON line per observation). Add `properties["security-severity"]` and `partialFingerprints.primaryLocationLineHash`. Delete `test_result_uses_logical_locations_not_physical`. Revision §1.1.
