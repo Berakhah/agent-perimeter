@@ -1,0 +1,139 @@
+# tests/instrument/test_proxy.py
+from agent_perimeter.instrument.canary import Canary
+from agent_perimeter.instrument.proxy import Proxy
+from agent_perimeter.transport.base import TransportError
+
+CANARY = Canary(nonce="00ff00ff00ff00ff")
+
+TOOLS = [
+    {
+        "name": "read_file",
+        "description": "Read a file from the local workspace.",
+        "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}},
+    },
+    {
+        "name": "sync_to_webhook",
+        "description": "Sync a local file to a remote webhook.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}, "url": {"type": "string"}},
+        },
+    },
+]
+
+
+class FakeTransport:
+    def __init__(self, results: dict[str, dict[str, object]] | None = None) -> None:
+        self.calls: list[tuple[str, dict[str, object] | None]] = []
+        self.results = results or {}
+        self.fail_with: TransportError | None = None
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        self.calls.append((method, params))
+        if self.fail_with is not None:
+            raise self.fail_with
+        if method == "tools/list":
+            return {"tools": TOOLS}
+        if method == "tools/call":
+            assert params is not None
+            return self.results[str(params["name"])]
+        return {"echo": method}
+
+    def close(self) -> None: ...
+
+
+def _ok(text: str) -> dict[str, object]:
+    return {"content": [{"type": "text", "text": text}]}
+
+
+def _call(proxy: Proxy, name: str, arguments: dict[str, object] | None = None, mid: int = 1):
+    return proxy.handle(
+        {
+            "jsonrpc": "2.0",
+            "id": mid,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments or {}},
+        }
+    )
+
+
+def _texts(reply: dict[str, object]) -> list[str]:
+    return [b["text"] for b in reply["result"]["content"]]  # type: ignore[index]
+
+
+def test_source_tool_success_gets_exactly_one_canary_block() -> None:
+    proxy = Proxy(FakeTransport({"read_file": _ok("hello")}), CANARY)
+    reply = _call(proxy, "read_file", {"path": "a"})
+    assert reply is not None
+    assert _texts(reply) == ["hello", CANARY.text]
+
+
+def test_non_source_tool_is_not_touched() -> None:
+    proxy = Proxy(FakeTransport({"sync_to_webhook": _ok("sent")}), CANARY)
+    reply = _call(proxy, "sync_to_webhook", {"path": "a", "url": "u"})
+    assert reply is not None
+    assert _texts(reply) == ["sent"]
+
+
+def test_error_results_are_never_injected() -> None:
+    err = {"isError": True, "content": [{"type": "text", "text": "boom"}]}
+    proxy = Proxy(FakeTransport({"read_file": err}), CANARY)
+    reply = _call(proxy, "read_file")
+    assert reply is not None
+    assert _texts(reply) == ["boom"]
+
+
+def test_tools_list_is_forwarded_unchanged() -> None:
+    proxy = Proxy(FakeTransport(), CANARY)
+    reply = proxy.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    assert reply == {"jsonrpc": "2.0", "id": 1, "result": {"tools": TOOLS}}
+
+
+def test_unknown_methods_are_forwarded_unchanged() -> None:
+    upstream = FakeTransport()
+    reply = Proxy(upstream, CANARY).handle({"jsonrpc": "2.0", "id": 7, "method": "ping"})
+    assert reply == {"jsonrpc": "2.0", "id": 7, "result": {"echo": "ping"}}
+    assert ("ping", None) in upstream.calls
+
+
+def test_initialize_is_answered_locally_and_not_forwarded() -> None:
+    upstream = FakeTransport()
+    reply = Proxy(upstream, CANARY).handle(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25"},
+        }
+    )
+    assert reply is not None
+    assert reply["result"]["protocolVersion"] == "2025-11-25"  # type: ignore[index]
+    assert upstream.calls == []
+
+
+def test_notifications_are_acknowledged_without_forwarding() -> None:
+    upstream = FakeTransport()
+    assert (
+        Proxy(upstream, CANARY).handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        is None
+    )
+    assert upstream.calls == []
+
+
+def test_calls_are_recorded_in_order_and_injection_is_flagged() -> None:
+    proxy = Proxy(FakeTransport({"read_file": _ok("body"), "sync_to_webhook": _ok("ok")}), CANARY)
+    _call(proxy, "read_file", {"path": "a"}, 1)
+    _call(proxy, "sync_to_webhook", {"url": CANARY.token}, 2)
+    calls = proxy.recorder.to_transcript()["tool_calls"]
+    assert [c["name"] for c in calls] == ["read_file", "sync_to_webhook"]  # type: ignore[index]
+    assert calls[0].get("injected") is True  # type: ignore[index]
+    assert "injected" not in calls[1]  # type: ignore[operator]
+
+
+def test_upstream_failure_becomes_a_jsonrpc_error_naming_the_cause() -> None:
+    upstream = FakeTransport()
+    upstream.fail_with = TransportError("connection refused", code=-32000)
+    reply = Proxy(upstream, CANARY).handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})
+    assert reply is not None
+    assert reply["error"] == {"code": -32000, "message": "connection refused"}
+    assert reply["id"] == 3
