@@ -257,10 +257,17 @@ def render_summary(
     if by_level:
         rows += ["", "| Severity | Count |", "|---|---|"]
         rows += [f"| {level} | {count} |" for level, count in sorted(by_level.items())]
-    if first_run:
+    if first_run and rc == 0:
         rows += [
             "",
             f"Baseline written to `{inputs.baseline}`. Commit it to arm the drift gate.",
+        ]
+    elif first_run:
+        # e.g. the CLI refuses a snapshot of an incomplete tool listing (exit 2).
+        rows += [
+            "",
+            f"No baseline was written to `{inputs.baseline}`: the scan exited {rc}. "
+            "Fix the cause in the log above and re-run.",
         ]
     elif verdict == "true":
         rows += [
@@ -326,7 +333,7 @@ def main(
     if sarif is not None:
         outputs["sarif-file"] = inputs.sarif
     outputs["snapshot-file"] = inputs.baseline if first_run else inputs.snapshot
-    outputs["baseline-created"] = "true" if first_run else "false"
+    outputs["baseline-created"] = "true" if first_run and rc == 0 else "false"
     outputs["drift"] = drift_verdict(sarif, first_run=first_run)
     outputs["finding-count"] = str(len(sarif_results(sarif)))
     write_outputs(gh_output, outputs)

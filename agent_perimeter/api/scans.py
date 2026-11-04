@@ -224,6 +224,7 @@ def _persist(
                 finished_at=datetime.now(UTC),
                 mode=scan_request.mode.value,
                 tool_version="0.1.0",
+                listing_complete=outcome.listing_complete,
             )
             session.add(scan_row)
             # Flush the parent row before any child row is added. Scan/Tool/

@@ -131,3 +131,65 @@ def test_skip_detail_distinguishes_no_record_from_unreachable_source(stub: None)
     assert none.skipped[0].reason is SkipReason.NO_BASELINE
     assert "no earlier scan" in none.skipped[0].detail
     assert "database was unreachable" in down.skipped[0].detail
+
+
+class _TruncatedTransport:
+    """Page 1 lists read_file and points at page 2; page 2 always fails."""
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        from agent_perimeter.transport.base import TransportError
+
+        if method == "tools/list":
+            if params and params.get("cursor") == "c2":
+                raise TransportError("page 2 down")
+            return {
+                "tools": [
+                    {
+                        "name": "read_file",
+                        "description": "Read a file.",
+                        "inputSchema": {"type": "object", "properties": {}},
+                    }
+                ],
+                "nextCursor": "c2",
+            }
+        return {}
+
+    def close(self) -> None: ...
+
+
+def _two_tool_baseline() -> ToolSnapshot:
+    schema: dict[str, object] = {"type": "object", "properties": {}}
+    return ToolSnapshot.from_tools(
+        TARGET,
+        [
+            ToolRecord(name="read_file", description="Read a file.", input_schema=schema),
+            ToolRecord(name="write_file", description="Write a file.", input_schema=schema),
+        ],
+        taken_at=THEN,
+    )
+
+
+def test_an_incomplete_listing_skips_drift_visibly_instead_of_reporting_removals(
+    stub: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_perimeter.checks.all_checks import ALL_CHECKS
+
+    monkeypatch.setattr(
+        "agent_perimeter.scan_runner.build_transport", lambda t, i, e: _TruncatedTransport()
+    )
+    drift_checks = [c for c in ALL_CHECKS if c.requires_baseline]
+    outcome = run_scan(
+        TARGET, ScanMode.PASSIVE, None, checks=drift_checks, baseline=_two_tool_baseline(), now=NOW
+    )
+    assert outcome.notes, "the truncated listing must leave a note"
+    assert outcome.drift_events == ()
+    assert outcome.findings == []
+    assert [s.check_id for s in outcome.skipped] == [c.id for c in drift_checks]
+    assert {s.reason for s in outcome.skipped} == {SkipReason.LISTING_INCOMPLETE}
+    assert "tool listing was incomplete" in outcome.skipped[0].detail
+    assert outcome.listing_complete is False
+
+
+def test_a_complete_listing_reports_itself_complete(stub: None) -> None:
+    outcome = run_scan(TARGET, ScanMode.PASSIVE, None, checks=[], now=NOW)
+    assert outcome.listing_complete is True

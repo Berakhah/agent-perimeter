@@ -209,6 +209,49 @@ def test_baseline_for_another_target_refuses_before_scanning(
     assert "other.example.test" in result.stdout and "omit --baseline" in result.stdout
 
 
+class _Truncated(_Listing):
+    """Page 1 is the normal listing plus a nextCursor; page 2 fails."""
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        from agent_perimeter.transport.base import TransportError
+
+        if method == "tools/list" and params and params.get("cursor") == "c2":
+            raise TransportError("page 2 down")
+        reply = super().request(method, params)
+        return {**reply, "nextCursor": "c2"} if method == "tools/list" else reply
+
+
+@pytest.fixture
+def truncated(stub: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("agent_perimeter.scan_runner.build_transport", lambda t, i, e: _Truncated())
+
+
+def test_snapshot_of_an_incomplete_listing_is_refused_and_not_written(
+    tmp_path: Path, truncated: None
+) -> None:
+    out = tmp_path / "snap.json"
+    sarif_path = tmp_path / "r.sarif"
+    result = runner.invoke(
+        app, ["scan", "--target", TARGET, "--snapshot", str(out), "--sarif", str(sarif_path)]
+    )
+    assert result.exit_code == 2, result.stdout
+    assert not out.exists(), "a partial listing must never become a baseline file"
+    assert f"Snapshot not written to {out}: the tool listing was incomplete" in result.stdout
+    assert "Re-run once the server answers every tools/list page" in result.stdout
+    # The other outputs are still produced; only the baseline file is refused.
+    assert sarif_path.exists()
+
+
+def test_drift_gate_on_an_incomplete_listing_fails_closed(tmp_path: Path, truncated: None) -> None:
+    base = _baseline_file(tmp_path)
+    result = runner.invoke(
+        app, ["scan", "--target", TARGET, "--baseline", str(base), "--fail-on-drift"]
+    )
+    assert result.exit_code == 2, result.stdout
+    assert "--fail-on-drift could not run: the tool listing was incomplete" in result.stdout
+    assert "drift gate tripped" not in result.stdout
+
+
 def test_unreadable_baseline_is_a_usage_error(tmp_path: Path) -> None:
     bad = tmp_path / "bad.json"
     bad.write_text("{not json", encoding="utf-8")

@@ -22,6 +22,7 @@ class SkipReason(StrEnum):
     NOT_AUTHORISED = "not_authorised"
     MODEL_UNAVAILABLE = "model_unavailable"
     NO_BASELINE = "no_baseline"
+    LISTING_INCOMPLETE = "listing_incomplete"
 
 
 class BaselineStatus(StrEnum):
@@ -44,6 +45,11 @@ _NO_BASELINE_DETAIL: dict[BaselineStatus, str] = {
     ),
 }
 
+_LISTING_INCOMPLETE_DETAIL = (
+    "the tool listing was incomplete, so a comparison would report the tools it "
+    "missed as removed — re-run once the server answers every tools/list page"
+)
+
 
 @dataclass(frozen=True)
 class Skipped:
@@ -61,7 +67,10 @@ def applicable(
     today: date,
     models_available: bool = True,
     baseline_status: BaselineStatus = BaselineStatus.NONE_ON_RECORD,
+    listing_complete: bool = True,
 ) -> tuple[list[Check], list[Skipped]]:
+    """`listing_complete=False` skips every baseline-requiring check: an
+    early-stopped tools/list would read as tools removed since the baseline."""
     runnable: list[Check] = []
     skipped: list[Skipped] = []
 
@@ -75,6 +84,12 @@ def applicable(
         if check.requires_model and not models_available:
             skipped.append(
                 Skipped(check.id, SkipReason.MODEL_UNAVAILABLE, "no model provider is reachable")
+            )
+            continue
+
+        if check.requires_baseline and not listing_complete:
+            skipped.append(
+                Skipped(check.id, SkipReason.LISTING_INCOMPLETE, _LISTING_INCOMPLETE_DETAIL)
             )
             continue
 

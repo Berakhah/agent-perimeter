@@ -24,6 +24,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    true,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -60,6 +61,11 @@ class Scan(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mode: Mapped[str] = mapped_column(String(16))
     tool_version: Mapped[str] = mapped_column(String(32))
+    listing_complete: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=true(), nullable=False
+    )
+    """False when tools/list stopped early (0008). Such a scan is never
+    selected, or accepted when pinned, as a drift baseline."""
 
 
 class ServerProfile(Base):

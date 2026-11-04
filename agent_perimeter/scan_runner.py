@@ -147,6 +147,10 @@ class ScanOutcome:
     notes: tuple[str, ...] = ()
     """Scan-level caveats, e.g. a tool listing that stopped early. Rendered
     wherever skipped checks are, so a truncated listing is never silent."""
+    listing_complete: bool = True
+    """False when tools/list stopped early. Such a scan is never a drift
+    baseline: the API persists the flag and excludes it, and the CLI refuses
+    to write it with --snapshot."""
 
 
 def run_scan(
@@ -244,11 +248,19 @@ def run_scan(
 
         notes: list[str] = []
         tools = enumerate_tools(transport, notes)
+        # Only enumerate_tools' own notes decide this; checks may add more below.
+        listing_complete = not notes
         ambiguous = compute_ambiguous_tools(tools, target)
 
         snapshot = ToolSnapshot.from_tools(target, tools, taken_at=now)
+        # A truncated listing against a full baseline reads as tools removed,
+        # and as a baseline it makes the next full scan read as tools added.
+        # Drift is skipped (registry.applicable names why) and callers must
+        # not keep this snapshot as a baseline (listing_complete below).
         drift_events: tuple[DriftEvent, ...] = (
-            compare_tools(baseline, target, tools, now=now) if baseline is not None else ()
+            compare_tools(baseline, target, tools, now=now)
+            if baseline is not None and listing_complete
+            else ()
         )
 
         context = ScanContext(
@@ -276,6 +288,7 @@ def run_scan(
             today=today,
             models_available=False,
             baseline_status=baseline_status,
+            listing_complete=listing_complete,
         )
 
         on_check = None
@@ -315,4 +328,5 @@ def run_scan(
         snapshot=snapshot,
         drift_events=drift_events,
         notes=tuple(notes),
+        listing_complete=listing_complete,
     )
