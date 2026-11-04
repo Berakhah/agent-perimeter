@@ -199,15 +199,31 @@ def test_page_cap_is_logged_and_noted(caplog: pytest.LogCaptureFixture) -> None:
     assert str(MAX_TOOL_PAGES) in notes[0]
 
 
-def test_repeat_cursor_note_names_cursor_and_page_count() -> None:
+def test_repeat_cursor_note_names_cause_and_page_count_not_the_cursor() -> None:
     transport = PagedTransport(
         {None: {"tools": [], "nextCursor": "loop"}, "loop": {"tools": [], "nextCursor": "loop"}}
     )
     notes: list[str] = []
     enumerate_tools(transport, notes)
     assert len(notes) == 1
-    assert "'loop'" in notes[0]
+    assert "repeated a cursor" in notes[0]
+    assert "'loop'" not in notes[0]
     assert "2 page(s)" in notes[0]
+
+
+def test_a_secret_in_a_cursor_reaches_no_note_and_no_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "sk-" + "live-" + "abcdef0123456789"  # synthetic, built by concatenation
+    transport = PagedTransport(
+        {None: {"tools": [], "nextCursor": secret}, secret: {"tools": [], "nextCursor": secret}}
+    )
+    notes: list[str] = []
+    with caplog.at_level(logging.WARNING):
+        enumerate_tools(transport, notes)
+    assert notes
+    assert all(secret not in note for note in notes)
+    assert secret not in caplog.text
 
 
 def test_clean_listing_adds_no_notes() -> None:
