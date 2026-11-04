@@ -272,10 +272,27 @@ def scan(
     else:
         typer.echo(f"{len(findings)} findings. " + summary)
 
-    if snapshot is not None:
+    # A partial listing written as a snapshot would make the next scan report
+    # every missed tool as added; refuse it (exit 2 below) rather than write
+    # a baseline file that is wrong in a way nothing downstream can see.
+    refused: list[str] = []
+    if snapshot is not None and not outcome.listing_complete:
+        refused.append(
+            f"Snapshot not written to {snapshot}: the tool listing was incomplete, so as a "
+            "baseline it would report every tool it missed as added. "
+            "Re-run once the server answers every tools/list page."
+        )
+    elif snapshot is not None:
         snapshot.write_text(outcome.snapshot.model_dump_json(indent=2), encoding="utf-8")
         typer.echo(f"Snapshot written to {snapshot}")
-    if fail_on_drift and baseline is None:
+    drift_selected = only is None or only == DRIFT_CHECK_ID
+    if fail_on_drift and baseline is not None and drift_selected and not outcome.listing_complete:
+        # A gate that could not compare must not pass a CI run.
+        refused.append(
+            "--fail-on-drift could not run: the tool listing was incomplete, so "
+            f"{DRIFT_CHECK_ID} was skipped. Re-run once the server answers every tools/list page."
+        )
+    elif fail_on_drift and baseline is None:
         typer.echo(
             "--fail-on-drift had no effect: no --baseline was given, so "
             f"{DRIFT_CHECK_ID} was skipped."
@@ -323,6 +340,11 @@ def scan(
             encoding="utf-8",
         )
         typer.echo(f"Report written to {html}")
+
+    if refused:
+        for message in refused:
+            typer.echo(message)
+        raise typer.Exit(code=2)
 
     if fail_on_drift and any(f.check_id == DRIFT_CHECK_ID for f in findings):
         typer.echo("drift gate tripped: at least one tool changed since the baseline (exit 3).")
@@ -414,6 +436,13 @@ def _resolve_operand(value: str, *, database_url: str) -> ToolSnapshot:
                 typer.echo(
                     f"{value} is not a scan on record at {shown}. "
                     "Check the id, or pass --database-url."
+                )
+                raise typer.Exit(code=2)
+            if not scan.listing_complete:
+                typer.echo(
+                    f"{value} has an incomplete tool listing, so a diff against it would "
+                    "report the tools it missed as added or removed. Pass a scan whose "
+                    "listing completed."
                 )
                 raise typer.Exit(code=2)
             return snapshot_from_scan(session, scan)

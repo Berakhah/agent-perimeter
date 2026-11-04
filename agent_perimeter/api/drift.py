@@ -81,10 +81,21 @@ def load_baseline(
                         f"baseline_scan_id {pinned!r} scanned {scan.target_ref!r}, not "
                         f"{target_ref!r}. Drift is only meaningful for one target."
                     )
+                if not scan.listing_complete:
+                    raise _mismatch(
+                        f"baseline_scan_id {pinned!r} has an incomplete tool listing, so "
+                        "every tool it missed would read as added. Pin a scan whose "
+                        "listing completed, or omit it."
+                    )
                 return BaselineLookup(snapshot_from_scan(session, scan), False)
+            # An early-stopped listing is never a baseline (scan.listing_complete).
             scan = session.execute(
                 select(Scan)
-                .where(Scan.target_ref == target_ref, Scan.finished_at.is_not(None))
+                .where(
+                    Scan.target_ref == target_ref,
+                    Scan.finished_at.is_not(None),
+                    Scan.listing_complete.is_(True),
+                )
                 .order_by(Scan.finished_at.desc())
                 .limit(1)
             ).scalar_one_or_none()

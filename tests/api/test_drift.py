@@ -18,6 +18,7 @@ from agent_perimeter._contracts import Claim, Derivation, Method
 from agent_perimeter.api.app import create_app
 from agent_perimeter.db.models import DriftEvent, Scan, Tool
 from agent_perimeter.model.feature import Feature, Revision
+from agent_perimeter.transport.base import TransportError
 from agent_perimeter.transport.revision import Fingerprint
 
 TARGET = "https://mcp.example.test/rpc"
@@ -39,10 +40,27 @@ class _Listing:
     # (name, description) listing, in order -- lets a test put two
     # same-named tools on one listing (fix round 1: duplicate-name keying).
     tools: list[tuple[str, str]] | None = None
+    # When set, page 1 carries only the first tool plus a nextCursor, and
+    # page 2 fails: an early-stopped listing (FU-2 note path).
+    truncate = False
 
     def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         if method == "tools/list":
             names_and_descriptions = _Listing.tools or [("read_file", _Listing.description)]
+            if _Listing.truncate:
+                if params and params.get("cursor") == "c2":
+                    raise TransportError("page 2 down")
+                name, description = names_and_descriptions[0]
+                return {
+                    "tools": [
+                        {
+                            "name": name,
+                            "description": description,
+                            "inputSchema": {"type": "object", "properties": {}},
+                        }
+                    ],
+                    "nextCursor": "c2",
+                }
             return {
                 "tools": [
                     {
@@ -62,6 +80,7 @@ class _Listing:
 def stub(monkeypatch: pytest.MonkeyPatch) -> None:
     _Listing.description = "Read a file."
     _Listing.tools = None
+    _Listing.truncate = False
     monkeypatch.setattr("agent_perimeter.scan_runner.fingerprint", lambda transport: MODERN)
     monkeypatch.setattr(
         "agent_perimeter.scan_runner.build_transport", lambda target, image, env: _Listing()
@@ -208,6 +227,63 @@ def test_a_duplicate_tools_description_change_diffs_the_right_copy(
     assert tool["name"] == "x"
     assert tool["old_text"] == "two"
     assert tool["new_text"] == "TWO"
+
+
+def _drift_findings(client: TestClient, scan_id: str) -> list[dict[str, object]]:
+    findings = client.get(f"/api/scans/{scan_id}/findings").json()
+    return [f for f in findings if f["check_id"] == "drift.description_drift"]
+
+
+def test_an_incomplete_scan_reports_no_removals_and_names_the_skip(
+    client: TestClient, db: Engine
+) -> None:
+    _Listing.tools = [("a", "Read a file."), ("b", "Read a file.")]
+    _scan(client)
+    _Listing.truncate = True
+    truncated = _scan(client)
+
+    assert _drift_findings(client, truncated) == []
+    events = client.get(f"/api/scans/{truncated}/events").text
+    assert "listing_incomplete" in events
+    assert "tool listing was incomplete" in events
+    with Session(db) as session:
+        rows = (
+            session.execute(select(DriftEvent).where(DriftEvent.scan_id == truncated))
+            .scalars()
+            .all()
+        )
+        assert rows == []
+
+
+def test_an_incomplete_scan_is_recorded_and_never_becomes_the_baseline(
+    client: TestClient, db: Engine
+) -> None:
+    _Listing.tools = [("a", "Read a file."), ("b", "Read a file.")]
+    full = _scan(client)
+    _Listing.truncate = True
+    truncated = _scan(client)
+    _Listing.truncate = False
+    after = _scan(client)
+
+    with Session(db) as session:
+        assert session.get(Scan, full).listing_complete is True  # type: ignore[union-attr]
+        assert session.get(Scan, truncated).listing_complete is False  # type: ignore[union-attr]
+        assert session.get(Scan, after).listing_complete is True  # type: ignore[union-attr]
+    # Against the truncated scan, `b` would read as tool_added (high).
+    assert _drift_findings(client, after) == []
+
+
+def test_a_pinned_incomplete_baseline_is_a_422(client: TestClient) -> None:
+    _Listing.tools = [("a", "Read a file."), ("b", "Read a file.")]
+    _Listing.truncate = True
+    truncated = _scan(client)
+    _Listing.truncate = False
+    response = client.post(
+        "/api/scans", json={"target": TARGET, "mode": "passive", "baseline_scan_id": truncated}
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["error"] == "baseline_mismatch"
+    assert "incomplete" in response.json()["detail"]["message"]
 
 
 def test_a_pinned_baseline_for_another_target_is_a_422_before_any_202(client: TestClient) -> None:

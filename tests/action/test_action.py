@@ -350,6 +350,17 @@ def test_first_run_creates_parent_dirs_writes_baseline_and_reports(tmp_path: Pat
     assert "Commit it to arm the drift gate" in summary
 
 
+def test_a_refused_first_run_never_claims_a_baseline_was_created(tmp_path: Path) -> None:
+    # The CLI exits 2 and writes no snapshot when the tool listing was incomplete.
+    run = FakeRun(2, _sarif())
+    rc = main(environ=_gh(tmp_path), run=run)
+    assert rc == 2
+    assert _outputs(tmp_path)["baseline-created"] == "false"
+    summary = (tmp_path / "gh_summary").read_text()
+    assert "Commit it to arm the drift gate" not in summary
+    assert "No baseline was written" in summary
+
+
 def test_gate_run_with_drift_exits_3_and_reports_true(tmp_path: Path) -> None:
     _existing_baseline(tmp_path)
     run = FakeRun(3, _sarif(_result(DRIFT_CHECK_ID, "error"), _result("x")))
