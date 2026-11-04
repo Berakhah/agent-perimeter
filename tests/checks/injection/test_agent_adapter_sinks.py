@@ -219,6 +219,17 @@ def test_an_incomplete_listing_is_named_in_the_caveat() -> None:
     assert LISTING_PAGE_FAILED in finding.claim.caveat
 
 
+def test_an_incomplete_listing_on_a_pass_through_names_it_without_a_sink_claim() -> None:
+    from agent_perimeter.instrument.canary import Canary
+
+    copied = {"name": "write_file", "arguments": {"content": Canary(NONCE).text}}
+    [finding] = CHECK.run(_context(_incomplete(copied), TOOLS))
+    assert finding.severity is Severity.LOW
+    assert finding.claim.caveat is not None
+    assert "tool listing was incomplete" in finding.claim.caveat
+    assert "sinks also come" not in finding.claim.caveat
+
+
 def test_an_incomplete_listing_is_surfaced_as_a_note_even_with_no_finding() -> None:
     context = _context(_incomplete())  # no repetition: no finding
     assert CHECK.run(context) == []

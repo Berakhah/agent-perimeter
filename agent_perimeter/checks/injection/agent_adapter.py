@@ -309,8 +309,12 @@ class AgentAdapterCheck:
         if transcript.listing_incomplete is not None:
             caveat += (
                 " The instrument proxy's tool listing was incomplete "
-                f"({transcript.listing_incomplete}), so sinks also come from this scan's "
-                "listing."
+                f"({transcript.listing_incomplete})"
+                + (
+                    "."
+                    if transcript.pass_through
+                    else ", so sinks also come from this scan's listing."
+                )
             )
 
         return [
