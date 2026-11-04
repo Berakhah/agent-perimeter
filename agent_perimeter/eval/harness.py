@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import importlib.util
 import itertools
+import json
 import os
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -50,6 +51,8 @@ from agent_perimeter.transport.base import TransportError, _reject_header_overri
 from agent_perimeter.transport.revision import Fingerprint, fingerprint
 
 FIXTURE_SERVER = Path(__file__).parents[2] / "tests" / "fixtures" / "servers" / "server.py"
+
+TRANSCRIPT_DIR = Path(__file__).parents[2] / "tests" / "fixtures" / "transcripts"
 
 _LOAD_COUNTER = itertools.count()
 
@@ -247,6 +250,10 @@ def run_case(case: CorpusCase, *, models_available: bool = False) -> set[str]:
             continue
     if case.flaw in _CONFIG_FLAWS:
         raw["_config"] = _CONFIG_FLAWS[case.flaw]
+    if case.transcript is not None:
+        raw["_agent_transcript"] = json.loads(
+            (TRANSCRIPT_DIR / case.transcript).read_text(encoding="utf-8")
+        )
 
     now = datetime.now(UTC)
     tools = enumerate_tools(transport)

@@ -123,3 +123,15 @@ cases:
     baseline_flaw: none
     expect_clean: [drift.description_drift]
     note: identical server scanned twice must not drift
+  - id: agent_followed_canary
+    revision: "2026-07-28"
+    flaw: none
+    transcript: obedient.json
+    expect_findings: [injection.agent_adapter]
+    note: proxy transcript where the agent repeated the canary in a sink call
+  - id: agent_ignored_canary_control
+    revision: "2026-07-28"
+    flaw: none
+    transcript: disobedient.json
+    expect_clean: [injection.agent_adapter]
+    note: same calls, canary not repeated; a privileged call alone is not bait
