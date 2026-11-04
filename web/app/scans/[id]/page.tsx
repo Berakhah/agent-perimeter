@@ -28,7 +28,7 @@
  * `findings/page.tsx`'s `await searchParams` pattern is for an async
  * Server Component, which this can't be and still subscribe to anything.
  *
- * `?fixture=streaming|degraded|deterministic` replays a canned
+ * `?fixture=streaming|degraded|deterministic|incomplete` replays a canned
  * `ScanEvent[]` (`./fixtures.ts`) through `replayScanEvents`, which shares
  * `subscribeToScanEvents`'s exact `(id, onEvent, onError?) => unsubscribe`
  * signature and dispatches on a real `setTimeout` cadence -- not one
@@ -201,6 +201,10 @@ export default function LiveScanPage({
   // and the terminal frame is the actual "nothing more is coming" signal.
   const hasPending = terminalEvent === null && (progress === null || progress.completed < progress.total);
   const skippedCount = terminalEvent?.skipped.length ?? 0;
+  // `?? []` also covers a terminal frame from a backend older than `notes`.
+  const notes = terminalEvent?.notes ?? [];
+  const notesHint =
+    notes.length === 0 ? "" : ` ${notes.length} scan note${notes.length === 1 ? "" : "s"} below.`;
   const passedCount = rows.filter((r) => r.status === "passed").length;
   const coverage =
     progress && progress.total > 0 ? `${Math.round((passedCount / progress.total) * 100)}%` : "—";
@@ -234,22 +238,24 @@ export default function LiveScanPage({
             <EmptyState
               title="No findings for the checks that ran"
               description={
-                skippedCount === 0
+                (skippedCount === 0
                   ? "0 checks skipped."
-                  : `${skippedCount} check${skippedCount === 1 ? "" : "s"} skipped — see the skipped rows below for why.`
+                  : `${skippedCount} check${skippedCount === 1 ? "" : "s"} skipped — see the skipped rows below for why.`) +
+                notesHint
               }
             />
           ) : typeof findingsCount === "number" ? (
             <p data-testid="findings-summary" role="status" aria-live="polite">
-              {findingsCount} finding{findingsCount === 1 ? "" : "s"} — see the findings link above.
+              {findingsCount} finding{findingsCount === 1 ? "" : "s"} — see the findings link above.{notesHint}
             </p>
           ) : (
             // `getScan` hasn't resolved yet, or it failed -- absence is not the
             // same claim as zero, so this never falls back to "No findings".
             <p data-testid="findings-summary" role="status" aria-live="polite">
-              findings count unknown — see the findings link above to check.
+              findings count unknown — see the findings link above to check.{notesHint}
             </p>
           )}
+          <ScanNotes notes={notes} />
         </TerminalFrame>
       )}
 
@@ -280,6 +286,32 @@ export default function LiveScanPage({
 
       {hasPending && <Skeleton lines={4} />}
     </main>
+  );
+}
+
+/**
+ * Scan-level caveats from the terminal frame (`ScanOutcome.notes`), e.g. a
+ * tool listing that stopped early. Rendered inside `TerminalFrame`, right
+ * after the skipped-checks summary that points at it. A labelled region with
+ * a plain list, not a second `role="status"`: the summary above is already
+ * the one live announcement, and two status regions would collide (see the
+ * header comment). Renders nothing when there are no notes.
+ */
+function ScanNotes({ notes }: { notes: string[] }) {
+  if (notes.length === 0) return null;
+  return (
+    <section className="bok-scan-notes" aria-labelledby="scan-notes-heading" data-testid="scan-notes">
+      <h2 id="scan-notes-heading" className="bok-scan-notes-heading">
+        Scan notes
+      </h2>
+      <ul className="bok-scan-notes-list">
+        {notes.map((note, index) => (
+          <li key={index} data-testid="scan-note">
+            {note}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

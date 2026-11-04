@@ -68,6 +68,50 @@ test("a non-zero findings count is never reported as no findings", async ({ page
   await expect(page.getByText("No findings for the checks that ran")).toHaveCount(0);
 });
 
+// Final-review fix wave, Important #4: a scan whose tool listing stopped
+// early carries notes on the terminal frame. They must be shown next to the
+// skipped-checks summary, never dropped.
+test("scan notes from the terminal frame are shown next to the skip summary", async ({ page }) => {
+  await page.goto("/scans/1?fixture=incomplete");
+  const notes = page.getByTestId("scan-notes");
+  await expect(notes).toBeVisible({ timeout: 10_000 });
+  await expect(notes.getByRole("heading", { name: "Scan notes" })).toBeVisible();
+  await expect(notes.getByRole("listitem")).toHaveCount(1);
+  await expect(notes).toContainText("Tool listing incomplete");
+  await expect(page.getByTestId("empty-state")).toContainText("1 scan note below");
+  const skipped = page.getByTestId("check-row").filter({ hasText: /skipped/i });
+  await expect(skipped).toContainText(/tool listing was incomplete/i);
+});
+
+test("a scan with no notes renders no notes section", async ({ page }) => {
+  await page.goto("/scans/1?fixture=streaming");
+  await expect(page.getByTestId("terminal-frame")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId("scan-notes")).toHaveCount(0);
+});
+
+test("the real path renders notes from the terminal SSE frame", async ({ page }) => {
+  const note = "Tool listing incomplete: page 2 of tools/list failed with a transport error.";
+  await page.route("**/api/scans/1/events", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: `data: ${JSON.stringify({ terminal: true, completed: 29, total: 29, skipped: [], notes: [note] })}\n\n`,
+    }),
+  );
+  await page.route("**/api/scans/1", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ id: "1", status: "completed", findings_count: 2, notes: [note] }),
+    }),
+  );
+
+  await page.goto("/scans/1");
+
+  await expect(page.getByTestId("findings-summary")).toContainText("2 findings");
+  await expect(page.getByTestId("scan-notes")).toContainText(note);
+});
+
 test("an unknown findings count reads as unknown, never as a false zero", async ({ page }) => {
   await page.route("**/api/scans/1/events", (route) =>
     route.fulfill({

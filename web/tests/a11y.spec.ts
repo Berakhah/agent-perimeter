@@ -4,6 +4,7 @@ import { expect, test } from "@playwright/test";
 const SCREENS = [
   ["scan setup", "/"],
   ["live scan", "/scans/1?fixture=streaming"],
+  ["live scan with scan notes", "/scans/1?fixture=incomplete"],
   ["findings", "/scans/1/findings?fixture=mixed"],
   ["capability graph", "/scans/1/graph?fixture=deputy"],
   ["drift", "/scans/2/drift?fixture=changed-description"],
