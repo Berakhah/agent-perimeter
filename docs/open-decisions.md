@@ -44,10 +44,16 @@ proven by the scan itself, deterministically, with no agent
 from the client's transcript. Rationale for BYO: no quota or model cost, cannot
 fail on a demo when a free tier caps out, and it measures the agent actually
 deployed rather than a proxy. Cost of BYO: Claim B needs a client willing to
-run their agent, and the check only reports that a privileged-looking tool call
-(name token such as run/exec/write/send) followed the marker in a
-client-supplied transcript — it does not show causation. Candidate (b) remains
-the lead differentiator, in this narrower form.
+run their agent through the `instrument` proxy. What the check shows depends
+on the transcript. A canary transcript (written by the proxy, carrying a
+per-run `AP-CANARY-<nonce>`) is causal: the check reports only when a later
+call's arguments repeat a token the agent could have learned only from the
+injected result — CRITICAL to a privileged-named tool, MEDIUM otherwise, LOW
+when the whole injected sentence was copied verbatim (data pass-through, not
+obedience). A legacy inert-marker transcript is correlation only: a
+privileged-looking call after the marker is reported INFO and does not show
+causation. Candidate (b) remains the lead differentiator, in this narrower
+form.
 
 **4. Disclosure embargo — Answered: 90 days.** `docs/security.md`: 90-day
 embargo, aggregate-only publication and withheld digest/salt if a maintainer
@@ -198,3 +204,23 @@ the reasoning in `2026-09-16-github-action-design.md` D3/D8:
   click; listing implies support expectations that are a human-partner call.
 - **Versioning:** `v1.0.0` release + floating `v1` tag moved by
   `.github/workflows/release.yml`.
+
+## Addendum — tracked follow-ups from the instrument-proxy review (2026-11-04)
+
+Recorded, not done. Neither is fixed on the `instrument-proxy` branch; the
+graph-sink change was ruled out of that wave on purpose.
+
+- **FU-1. `injection.agent_adapter` severity should come from graph-derived
+  sinks, not only `_is_privileged`.** Today severity keys off name tokens
+  (`run`, `exec`, `write`, `delete`, `send`, `post`, `upload`). A canary
+  repeated into `sync_to_webhook` — an exfiltration sink by any reading, and
+  the sink `injection.path_proof` itself reports — rates MEDIUM because no
+  token matches. Fix: rate CRITICAL when the receiving tool is a sink in the
+  capability graph (`find_paths` over the scanned listing), keeping the name
+  heuristic as the fallback when no listing is available.
+- **FU-2. `agent_perimeter/discover/enumerate.py` ignores `nextCursor`.**
+  Discovery reads only the first `tools/list` page, so every check that
+  consumes the enumerated listing misses tools on later pages: a
+  project-wide false negative on paginated servers. The instrument proxy
+  already follows cursors (with repeat-cursor loop protection) and is the
+  model for the fix.
