@@ -32,12 +32,22 @@ anywhere in `agent_perimeter/`. This was never written down as a deliberate
 choice before now — worth noting since it forecloses the "hosted =
 subscription story" path without that tradeoff having been weighed on paper.
 
-**3. Injection simulation aggressiveness — Ratified: bundled minimal agent
-harness.** `agent_perimeter/checks/injection/agent_adapter.py` is a shipped
-adapter, not a "bring your own agent" requirement. Consistent with keeping
-candidate (b) as the lead differentiator — a harness that requires the
-client to already have a working agent integration would gate the exact
-capability being sold.
+**3. Injection simulation aggressiveness — Ratified: bring your own agent
+(corrected 2026-11-04).** This entry previously read "bundled minimal agent
+harness". That never matched the code: `agent_perimeter/checks/injection/agent_adapter.py`
+bundles no agent and calls no model. It reads a transcript the client exports
+from *their own* agent run against a server carrying the tracer marker
+(`docs/byo-agent.md`; the instrumenting proxy it describes, an `instrument`
+command, is not implemented yet, so injecting the marker is manual today). The split is: Claim A (an injection path exists) is
+proven by the scan itself, deterministically, with no agent
+(`injection.path_proof`); Claim B (the client's agent acts on it) is measured
+from the client's transcript. Rationale for BYO: no quota or model cost, cannot
+fail on a demo when a free tier caps out, and it measures the agent actually
+deployed rather than a proxy. Cost of BYO: Claim B needs a client willing to
+run their agent, and the check only reports that a privileged-looking tool call
+(name token such as run/exec/write/send) followed the marker in a
+client-supplied transcript — it does not show causation. Candidate (b) remains
+the lead differentiator, in this narrower form.
 
 **4. Disclosure embargo — Answered: 90 days.** `docs/security.md`: 90-day
 embargo, aggregate-only publication and withheld digest/salt if a maintainer

@@ -196,12 +196,14 @@ with reality.
   and Cisco already cover this, with more runtime/enforcement depth than a
   static+active scanner offers. Continuing to claim this ground would be the
   "fourteenth scanner" the brief warns against.
-- **(b) Data-path injection simulation driving a live agent — kept, lead
-  differentiator.** Nothing found does this specifically; existing tools do
-  static analysis or runtime proxy monitoring, not "instrument a target and
-  drive a bundled minimal agent through the injection path to prove
-  reachability." `agent_perimeter/checks/injection/agent_adapter.py` is
-  this project's implementation of exactly that.
+- **(b) Data-path injection simulation — kept, lead differentiator.**
+  Nothing found does this specifically; existing tools do static analysis or
+  runtime proxy monitoring, not "instrument a target and prove an injection
+  path exists, then measure whether the client's own agent follows it."
+  `injection.path_proof` proves the path deterministically (no agent);
+  `agent_perimeter/checks/injection/agent_adapter.py` reads a transcript from
+  the client's own agent (`docs/byo-agent.md`). No agent is bundled and no
+  model is called.
 - **(c) Evidence-graded reporting with published precision/recall —
   narrowed, not dropped.** Several parties already publish large-N registry
   census numbers (1,000–19,000 servers). The remaining gap is not "nobody
