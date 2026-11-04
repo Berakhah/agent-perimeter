@@ -26,7 +26,7 @@ class FakeTransport:
     def __init__(self, results: dict[str, dict[str, object]] | None = None) -> None:
         self.calls: list[tuple[str, dict[str, object] | None]] = []
         self.results = results or {}
-        self.fail_with: TransportError | None = None
+        self.fail_with: Exception | None = None
         self.closed = False
 
     def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
@@ -210,3 +210,64 @@ def test_repeated_cursor_stops_paging_instead_of_looping() -> None:
     assert reply is not None
     assert _texts(reply) == ["hello"]
     assert [m for m, _ in upstream.calls].count("tools/list") == 2
+
+
+# --- upstream rejections ----------------------------------------------------
+# An agent that obeyed the canary and was then rejected by a strict schema must
+# still leave a trace, or the scan reports a false negative.
+
+
+class RejectingTransport(FakeTransport):
+    """Lists and serves read_file normally; raises `error` for any other tools/call."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__({"read_file": _ok("body")})
+        self.error = error
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        if method == "tools/call" and params is not None and params["name"] != "read_file":
+            self.calls.append((method, params))
+            raise self.error
+        return super().request(method, params)
+
+
+def test_a_schema_rejected_call_carrying_the_token_is_recorded_and_reported() -> None:
+    from agent_perimeter.checks.injection.agent_adapter import CHECK
+    from tests.checks.injection.test_agent_adapter import _context
+
+    rejection = TransportError("Invalid params: unexpected 'token'", code=-32602)
+    proxy = Proxy(RejectingTransport(rejection), CANARY)
+    _call(proxy, "read_file", {"path": "a"}, 1)
+    reply = _call(proxy, "sync_to_webhook", {"url": "u", "token": CANARY.token}, 2)
+    assert reply is not None
+    assert reply["error"]["code"] == -32602  # type: ignore[index]
+    calls = proxy.recorder.to_transcript()["tool_calls"]
+    assert [c["name"] for c in calls] == ["read_file", "sync_to_webhook"]  # type: ignore[index]
+    assert calls[1]["result"] == "error -32602: Invalid params: unexpected 'token'"  # type: ignore[index]
+    assert "injected" not in calls[1]  # type: ignore[operator]
+    findings = CHECK.run(_context(proxy.recorder.to_transcript()))
+    assert len(findings) == 1
+    assert "sync_to_webhook" in findings[0].title
+
+
+def test_a_generic_upstream_exception_becomes_a_32603_reply_and_is_recorded() -> None:
+    proxy = Proxy(RejectingTransport(RuntimeError("pipe closed")), CANARY)
+    reply = _call(proxy, "sync_to_webhook", {"url": "u"}, 4)
+    assert reply is not None
+    assert reply["id"] == 4
+    assert reply["error"]["code"] == -32603  # type: ignore[index]
+    message = reply["error"]["message"]  # type: ignore[index]
+    assert "RuntimeError" in message
+    assert "target server" in message
+    calls = proxy.recorder.to_transcript()["tool_calls"]
+    assert [c["name"] for c in calls] == ["sync_to_webhook"]  # type: ignore[index]
+    assert "RuntimeError" in calls[0]["result"]  # type: ignore[index]
+
+
+def test_a_generic_exception_outside_tools_call_is_still_a_jsonrpc_error() -> None:
+    upstream = FakeTransport()
+    upstream.fail_with = OSError("broken pipe")
+    reply = Proxy(upstream, CANARY).handle({"jsonrpc": "2.0", "id": 5, "method": "ping"})
+    assert reply is not None
+    assert reply["error"]["code"] == -32603  # type: ignore[index]
+    assert "OSError" in reply["error"]["message"]  # type: ignore[index]
