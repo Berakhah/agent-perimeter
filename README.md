@@ -109,10 +109,14 @@ agent-perimeter drift baseline.json current.json          # the reproduction eve
 
 Exit `3` means at least one tool's description, schema or annotations changed, or a tool appeared or vanished. The API does the same automatically: every `POST /api/scans` is compared to the previous scan of the same target, and `GET /api/scans/{id}/drift` returns the word-level diff the web drift page renders.
 
+Exit `2` after a scan that otherwise ran means the tool listing was incomplete: a `tools/list` page failed (page 1 included), answered with no `tools` list, repeated a cursor, or hit the 100-page cap. A partial listing is never a baseline, so `--snapshot` writes nothing and `--fail-on-drift` fails closed because nothing was compared; the scan's other output (findings, `--sarif`, `--html`) is still written, and its notes name the cause. Re-run once the server answers every page. The API records such a scan with `listing_complete = false` and never uses it as a baseline.
+
 ## Use as a GitHub Action
 
 The drift recipe above as one step. On the first run there is no baseline,
-so the action writes one and exits 0 — commit it. Every run after that
+so the action writes one and exits 0 — commit it. If that first scan's tool
+listing was incomplete, no baseline is written and the step exits `2`; fix
+the server and re-run. Every run after that
 diffs against the committed file and exits `3` if any tool's description,
 schema or annotations changed, or a tool appeared or vanished. Approving a
 change is a commit that replaces the baseline, reviewed like any other.
@@ -145,15 +149,18 @@ jobs:
 | `only` | — | Run one check by id. |
 | `baseline` | `.agent-perimeter/baseline.json` | Committed snapshot to diff against; written on the first run. |
 | `snapshot` | `.agent-perimeter/current.json` | Where a gate run writes this scan's snapshot. |
-| `fail-on-drift` | `true` | `false` keeps the job green and exposes the `drift` output instead. |
+| `fail-on-drift` | `true` | `false` keeps the job green on drift and exposes the `drift` output instead. It does not soften an exit-`2` refusal (for example an incomplete tool listing): that is not drift, and still fails the job. |
 | `sarif` | `agent-perimeter.sarif` | SARIF 2.1.0 output path. |
 | `html` | — | HTML report path, if wanted. |
 | `upload-sarif` | `true` | Upload to code scanning. |
 
 Outputs: `sarif-file`, `snapshot-file`, `baseline-created`, `drift`
-(`none` / `true` / `false`, read from the SARIF so it works with
-`fail-on-drift: "false"`), `finding-count`. Exit codes are the CLI's: `0`
-clean, `2` refused or usage error, `3` drift gate tripped. The step log's
+(`none` on a first run; `true` / `false` read from the SARIF so it works with
+`fail-on-drift: "false"`; `unknown` when a gate run exited non-zero without a
+drift result, so no comparison can be claimed), `finding-count`. Exit codes
+are the CLI's: `0` clean, `2` refused (an incomplete tool listing, active mode
+without a scope file) or usage error, `3` drift gate tripped. The job summary
+says why on an exit `2`. The step log's
 first line is the exact `agent-perimeter scan …` command that ran, with
 `env` values masked — paste it to reproduce.
 

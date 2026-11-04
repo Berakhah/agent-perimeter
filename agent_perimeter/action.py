@@ -196,16 +196,20 @@ def sarif_results(sarif: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     return results
 
 
-def drift_verdict(sarif: Mapping[str, Any] | None, *, first_run: bool) -> str:
+def drift_verdict(sarif: Mapping[str, Any] | None, *, first_run: bool, rc: int) -> str:
     """``none`` on a first run; otherwise whether the drift check fired.
 
     Read from the SARIF, not the exit code, so ``fail-on-drift: false``
-    still yields a usable signal.
+    still yields a usable signal. A drift result in the SARIF is ``true``
+    whatever the exit code. Without one, ``false`` needs a clean exit: any
+    other exit code (2 when the CLI refused an incomplete tool listing, so
+    drift was never compared) is ``unknown``, never a claim of no drift.
     """
     if first_run:
         return "none"
-    drifted = any(r.get("ruleId") == DRIFT_CHECK_ID for r in sarif_results(sarif))
-    return "true" if drifted else "false"
+    if any(r.get("ruleId") == DRIFT_CHECK_ID for r in sarif_results(sarif)):
+        return "true"
+    return "false" if rc == 0 else "unknown"
 
 
 def write_outputs(path: Path | None, outputs: Mapping[str, str]) -> None:
@@ -239,7 +243,7 @@ def render_summary(
     for result in results:
         level = str(result.get("level", "none"))
         by_level[level] = by_level.get(level, 0) + 1
-    verdict = drift_verdict(sarif, first_run=first_run)
+    verdict = drift_verdict(sarif, first_run=first_run, rc=rc)
     drifted = sum(1 for r in results if r.get("ruleId") == DRIFT_CHECK_ID)
 
     rows = [
@@ -276,6 +280,16 @@ def render_summary(
             f"Review the diff with `agent-perimeter drift {shlex.quote(inputs.baseline)} "
             f"{shlex.quote(inputs.snapshot)}`; commit the new snapshot as the baseline "
             "to approve.",
+        ]
+    elif verdict == "unknown":
+        # e.g. the CLI refuses a snapshot of an incomplete tool listing (exit 2).
+        # A refusal is not drift, so `fail-on-drift: false` does not soften it.
+        rows += [
+            "",
+            f"Drift was not compared: the scan exited {rc} (for example, the tool "
+            "listing was incomplete). Fix the cause in the log above and re-run. "
+            "A refusal fails the job even with `fail-on-drift: false`, which only "
+            "stops drift itself from failing it.",
         ]
     return "\n".join(rows)
 
@@ -334,7 +348,7 @@ def main(
         outputs["sarif-file"] = inputs.sarif
     outputs["snapshot-file"] = inputs.baseline if first_run else inputs.snapshot
     outputs["baseline-created"] = "true" if first_run and rc == 0 else "false"
-    outputs["drift"] = drift_verdict(sarif, first_run=first_run)
+    outputs["drift"] = drift_verdict(sarif, first_run=first_run, rc=rc)
     outputs["finding-count"] = str(len(sarif_results(sarif)))
     write_outputs(gh_output, outputs)
     write_summary(gh_summary, render_summary(inputs, sarif, first_run=first_run, rc=rc))
