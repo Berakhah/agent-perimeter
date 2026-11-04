@@ -37,7 +37,10 @@ def _clean(value: object) -> object:
     if isinstance(value, str):
         return redact(value)
     if isinstance(value, dict):
-        return {key: _clean(item) for key, item in value.items()}
+        return {
+            (redact(key) if isinstance(key, str) else key): _clean(item)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
         return [_clean(item) for item in value]
     return value

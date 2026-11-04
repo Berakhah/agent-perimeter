@@ -24,9 +24,15 @@ def test_result_is_truncated_after_redaction() -> None:
 
 def test_secret_straddling_the_cut_is_not_half_leaked() -> None:
     recorder = Recorder(CANARY)
-    padding = "y" * (MAX_RESULT_CHARS - 10)
+    # The space keeps \b in the openai pattern satisfied, so the secret is
+    # matchable. Truncate-before-redact would keep the first 10 secret chars
+    # (cut at index MAX_RESULT_CHARS); redact-before-truncate keeps "[REDACTED:"
+    # whole, since the marker starts at index MAX_RESULT_CHARS - 10.
+    padding = "y" * (MAX_RESULT_CHARS - 11) + " "
     recorder.record_call("read_file", {}, padding + SECRET, injected=False)
-    assert SECRET[:12] not in json.dumps(recorder.to_transcript())
+    assert SECRET[:8] not in json.dumps(recorder.to_transcript())
+    result = recorder.to_transcript()["tool_calls"][0]["result"]  # type: ignore[index]
+    assert "[REDACTED:" in result
 
 
 def test_secret_in_arguments_is_redacted_but_the_canary_is_preserved() -> None:
@@ -40,6 +46,12 @@ def test_secret_in_arguments_is_redacted_but_the_canary_is_preserved() -> None:
     serialised = json.dumps(recorder.to_transcript())
     assert SECRET not in serialised
     assert CANARY.token in serialised
+
+
+def test_secret_used_as_an_argument_key_is_redacted() -> None:
+    recorder = Recorder(CANARY)
+    recorder.record_call("call_api", {SECRET: "v"}, "ok", injected=False)
+    assert SECRET not in json.dumps(recorder.to_transcript())
 
 
 def test_transcript_shape_and_injected_flag() -> None:
