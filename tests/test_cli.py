@@ -161,6 +161,68 @@ def test_empty_findings_copy_is_correct(stub_fingerprint: None) -> None:
     assert "You're secure" not in result.stdout
 
 
+class _LoopingTransport(_FakeTransport):
+    """tools/list answers the same nextCursor forever."""
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        if method == "tools/list":
+            return {"tools": [{"name": "t"}], "nextCursor": "loop"}
+        return {}
+
+
+def _use_transport(monkeypatch: pytest.MonkeyPatch, transport: type[_FakeTransport]) -> None:
+    monkeypatch.setattr(
+        "agent_perimeter.scan_runner.build_transport",
+        lambda target, image, env: transport(),
+    )
+
+
+def test_incomplete_listing_note_reaches_outcome_cli_html_and_sarif(
+    stub_fingerprint: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from agent_perimeter.scan_runner import ScanMode as Mode
+    from agent_perimeter.scan_runner import run_scan
+
+    _use_transport(monkeypatch, _LoopingTransport)
+    outcome = run_scan("https://mcp.example.test/rpc", Mode.PASSIVE, None)
+    assert len(outcome.notes) == 1
+    assert "repeated cursor 'loop'" in outcome.notes[0]
+
+    html, sarif = tmp_path / "r.html", tmp_path / "r.sarif"
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--target",
+            "https://mcp.example.test/rpc",
+            "--html",
+            str(html),
+            "--sarif",
+            str(sarif),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Tool listing incomplete" in result.stdout
+    assert "Tool listing incomplete" in html.read_text(encoding="utf-8")
+    notifications = json.loads(sarif.read_text())["runs"][0]["invocations"][0][
+        "toolExecutionNotifications"
+    ]
+    assert "Tool listing incomplete" in notifications[0]["message"]["text"]
+
+
+def test_clean_listing_has_no_notes(stub_fingerprint: None, tmp_path: Path) -> None:
+    from agent_perimeter.scan_runner import ScanMode as Mode
+    from agent_perimeter.scan_runner import run_scan
+
+    assert run_scan("https://mcp.example.test/rpc", Mode.PASSIVE, None).notes == ()
+    sarif = tmp_path / "r.sarif"
+    result = runner.invoke(
+        app, ["scan", "--target", "https://mcp.example.test/rpc", "--sarif", str(sarif)]
+    )
+    assert "Tool listing incomplete" not in result.stdout
+    assert "invocations" not in json.loads(sarif.read_text())["runs"][0]
+
+
 def test_llm_judge_is_skipped_as_model_unavailable(stub_fingerprint: None) -> None:
     # Review finding 1: no real model provider is wired anywhere in this
     # plan yet, so descriptions.llm_judge (the only requires_model check)

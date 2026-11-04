@@ -11,6 +11,7 @@ methodology footer travels with the document.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -43,6 +44,7 @@ def render_report(
     target: str,
     skipped: list[Skipped],
     scores: list[CheckScore],
+    notes: Sequence[str] = (),
 ) -> str:
     env = Environment(
         loader=FileSystemLoader(TEMPLATES), autoescape=select_autoescape(["html", "j2"])
@@ -59,6 +61,7 @@ def render_report(
         findings=sorted(findings, key=lambda f: SEVERITY_ORDER[f.severity.value]),
         edges=edges,
         skipped=skipped,
+        notes=list(notes),
         scores=scores,
         glyphs=SEVERITY_GLYPHS,
         revision_claimed=claimed.value if claimed else "unknown",

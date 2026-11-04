@@ -13,6 +13,7 @@ across all pages before computing sources.
 
 from __future__ import annotations
 
+import logging
 import threading
 
 from agent_perimeter.checks.injection.path_proof import find_paths
@@ -21,6 +22,8 @@ from agent_perimeter.graph.build import build_graph
 from agent_perimeter.instrument.canary import Canary, new_canary
 from agent_perimeter.instrument.recorder import Recorder, redact
 from agent_perimeter.transport.base import Transport, TransportError
+
+logger = logging.getLogger(__name__)
 
 SERVER_NAME = "agent-perimeter-instrument"
 
@@ -160,6 +163,10 @@ class Proxy:
                 return
             requested.add(following)
             cursor = following
+        logger.warning(
+            "tools/list still had a nextCursor after %d pages; instrument listing is incomplete",
+            MAX_TOOL_PAGES,
+        )
         self._pending = None
 
     def _call_tool(self, params: dict[str, object] | None) -> dict[str, object] | tuple[int, str]:

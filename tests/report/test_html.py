@@ -58,6 +58,13 @@ def _render(**overrides: object) -> str:
     return render_report(**kwargs)  # type: ignore[arg-type]
 
 
+def test_scan_notes_render_only_when_present() -> None:
+    assert "Scan notes" not in _render()
+    html = _render(notes=["Tool listing incomplete: <x> repeated."])
+    assert "Scan notes" in html
+    assert "Tool listing incomplete: &lt;x&gt; repeated." in html
+
+
 def test_report_shows_the_revision_conformance_strip() -> None:
     html = _render()
     assert "claims 2026-07-28" in html

@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 from agent_perimeter._contracts import Severity
@@ -233,27 +234,33 @@ def to_sarif(
     tool_version: str,
     fingerprint: Fingerprint,
     workspace: Path = Path("."),
+    notes: Sequence[str] = (),
 ) -> dict[str, object]:
     claimed = fingerprint.revision_claimed
-    return {
-        "$schema": SCHEMA_URI,
-        "version": "2.1.0",
-        "runs": [
-            {
-                "tool": {
-                    "driver": {
-                        "name": "agent-perimeter",
-                        "version": tool_version,
-                        "informationUri": "https://github.com/Berakhah/agent-perimeter",
-                        "rules": _rules(findings),
-                    }
-                },
-                "results": _results(findings, target, workspace=workspace),
-                "properties": {
-                    "target": target,
-                    "revision_claimed": claimed.value if claimed else None,
-                    "features_observed": sorted(f.value for f in fingerprint.features),
-                },
+    run: dict[str, object] = {
+        "tool": {
+            "driver": {
+                "name": "agent-perimeter",
+                "version": tool_version,
+                "informationUri": "https://github.com/Berakhah/agent-perimeter",
+                "rules": _rules(findings),
             }
-        ],
+        },
+        "results": _results(findings, target, workspace=workspace),
+        "properties": {
+            "target": target,
+            "revision_claimed": claimed.value if claimed else None,
+            "features_observed": sorted(f.value for f in fingerprint.features),
+        },
     }
+    if notes:
+        # Only when a scan has caveats, so a clean scan's SARIF is unchanged.
+        run["invocations"] = [
+            {
+                "executionSuccessful": True,
+                "toolExecutionNotifications": [
+                    {"level": "warning", "message": {"text": note}} for note in notes
+                ],
+            }
+        ]
+    return {"$schema": SCHEMA_URI, "version": "2.1.0", "runs": [run]}
