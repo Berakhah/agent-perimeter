@@ -92,6 +92,13 @@ class Proxy:
                 result = self._dispatch(method, params)
             except TransportError as exc:
                 return _error(message_id, exc.code if exc.code is not None else -32603, str(exc))
+            except Exception as exc:  # noqa: BLE001 -- the HTTP layer must never return a bare 500
+                return _error(
+                    message_id,
+                    -32603,
+                    f"Upstream request failed with {type(exc).__name__}: {exc}. "
+                    "Check that the target server is running and reachable.",
+                )
         if isinstance(result, tuple):  # (code, text) from a local validation failure
             return _error(message_id, result[0], result[1])
         return {"jsonrpc": "2.0", "id": message_id, "result": result}
@@ -157,11 +164,22 @@ class Proxy:
             )
         if not self._listed or self._pending is not None:
             self._page_through(self._pending)
-        result = self._upstream.request("tools/call", params)
+        arguments = params.get("arguments", {})
+        try:
+            result = self._upstream.request("tools/call", params)
+        except TransportError as exc:
+            # A strict schema may reject the very call that carries the canary;
+            # record it anyway, or an agent that obeyed looks clean.
+            code = exc.code if exc.code is not None else -32603
+            self.recorder.record_call(name, arguments, f"error {code}: {exc}", injected=False)
+            raise
+        except Exception as exc:
+            self.recorder.record_call(
+                name, arguments, f"error -32603: {type(exc).__name__}: {exc}", injected=False
+            )
+            raise
         inject = name in self._sources and result.get("isError") is not True
-        self.recorder.record_call(
-            name, params.get("arguments", {}), _text_of(result), injected=inject
-        )
+        self.recorder.record_call(name, arguments, _text_of(result), injected=inject)
         if not inject:
             return result
         content = result.get("content")
