@@ -16,7 +16,7 @@ from __future__ import annotations
 import threading
 
 from agent_perimeter.checks.injection.path_proof import find_paths
-from agent_perimeter.discover.enumerate import ToolRecord
+from agent_perimeter.discover.enumerate import MAX_TOOL_PAGES, ToolRecord
 from agent_perimeter.graph.build import build_graph
 from agent_perimeter.instrument.canary import Canary, new_canary
 from agent_perimeter.instrument.recorder import Recorder, redact
@@ -146,10 +146,11 @@ class Proxy:
     def _page_through(self, cursor: str | None) -> None:
         """Follow nextCursor from `cursor` (None = first page) until exhausted.
 
-        Stops when a cursor repeats, so a server that loops cannot hang the proxy.
+        Stops when a cursor repeats or after MAX_TOOL_PAGES requests, so a server
+        that loops or never ends cannot hold the proxy lock indefinitely.
         """
         requested: set[str] = set()
-        while True:
+        for _ in range(MAX_TOOL_PAGES):
             params: dict[str, object] | None = {"cursor": cursor} if cursor is not None else None
             listing = self._upstream.request("tools/list", params)
             self._absorb(listing, cursor)
@@ -159,6 +160,7 @@ class Proxy:
                 return
             requested.add(following)
             cursor = following
+        self._pending = None
 
     def _call_tool(self, params: dict[str, object] | None) -> dict[str, object] | tuple[int, str]:
         name = params.get("name") if params else None
