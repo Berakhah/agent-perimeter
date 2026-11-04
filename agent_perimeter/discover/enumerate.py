@@ -80,10 +80,10 @@ def enumerate_tools(transport: Transport, notes: list[str] | None = None) -> lis
             break
         if following in seen:
             logger.warning("tools/list cursor repeated; listing may be incomplete")
-            shown = following if len(following) <= 40 else following[:40] + "..."
+            # The cursor is server-controlled and may embed a credential: never echo it.
             _note(
                 notes,
-                f"Tool listing incomplete: the server repeated cursor {shown!r} after "
+                f"Tool listing incomplete: the server repeated a cursor after "
                 f"{page} page(s); checks ran on the {page} page(s) received. "
                 "Re-run once the server's pagination is fixed.",
             )

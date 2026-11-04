@@ -186,7 +186,7 @@ def test_incomplete_listing_note_reaches_outcome_cli_html_and_sarif(
     _use_transport(monkeypatch, _LoopingTransport)
     outcome = run_scan("https://mcp.example.test/rpc", Mode.PASSIVE, None)
     assert len(outcome.notes) == 1
-    assert "repeated cursor 'loop'" in outcome.notes[0]
+    assert "repeated a cursor" in outcome.notes[0]
 
     html, sarif = tmp_path / "r.html", tmp_path / "r.sarif"
     result = runner.invoke(
