@@ -27,6 +27,7 @@ class FakeTransport:
         self.calls: list[tuple[str, dict[str, object] | None]] = []
         self.results = results or {}
         self.fail_with: TransportError | None = None
+        self.closed = False
 
     def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         self.calls.append((method, params))
@@ -39,7 +40,8 @@ class FakeTransport:
             return self.results[str(params["name"])]
         return {"echo": method}
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        self.closed = True
 
 
 def _ok(text: str) -> dict[str, object]:

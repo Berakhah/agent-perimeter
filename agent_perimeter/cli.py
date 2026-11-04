@@ -358,18 +358,29 @@ def instrument(
     typer.echo(f"Point your agent at http://{server.LOOPBACK_HOST}:{port} (Ctrl+C to stop).")
     try:
         server.serve(proxy, port=port)
-    except OSError as exc:
+    except (OSError, SystemExit) as exc:
+        # SystemExit: uvicorn turns a startup failure into sys.exit(3).
+        detail = exc if isinstance(exc, OSError) else "uvicorn failed to start"
         typer.echo(
-            f"Could not listen on {server.LOOPBACK_HOST}:{port}: {exc}. "
+            f"Could not listen on {server.LOOPBACK_HOST}:{port}: {detail}. "
             "Pass --port with a free port."
         )
         raise typer.Exit(code=2) from None
     finally:
-        transcript_out.write_text(
-            json.dumps(proxy.recorder.to_transcript(), indent=2), encoding="utf-8"
-        )
-        transport.close()
-        typer.echo(f"Transcript written to {transcript_out}. Feed it back with --agent-transcript.")
+        try:
+            transcript_out.write_text(
+                json.dumps(proxy.recorder.to_transcript(), indent=2), encoding="utf-8"
+            )
+            typer.echo(
+                f"Transcript written to {transcript_out}. Feed it back with --agent-transcript."
+            )
+        except OSError as exc:
+            typer.echo(
+                f"Could not write transcript to {transcript_out}: {exc}. "
+                "Pass --transcript-out with a writable path."
+            )
+        finally:
+            transport.close()
 
 
 def _resolve_operand(value: str, *, database_url: str) -> ToolSnapshot:
