@@ -35,5 +35,15 @@ def new_canary() -> Canary:
     return Canary(nonce=secrets.token_hex(8))
 
 
+def _serialised(arguments: object) -> str:
+    return json.dumps(arguments, default=str)
+
+
 def appears_in(canary: Canary, arguments: object) -> bool:
-    return canary.token in json.dumps(arguments, default=str)
+    """The token occurs anywhere in `arguments`."""
+    return canary.token in _serialised(arguments)
+
+
+def sentence_appears_in(canary: Canary, arguments: object) -> bool:
+    """The whole injected sentence occurs in `arguments`: the result was copied, not obeyed."""
+    return canary.text in _serialised(arguments)

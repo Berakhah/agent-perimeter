@@ -136,25 +136,25 @@ stale, CI is broken.
 
 <!-- EVAL:START -->
 
-Local corpus: `tests/fixtures/corpus.yaml` version 1.0.0, 25 cases.
+Local corpus: `tests/fixtures/corpus.yaml` version 1.0.0, 26 cases.
 
 MCPTox: not run (dataset not present; set AP_MCPTOX_PATH to include it).
 
 | Check | n | TP | FP | FN | Precision | Recall |
 |---|---:|---:|---:|---:|---:|---:|
-| `descriptions.imperative_injection` | 25 | 2 | 0 | 0 | 1.00 | 1.00 |
-| `descriptions.shadowing` | 25 | 1 | 0 | 0 | 1.00 | 1.00 |
-| `descriptions.unicode_anomaly` | 25 | 1 | 0 | 0 | 1.00 | 1.00 |
-| `drift.description_drift` | 25 | 2 | 0 | 0 | 1.00 | 1.00 |
-| `injection.agent_adapter` | 25 | 1 | 0 | 0 | 1.00 | 1.00 |
-| `injection.path_proof` | 25 | 1 | 0 | 0 | 1.00 | 1.00 |
-| `policy.confused_deputy` | 25 | 2 | 0 | 0 | 1.00 | 1.00 |
-| `revision.cache_scope` | 25 | 1 | 0 | 0 | 1.00 | 1.00 |
-| `revision.conformance_mismatch` | 25 | 1 | 0 | 0 | 1.00 | 1.00 |
-| `revision.header_annotation_invalid` | 25 | 1 | 0 | 0 | 1.00 | 1.00 |
-| `revision.header_annotation_type` | 25 | 1 | 0 | 0 | 1.00 | 1.00 |
-| `revision.header_annotation_unreachable` | 25 | 1 | 0 | 0 | 1.00 | 1.00 |
-| `secrets.config_scan` | 25 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `descriptions.imperative_injection` | 26 | 2 | 0 | 0 | 1.00 | 1.00 |
+| `descriptions.shadowing` | 26 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `descriptions.unicode_anomaly` | 26 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `drift.description_drift` | 26 | 2 | 0 | 0 | 1.00 | 1.00 |
+| `injection.agent_adapter` | 26 | 2 | 0 | 0 | 1.00 | 1.00 |
+| `injection.path_proof` | 26 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `policy.confused_deputy` | 26 | 2 | 0 | 0 | 1.00 | 1.00 |
+| `revision.cache_scope` | 26 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `revision.conformance_mismatch` | 26 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `revision.header_annotation_invalid` | 26 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `revision.header_annotation_type` | 26 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `revision.header_annotation_unreachable` | 26 | 1 | 0 | 0 | 1.00 | 1.00 |
+| `secrets.config_scan` | 26 | 1 | 0 | 0 | 1.00 | 1.00 |
 
 <!-- EVAL:END -->
 
