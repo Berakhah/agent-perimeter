@@ -54,6 +54,79 @@ def test_secret_used_as_an_argument_key_is_redacted() -> None:
     assert SECRET not in json.dumps(recorder.to_transcript())
 
 
+# --- redaction without word boundaries ---------------------------------------
+# SECRET_PATTERNS anchor on \b for scanner precision; the recorder must not, or
+# a secret glued to a word character or URL-encoded is written raw.
+
+GITHUB = "ghp_" + "Z9y8X7w6V5u4T3s2R1q0P9o8"
+
+
+def _recorded(arguments: object, result: str = "ok", name: str = "call_api") -> str:
+    recorder = Recorder(CANARY)
+    recorder.record_call(name, arguments, result, injected=False)
+    return json.dumps(recorder.to_transcript())
+
+
+def test_secret_glued_to_an_underscore_is_redacted() -> None:
+    out = _recorded({"q": "key_" + SECRET}, result="key_" + SECRET)
+    assert SECRET not in out
+    assert SECRET[3:] not in out
+
+
+def test_secret_glued_to_a_letter_is_redacted() -> None:
+    assert SECRET not in redact("x" + SECRET)
+    assert SECRET[3:] not in redact("x" + SECRET)
+
+
+def test_url_encoded_secret_is_redacted_in_both_forms() -> None:
+    encoded = "https://x.test/cb?k%3D" + SECRET.replace("-", "%2D")
+    out = _recorded({"url": encoded}, result=encoded)
+    assert SECRET not in out
+    assert SECRET.replace("-", "%2D") not in out
+    assert SECRET[3:].replace("-", "%2D") not in out
+    assert "[REDACTED" in out
+
+
+def test_value_under_a_secret_named_key_is_redacted_whole() -> None:
+    value = "hunter" + "2-correct-horse"  # matches no credential pattern
+    out = _recorded({"password": value, "Authorization": "Basic " + "dXNlcjpwYXNz"})
+    assert value not in out
+    assert "dXNlcjpwYXNz" not in out
+
+
+def test_multiple_secrets_in_one_string_are_all_redacted() -> None:
+    out = redact(f"first={SECRET}&second={GITHUB}")
+    assert SECRET not in out
+    assert GITHUB not in out
+    assert out.count("[REDACTED:") == 2
+
+
+def test_secrets_in_nested_lists_and_dicts_are_redacted() -> None:
+    out = _recorded({"a": [{"b": "x" + SECRET}, ["y" + GITHUB]], "c": {"api_key": 12345}})
+    assert SECRET not in out
+    assert GITHUB not in out
+    assert "12345" not in out
+
+
+def test_secret_in_the_tool_name_is_redacted() -> None:
+    assert SECRET not in _recorded({}, name="call_" + SECRET)
+
+
+def test_canary_survives_boundary_free_redaction() -> None:
+    # "desk-" + token would read as an openai-shaped "sk-..." without \b.
+    out = _recorded({"url": f"https://x.test/desk-{CANARY.token}"}, result=CANARY.text)
+    assert CANARY.token in out
+    assert CANARY.text in out
+
+
+def test_canary_under_a_secret_named_key_survives_but_the_secret_does_not() -> None:
+    # The canary sentence says "include the token", so {"token": <canary>} is
+    # the most likely obedient call; redacting it would hide the finding.
+    out = _recorded({"token": f"{SECRET} {CANARY.token}"})
+    assert SECRET not in out
+    assert CANARY.token in out
+
+
 def test_transcript_shape_and_injected_flag() -> None:
     recorder = Recorder(CANARY)
     recorder.record_call("read_file", {"path": "a"}, "body", injected=True)
