@@ -19,7 +19,7 @@ from agent_perimeter.checks.injection.path_proof import find_paths
 from agent_perimeter.discover.enumerate import ToolRecord
 from agent_perimeter.graph.build import build_graph
 from agent_perimeter.instrument.canary import Canary, new_canary
-from agent_perimeter.instrument.recorder import Recorder
+from agent_perimeter.instrument.recorder import Recorder, redact
 from agent_perimeter.transport.base import Transport, TransportError
 
 SERVER_NAME = "agent-perimeter-instrument"
@@ -91,12 +91,14 @@ class Proxy:
             try:
                 result = self._dispatch(method, params)
             except TransportError as exc:
-                return _error(message_id, exc.code if exc.code is not None else -32603, str(exc))
+                return _error(
+                    message_id, exc.code if exc.code is not None else -32603, redact(str(exc))
+                )
             except Exception as exc:  # noqa: BLE001 -- the HTTP layer must never return a bare 500
                 return _error(
                     message_id,
                     -32603,
-                    f"Upstream request failed with {type(exc).__name__}: {exc}. "
+                    f"Upstream request failed with {type(exc).__name__}: {redact(str(exc))}. "
                     "Check that the target server is running and reachable.",
                 )
         if isinstance(result, tuple):  # (code, text) from a local validation failure

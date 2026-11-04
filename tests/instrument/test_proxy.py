@@ -271,3 +271,14 @@ def test_a_generic_exception_outside_tools_call_is_still_a_jsonrpc_error() -> No
     assert reply is not None
     assert reply["error"]["code"] == -32603  # type: ignore[index]
     assert "OSError" in reply["error"]["message"]  # type: ignore[index]
+
+
+def test_exception_text_is_redacted_in_the_reply_to_the_agent() -> None:
+    secret = "sk-" + "test-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
+    proxy = Proxy(RejectingTransport(RuntimeError(f"bad key {secret}")), CANARY)
+    reply = _call(proxy, "sync_to_webhook", {"url": "u"}, 6)
+    assert reply is not None
+    message = reply["error"]["message"]  # type: ignore[index]
+    assert secret not in message
+    assert secret[3:] not in message
+    assert "[REDACTED:" in message
