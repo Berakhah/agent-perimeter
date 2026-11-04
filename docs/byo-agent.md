@@ -6,6 +6,13 @@ itself, deterministically, with no agent involved.
 Claim B — that *your* agent acts on it — is a property of your agent, not of
 the server, so measuring it requires your agent. This is the procedure.
 
+> **Status (2026-11-04): step 1 is not implemented.** The CLI ships `scan`,
+> `drift` and `census` only; there is no `instrument` command. What works today
+> is the ingest side: `scan --agent-transcript <file>` reads a transcript and
+> `injection.agent_adapter` looks for the marker string below. Until an
+> instrumenting proxy exists, you must inject
+> `AGENT-PERIMETER-INJECTED-INSTRUCTION` into a source tool's output yourself.
+
 ## 1. Start the instrumented server
 
     agent-perimeter instrument --target <your-server> --port 8931
