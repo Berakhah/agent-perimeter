@@ -85,3 +85,13 @@ def test_obedience_after_a_pass_through_is_reported_as_obedience() -> None:
     findings = CHECK.run(_context(_transcript(READ, copy, obeyed)))
     assert [f.severity for f in findings] == [Severity.CRITICAL]
     assert "run_command" in findings[0].title
+
+
+def test_copy_plus_a_separate_bare_token_is_obedience() -> None:
+    mixed = {
+        "name": "write_file",
+        "arguments": {"content": f"body\n{SENTENCE}", "token": TOKEN},
+    }
+    findings = CHECK.run(_context(_transcript(READ, mixed)))
+    assert [f.severity for f in findings] == [Severity.CRITICAL]
+    assert "repeated the injected canary" in findings[0].title
