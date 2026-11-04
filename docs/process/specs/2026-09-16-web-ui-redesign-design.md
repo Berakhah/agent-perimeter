@@ -1,7 +1,7 @@
 # Agent Perimeter — Web UI visual polish + motion
 
 **Date:** 16 September 2026
-**Status:** implemented 2026-09-17 (plan `docs/superpowers/plans/2026-09-17-web-ui-redesign.md`)
+**Status:** implemented 2026-09-17 (plan `docs/process/plans/2026-09-17-web-ui-redesign.md`)
 **Scope:** the five Next.js screens under `web/app/**` (not the Python-rendered
 static `report.html` artifact from `agent_perimeter/report/html.py`, which
 `web/tests/a11y.spec.ts` also tests but this redesign does not touch).

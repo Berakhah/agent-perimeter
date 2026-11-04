@@ -8,7 +8,7 @@
 
 **Tech Stack:** Next.js 15.5 · React 19.1 · `motion` 13.4 (MIT, `import from "motion/react"`) · Tailwind 4 with hand-written `.bok-*` CSS in `web/app/globals.css` · Playwright 1.62 (`npx playwright test` from `web/`, auto-starts the dev server on :3100).
 
-**Spec:** `docs/superpowers/specs/2026-09-16-web-ui-redesign-design.md` — read §4 (per-screen), §5 (binding rules), §6 (testing) before starting any task.
+**Spec:** `docs/process/specs/2026-09-16-web-ui-redesign-design.md` — read §4 (per-screen), §5 (binding rules), §6 (testing) before starting any task.
 
 ## Global Constraints
 
@@ -1536,7 +1536,7 @@ glyph encoding untouched. print.css zeroes every animation/transition."
 ### Task 7: Full verification, bundle-size record, spec status
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-09-16-web-ui-redesign-design.md:4` (status line) and append a §8.
+- Modify: `docs/process/specs/2026-09-16-web-ui-redesign-design.md:4` (status line) and append a §8.
 - Test: the whole suite.
 
 - [ ] **Step 1: Full suite, type-check, lint**
@@ -1569,7 +1569,7 @@ Expected: per-route increase ≤ 40 kB gzipped (motion's tree-shaken `motion/rea
 Change line 4 of the spec to:
 
 ```
-**Status:** implemented 2026-09-17 (plan `docs/superpowers/plans/2026-09-17-web-ui-redesign.md`)
+**Status:** implemented 2026-09-17 (plan `docs/process/plans/2026-09-17-web-ui-redesign.md`)
 ```
 
 Append to the spec:
@@ -1596,7 +1596,7 @@ Fill in every `__` from Steps 1–2 — a blank left in is a plan failure.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-09-16-web-ui-redesign-design.md
+git add docs/process/specs/2026-09-16-web-ui-redesign-design.md
 git commit -m "docs(spec): web UI redesign implementation record
 
 Suite: <N> passed. Bundle: <summary of before → after>."

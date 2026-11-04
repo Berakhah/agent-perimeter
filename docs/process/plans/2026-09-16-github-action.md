@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12 stdlib only (`dataclasses`, `subprocess`, `shlex`, `json`, `pathlib`); PyYAML (already a dependency) in tests; GitHub Actions composite syntax; pytest.
 
-**Spec:** `docs/superpowers/specs/2026-09-16-github-action-design.md`. Read it first; every task below cites its section.
+**Spec:** `docs/process/specs/2026-09-16-github-action-design.md`. Read it first; every task below cites its section.
 
 ## Global Constraints
 
@@ -39,7 +39,7 @@
 | `README.md` | "Use as a GitHub Action" section after "Drift detection" | 3 |
 | `.github/workflows/action-selftest.yml` | end-to-end proof on `ubuntu-latest` against the stdio fixture image | 4 |
 | `.github/workflows/release.yml` | moves the floating `v1` tag on `release: published` | 4 |
-| `docs/superpowers/specs/2026-09-15-drift-detection-design.md` | §10 pointer to the new spec | 5 |
+| `docs/process/specs/2026-09-15-drift-detection-design.md` | §10 pointer to the new spec | 5 |
 | `docs/open-decisions.md` | D3/D8 entry; retire the stale "gh auth login has not been run" paragraph | 5 |
 
 ---
@@ -191,7 +191,7 @@ Expected: FAIL at collection with `ModuleNotFoundError: No module named 'agent_p
 ```python
 """GitHub Action entry point -- ``python -m agent_perimeter.action``.
 
-Spec: docs/superpowers/specs/2026-09-16-github-action-design.md.
+Spec: docs/process/specs/2026-09-16-github-action-design.md.
 
 Everything here is glue around the unchanged ``agent-perimeter scan`` CLI:
 read the ``INPUT_*`` variables GitHub sets for an action, decide whether
@@ -1425,9 +1425,9 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ### Task 5: Docs, full suite, push, watch CI (STOP before merging and tagging)
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-09-15-drift-detection-design.md:319`
+- Modify: `docs/process/specs/2026-09-15-drift-detection-design.md:319`
 - Modify: `docs/open-decisions.md` (replace the stale trailing paragraph; append an addendum)
-- Modify: `docs/superpowers/specs/2026-09-16-github-action-design.md:4` (status line)
+- Modify: `docs/process/specs/2026-09-16-github-action-design.md:4` (status line)
 
 - [ ] **Step 1: Point the drift spec at the new one**
 
@@ -1448,7 +1448,7 @@ every push since). "CI is green" is now usable evidence.
 
 ## Addendum — GitHub Action delivery (2026-09-16)
 
-The drift spec (`docs/superpowers/specs/2026-09-15-drift-detection-design.md`
+The drift spec (`docs/process/specs/2026-09-15-drift-detection-design.md`
 §10) deferred a GitHub Action pending a publishing decision. Decided, with
 the reasoning in `2026-09-16-github-action-design.md` D3/D8:
 
@@ -1465,10 +1465,10 @@ the reasoning in `2026-09-16-github-action-design.md` D3/D8:
 
 - [ ] **Step 3: Update the new spec's status line**
 
-Line 4 of `docs/superpowers/specs/2026-09-16-github-action-design.md` becomes:
+Line 4 of `docs/process/specs/2026-09-16-github-action-design.md` becomes:
 
 ```markdown
-**Status:** implemented 2026-09-16 (plan: `docs/superpowers/plans/2026-09-16-github-action.md`)
+**Status:** implemented 2026-09-16 (plan: `docs/process/plans/2026-09-16-github-action.md`)
 ```
 
 - [ ] **Step 4: Full suite, gate, coverage**
@@ -1481,7 +1481,7 @@ Expected: all PASS, coverage ≥ 75% (`--cov-fail-under=75` in `pyproject.toml` 
 ```bash
 git status
 git grep -nE "gho_|ghp_|AKIA|-----BEGIN" -- action.yml .github tests/action agent_perimeter/action.py || echo "no secrets"
-git add docs/superpowers/specs/2026-09-15-drift-detection-design.md docs/open-decisions.md docs/superpowers/specs/2026-09-16-github-action-design.md
+git add docs/process/specs/2026-09-15-drift-detection-design.md docs/open-decisions.md docs/process/specs/2026-09-16-github-action-design.md
 git commit -m "docs: record the GitHub Action delivery decision; retire the stale sync note
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
@@ -1492,7 +1492,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```bash
 git push -u origin github-action
 gh pr create --title "feat: GitHub Action wrapper (drift gate + SARIF)" --body "$(cat <<'EOF'
-Implements docs/superpowers/specs/2026-09-16-github-action-design.md.
+Implements docs/process/specs/2026-09-16-github-action-design.md.
 
 - `action.yml` composite: install from the action's own checkout, run `python -m agent_perimeter.action`, upload SARIF (always, so a drift failure still uploads).
 - `agent_perimeter/action.py`: first-run vs gate-run, exact reproduction line with `env` values masked, outputs + job summary derived from the SARIF, exit codes unchanged (0/2/3).

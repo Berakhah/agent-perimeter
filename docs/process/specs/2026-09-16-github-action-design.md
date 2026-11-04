@@ -1,7 +1,7 @@
 # Agent Perimeter — GitHub Action wrapper
 
 **Date:** 16 September 2026
-**Status:** implemented 2026-09-16 (plan: `docs/superpowers/plans/2026-09-16-github-action.md`)
+**Status:** implemented 2026-09-16 (plan: `docs/process/plans/2026-09-16-github-action.md`)
 **Scope:** the `agent-perimeter/scan@v1` follow-on that the drift spec
 (`2026-09-15-drift-detection-design.md` §10) listed as out of scope pending
 a publishing decision. That decision is taken here.
@@ -230,7 +230,7 @@ by the unit tests above.
   `uses: Berakhah/agent-perimeter@v1`, `with: { target: … }`), the
   first-run/commit-the-baseline sequence, the input table, the exit-code
   table, and the `fail-on-drift: false` soft-gate pattern.
-- `docs/superpowers/specs/2026-09-15-drift-detection-design.md` §10 — the
+- `docs/process/specs/2026-09-15-drift-detection-design.md` §10 — the
   GitHub Action bullet gets a pointer to this spec.
 - `docs/open-decisions.md` — one dated entry recording D3 (install from
   ref; PyPI/GHCR not adopted) and D8 (no Marketplace listing yet).

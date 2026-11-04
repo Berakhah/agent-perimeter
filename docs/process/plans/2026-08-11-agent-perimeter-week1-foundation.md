@@ -8,8 +8,8 @@
 
 **Tech Stack:** Python 3.12+, `uv`, `ruff`, `mypy --strict`, `pytest`, `hypothesis`, Pydantic v2, Docker (containment), PyYAML, Typer, httpx.
 
-**Spec:** `docs/superpowers/specs/2026-08-11-agent-perimeter-design.md`
-**Revision (binding):** `docs/superpowers/specs/2026-08-29-agent-perimeter-plan-revision.md` — **read it first.** It corrects blocking defects in Tasks 4, 8, 9 and 11. Where it and this plan disagree, the revision wins.
+**Spec:** `docs/process/specs/2026-08-11-agent-perimeter-design.md`
+**Revision (binding):** `docs/process/specs/2026-08-29-agent-perimeter-plan-revision.md` — **read it first.** It corrects blocking defects in Tasks 4, 8, 9 and 11. Where it and this plan disagree, the revision wins.
 
 > **Blocking corrections to this week, summarised.** Evidence and detail in the revision.
 > - **Task 4** — drop the hand-written seccomp profile; omit `--security-opt seccomp=…` so Docker's default applies. The custom allowlist is missing syscalls CPython needs (`unlinkat`, `rt_sigsuspend`, `membarrier`, `socketpair`, …) and is x86_64-only, so it breaks real servers and every ARM host. Keep it as an optional flag with a test proving a real Python MCP server runs under it. Add `--env HOME=/tmp` (no writable home under `--read-only`) and `--ulimit nofile`. Revision §7.2.
@@ -328,7 +328,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'agent_perimeter._cont
 ponytail: `bok-core` is not published yet. These are concrete mirrors of the
 contract, not permanent code. When the package ships, delete this module and
 import from `bok_core` instead. Requirements raised on `bok-core` are recorded
-in docs/superpowers/specs/2026-08-11-agent-perimeter-design.md section 8.
+in docs/process/specs/2026-08-11-agent-perimeter-design.md section 8.
 """
 
 from __future__ import annotations
