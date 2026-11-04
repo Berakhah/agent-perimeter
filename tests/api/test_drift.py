@@ -43,9 +43,13 @@ class _Listing:
     # When set, page 1 carries only the first tool plus a nextCursor, and
     # page 2 fails: an early-stopped listing (FU-2 note path).
     truncate = False
+    # When set, every tools/list request fails: page 1 never answers.
+    page_one_fails = False
 
     def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
         if method == "tools/list":
+            if _Listing.page_one_fails:
+                raise TransportError("page 1 down")
             names_and_descriptions = _Listing.tools or [("read_file", _Listing.description)]
             if _Listing.truncate:
                 if params and params.get("cursor") == "c2":
@@ -81,6 +85,7 @@ def stub(monkeypatch: pytest.MonkeyPatch) -> None:
     _Listing.description = "Read a file."
     _Listing.tools = None
     _Listing.truncate = False
+    _Listing.page_one_fails = False
     monkeypatch.setattr("agent_perimeter.scan_runner.fingerprint", lambda transport: MODERN)
     monkeypatch.setattr(
         "agent_perimeter.scan_runner.build_transport", lambda target, image, env: _Listing()
@@ -270,6 +275,26 @@ def test_an_incomplete_scan_is_recorded_and_never_becomes_the_baseline(
         assert session.get(Scan, truncated).listing_complete is False  # type: ignore[union-attr]
         assert session.get(Scan, after).listing_complete is True  # type: ignore[union-attr]
     # Against the truncated scan, `b` would read as tool_added (high).
+    assert _drift_findings(client, after) == []
+
+
+def test_a_page_one_failure_reports_no_removals_and_never_becomes_the_baseline(
+    client: TestClient, db: Engine
+) -> None:
+    _Listing.tools = [("a", "Read a file."), ("b", "Read a file.")]
+    full = _scan(client)
+    _Listing.page_one_fails = True
+    unlisted = _scan(client)
+    _Listing.page_one_fails = False
+    after = _scan(client)
+
+    assert _drift_findings(client, unlisted) == []
+    events = client.get(f"/api/scans/{unlisted}/events").text
+    assert "listing_incomplete" in events
+    with Session(db) as session:
+        assert session.get(Scan, full).listing_complete is True  # type: ignore[union-attr]
+        assert session.get(Scan, unlisted).listing_complete is False  # type: ignore[union-attr]
+    # Against the empty scan, `a` and `b` would both read as tool_added (high).
     assert _drift_findings(client, after) == []
 
 

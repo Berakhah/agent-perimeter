@@ -47,7 +47,8 @@ MODERN = Fingerprint(
 
 class _FakeTransport:
     def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
-        return {}
+        # A valid, empty listing; a reply with no `tools` list is incomplete.
+        return {"tools": []} if method == "tools/list" else {}
 
     def close(self) -> None: ...
 

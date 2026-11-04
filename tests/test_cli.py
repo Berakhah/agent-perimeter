@@ -37,10 +37,12 @@ class _FakeTransport:
     previously left `_build_transport` untouched, so target
     "https://mcp.example.test/rpc" made a real (and now un-stubbed) network
     call and failed with a DNS `ConnectError`. This fake keeps them hermetic.
+    tools/list answers with a valid, empty listing: a reply with no `tools`
+    list is an incomplete listing, which would add a scan note.
     """
 
     def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
-        return {}
+        return {"tools": []} if method == "tools/list" else {}
 
     def close(self) -> None: ...
 
