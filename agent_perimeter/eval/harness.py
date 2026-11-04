@@ -38,7 +38,7 @@ from agent_perimeter.checks.base import Check
 from agent_perimeter.checks.context import ScanContext
 from agent_perimeter.checks.descriptions.llm_judge import LlmJudgeCheck, Verdict
 from agent_perimeter.checks.registry import BaselineStatus, applicable
-from agent_perimeter.discover.enumerate import enumerate_tools
+from agent_perimeter.discover.enumerate import ToolRecord, enumerate_tools
 from agent_perimeter.drift.compare import compare_tools
 from agent_perimeter.eval.corpus import CorpusCase
 from agent_perimeter.eval.mcptox import sample_tool
@@ -225,6 +225,22 @@ def _run(
     return {check.id for check in runnable if check.run(context)}
 
 
+class IncompleteFixtureListing(RuntimeError):
+    """A fixture's tools/list stopped early. Scoring it would publish precision
+    and recall measured over a partial listing, so the run stops instead."""
+
+
+def _full_listing(transport: InProcessTransport, target: str, role: str) -> list[ToolRecord]:
+    notes: list[str] = []
+    tools = enumerate_tools(transport, notes)
+    if notes:
+        raise IncompleteFixtureListing(
+            f"{target}: the {role} fixture's tool listing was incomplete ({' '.join(notes)}) "
+            "Fix the fixture's pagination before scoring it."
+        )
+    return tools
+
+
 def run_case(case: CorpusCase, *, models_available: bool = False) -> set[str]:
     """Run the full check suite against one corpus case and return the ids
     of checks that fired."""
@@ -256,13 +272,13 @@ def run_case(case: CorpusCase, *, models_available: bool = False) -> set[str]:
         )
 
     now = datetime.now(UTC)
-    tools = enumerate_tools(transport)
+    tools = _full_listing(transport, target, "scanned")
     baseline: ToolSnapshot | None = None
     drift_events: tuple[DriftEvent, ...] = ()
     if case.baseline_flaw is not None:
         baseline_transport = InProcessTransport(case.revision, case.baseline_flaw)
         baseline = ToolSnapshot.from_tools(
-            target, enumerate_tools(baseline_transport), taken_at=now
+            target, _full_listing(baseline_transport, target, "baseline"), taken_at=now
         )
         drift_events = compare_tools(baseline, target, tools, now=now)
 

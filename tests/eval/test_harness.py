@@ -7,6 +7,8 @@ skipped for lack of a scope (§4.4).
 
 from datetime import date
 
+import pytest
+
 from agent_perimeter.eval.corpus import CorpusCase
 from agent_perimeter.eval.harness import fixture_scope, run_case
 from agent_perimeter.eval.mcptox import to_corpus_cases
@@ -67,3 +69,59 @@ def test_mcptox_case_is_checked_against_its_own_sample_not_the_fixture() -> None
     }
     [case] = to_corpus_cases([sample])
     assert "descriptions.imperative_injection" in run_case(case)
+
+
+def test_a_fixture_whose_listing_stops_early_is_never_scored_silently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_perimeter.eval import harness
+    from agent_perimeter.transport.base import TransportError
+
+    real = harness.InProcessTransport
+
+    class _StopsEarly(real):  # type: ignore[misc, valid-type]
+        def request(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            if method == "tools/list" and params and params.get("cursor") == "c2":
+                raise TransportError("page 2 down")
+            reply = super().request(method, params)
+            return {**reply, "nextCursor": "c2"} if method == "tools/list" else reply
+
+    monkeypatch.setattr(harness, "InProcessTransport", _StopsEarly)
+    case = CorpusCase(id="clean", revision="2026-07-28", flaw="none")
+    with pytest.raises(harness.IncompleteFixtureListing, match="fixture:clean.*incomplete"):
+        run_case(case)
+
+
+def test_a_baseline_fixture_whose_listing_stops_early_also_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_perimeter.eval import harness
+    from agent_perimeter.transport.base import TransportError
+
+    real = harness.InProcessTransport
+
+    class _BaselineStopsEarly(real):  # type: ignore[misc, valid-type]
+        def request(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            if getattr(self, "_flaw_name", None) != "none" or method != "tools/list":
+                return super().request(method, params)
+            if params and params.get("cursor") == "c2":
+                raise TransportError("page 2 down")
+            return {**super().request(method, params), "nextCursor": "c2"}
+
+        def __init__(self, revision: str, flaw: str) -> None:
+            super().__init__(revision, flaw)
+            self._flaw_name = flaw
+
+    monkeypatch.setattr(harness, "InProcessTransport", _BaselineStopsEarly)
+    case = CorpusCase(
+        id="drift_case",
+        revision="2026-07-28",
+        flaw="drift_description",
+        baseline_flaw="none",
+    )
+    with pytest.raises(harness.IncompleteFixtureListing, match="baseline"):
+        run_case(case)

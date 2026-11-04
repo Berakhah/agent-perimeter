@@ -231,6 +231,15 @@ graph-sink change was ruled out of that wave on purpose.
   so a listing from another target cannot upgrade a transcript. The title says
   which reason applied. Only firing is measured, so the corpus counts in
   `docs/methodology.md` did not move.
+  **Final-review follow-up (2026-11-04).** The recorded sinks are now a
+  session-wide union that never shrinks (with `canary.sink_derivations`), and
+  each recorded call carries the receiving tool's classification at call
+  time (`"sink": {"strength", "derivation"}`), so an agent re-listing page 1
+  after the bait cannot turn a CRITICAL into a MEDIUM. The adapter prefers
+  the bait call's own classification, then the session union, then (only for
+  transcripts with neither) the scanned listing. The CRITICAL reason names
+  the backing edge's derivation, e.g. "a sink in the capability graph
+  (name-derived)". The methodology regeneration showed no diff.
 - **FU-2. `agent_perimeter/discover/enumerate.py` ignores `nextCursor`.**
   Discovery reads only the first `tools/list` page, so every check that
   consumes the enumerated listing misses tools on later pages: a
@@ -241,8 +250,28 @@ graph-sink change was ruled out of that wave on purpose.
   page's entry for a name seen on an earlier page replaces it, first-seen
   order kept; duplicate names within one page are all kept, as drift keys on
   them.
-  Paging stops on an absent or non-string cursor, a repeated cursor, or
-  `MAX_TOOL_PAGES` (100); the last two log a warning, as the listing may then
-  be incomplete. A `TransportError` on page 1 still yields no tools; on a later
-  page the earlier pages' tools are kept. The proxy's `_page_through` shares
-  the same cap, so a hostile upstream cannot keep it paging under its lock.
+  Paging stops on an absent or non-string cursor, or early on a repeated
+  cursor, `MAX_TOOL_PAGES` (100), or a `TransportError` on a later page (the
+  earlier pages' tools are kept). All three early stops log a warning and add
+  a scan note, rendered in the HTML report, the CLI summary, the API status
+  body, the SSE terminal frame, SARIF `toolExecutionNotifications` and the
+  web live-scan screen. A `TransportError` on page 1 still yields no tools.
+  The proxy's `_page_through` shares the same cap, so a hostile upstream
+  cannot keep it paging under its lock.
+  **Final-review follow-up (2026-11-04).** An incomplete listing no longer
+  feeds drift: `drift.description_drift` is skipped as
+  `listing_incomplete`, the scan is persisted with `scan.listing_complete =
+  false` (migration 0008, existing rows true) and is never selected, or
+  accepted when pinned, as a baseline. The CLI refuses `--snapshot` for it
+  (exit 2, file not written), `--fail-on-drift` fails closed (exit 2) when it
+  could not compare, and `drift scan:<id>` refuses an incomplete operand. The
+  proxy's `_page_through` now mirrors `enumerate_tools`: a failed later page
+  keeps the earlier pages and clears the pending cursor, so later
+  `tools/call`s still reach the upstream. Every early stop is recorded as a
+  fixed-vocabulary `canary.listing_incomplete`; `injection.agent_adapter`
+  names it in the finding caveat, unions in the scanned listing's sinks, and
+  adds a scan note (`ScanContext.notes`) whether or not there is a finding.
+  The proxy also merges pages with discovery's `merge_page`, so same-page
+  duplicate names are kept for source detection there too. The eval harness
+  raises `IncompleteFixtureListing` instead of scoring a fixture whose
+  listing stopped early.

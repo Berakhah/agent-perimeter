@@ -34,10 +34,15 @@ def enumerate_tools(transport: Transport, notes: list[str] | None = None) -> lis
 
     A later page's entry for a name seen on an earlier page replaces it, keeping
     first-seen order. Duplicate names within one page are all kept. Paging
-    stops when the cursor is absent, repeats, or MAX_TOOL_PAGES is reached;
-    the last two are logged, since the listing may then be incomplete.
-    A TransportError on page 1 yields no tools; on a later page it keeps what
-    earlier pages returned.
+    stops when the cursor is absent, or early when it repeats, MAX_TOOL_PAGES
+    is reached, or a later page raises TransportError (which keeps what
+    earlier pages returned). All three early stops log a warning and add a
+    note; run_scan surfaces the notes in the HTML report, the CLI summary, the
+    API status body, the SSE terminal frame, SARIF toolExecutionNotifications
+    and the web live-scan screen, skips drift, and marks the scan
+    listing-incomplete so it never becomes a drift baseline. A TransportError
+    on page 1 yields no tools and no note: an unlisted server is a finding
+    for `static/`, not a truncated listing.
     """
     records: list[ToolRecord] = []
     index: dict[str, int] = {}  # name -> position of its first-seen record

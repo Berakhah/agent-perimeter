@@ -86,6 +86,23 @@ def test_empty_findings_still_validates(tmp_path: Path) -> None:
     jsonschema.validate(_sarif(workspace=tmp_path), SCHEMA)
 
 
+def test_scan_notes_validate_against_the_2_1_0_schema(tmp_path: Path) -> None:
+    for findings in ((), (_finding(),)):
+        document = to_sarif(
+            list(findings),
+            target=TARGET,
+            tool_version="0.1.0",
+            fingerprint=FINGERPRINT,
+            workspace=tmp_path,
+            notes=("x",),
+        )
+        jsonschema.validate(document, SCHEMA)
+        [invocation] = document["runs"][0]["invocations"]  # type: ignore[index]
+        assert invocation["toolExecutionNotifications"] == [
+            {"level": "warning", "message": {"text": "x"}}
+        ]
+
+
 def test_result_carries_both_a_physical_and_a_logical_location(tmp_path: Path) -> None:
     result = _sarif(_finding(), workspace=tmp_path)["runs"][0]["results"][0]  # type: ignore[index]
     location = result["locations"][0]
