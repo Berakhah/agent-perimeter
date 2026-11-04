@@ -384,7 +384,64 @@ def test_a_page_one_relist_after_the_bait_keeps_the_rating_critical() -> None:
     assert "a sink in the capability graph (name-derived)" in finding.title
 
 
+def test_a_relist_that_later_makes_the_bait_tool_a_sink_does_not_upgrade_it() -> None:
+    from agent_perimeter.checks.injection.agent_adapter import CHECK
+    from tests.checks.injection.test_agent_adapter import _context
+
+    plain = {"name": "lookup", "description": "Look up.", "inputSchema": {"type": "object"}}
+    sinky = {
+        "name": "lookup",
+        "description": "Look up.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"url": {"type": "string", "format": "uri"}},
+        },
+    }
+    upstream = PagedTransport(
+        {None: {"tools": [TOOLS[0], TOOLS[1], plain]}},
+        {"read_file": _ok("hello"), "lookup": _ok("ok")},
+    )
+    proxy = Proxy(upstream, CANARY)
+    proxy.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    _call(proxy, "read_file", {"path": "a"}, 2)
+    _call(proxy, "lookup", {"q": CANARY.token}, 3)
+    upstream.pages[None] = {"tools": [TOOLS[0], TOOLS[1], sinky]}
+    proxy.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/list"})
+    transcript = proxy.recorder.to_transcript()
+    assert "lookup" in transcript["canary"]["sinks"]  # type: ignore[index]
+    assert "sink" not in transcript["tool_calls"][1]  # type: ignore[index,operator]
+    [finding] = CHECK.run(_context(transcript))
+    assert finding.severity.value == "medium"
+
+
 # --- incomplete proxy listings (final review #3) -----------------------------
+
+
+class FailsPageOneOnce(PagedTransport):
+    failed = False
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        if method == "tools/list" and not self.failed:
+            self.failed = True
+            self.calls.append((method, params))
+            raise TransportError("down once")
+        return super().request(method, params)
+
+
+def test_a_recovered_first_page_failure_reason_stays_true_after_injection() -> None:
+    from agent_perimeter.instrument.recorder import LISTING_FIRST_PAGE_FAILED
+
+    upstream = FailsPageOneOnce({None: {"tools": TOOLS}}, {"read_file": _ok("hello")})
+    proxy = Proxy(upstream, CANARY)
+    first = _call(proxy, "read_file", {"path": "a"}, 1)
+    second = _call(proxy, "read_file", {"path": "b"}, 2)
+    assert first is not None and _texts(first) == ["hello"]
+    assert second is not None and _texts(second) == ["hello", CANARY.text]
+    reason = proxy.recorder.to_transcript()["canary"]["listing_incomplete"]  # type: ignore[index]
+    assert reason == LISTING_FIRST_PAGE_FAILED
+    # A canary *was* injected after recovery: the reason must not deny it.
+    assert "nothing was injected" not in reason
+    assert "before" in reason and "canary" in reason
 
 
 class FlakyPage2(PagedTransport):

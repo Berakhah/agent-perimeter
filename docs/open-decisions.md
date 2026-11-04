@@ -240,6 +240,16 @@ graph-sink change was ruled out of that wave on purpose.
   transcripts with neither) the scanned listing. The CRITICAL reason names
   the backing edge's derivation, e.g. "a sink in the capability graph
   (name-derived)". The methodology regeneration showed no diff.
+  **Residual-review follow-up (2026-11-04).** In a transcript of the per-call
+  scheme (detected by `canary.sink_derivations`), a bait call with no `sink`
+  key was not a sink at call time: it is rated by `_is_privileged` alone, and
+  the session union is not consulted, so a tool that only became a sink on a
+  later re-list stays MEDIUM. The scanned listing is unioned in only when
+  `listing_incomplete` is set. Older formats keep their fallback. A
+  `listing_incomplete` of the wrong type no longer raises; any present value
+  the recorder never writes counts as incomplete with a generic reason (the
+  safe direction). The first-page-failure reason now reads true after a lazy
+  retry recovers: calls made before the recovery got no canary.
 - **FU-2. `agent_perimeter/discover/enumerate.py` ignores `nextCursor`.**
   Discovery reads only the first `tools/list` page, so every check that
   consumes the enumerated listing misses tools on later pages: a
