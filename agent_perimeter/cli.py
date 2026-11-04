@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
@@ -25,7 +26,7 @@ from pydantic import ValidationError
 from agent_perimeter._contracts import Severity
 from agent_perimeter.checks.registry import summarise_skips
 from agent_perimeter.drift.render import for_terminal
-from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile
+from agent_perimeter.model.scope import AuthorizationRequired, ScopeFile, require_scope
 from agent_perimeter.model.snapshot import ToolSnapshot
 from agent_perimeter.scan_runner import DEFAULT_DATABASE_URL, ScanMode, run_scan
 
@@ -320,6 +321,55 @@ def scan(
     if fail_on_drift and any(f.check_id == DRIFT_CHECK_ID for f in findings):
         typer.echo("drift gate tripped: at least one tool changed since the baseline (exit 3).")
         raise typer.Exit(code=3)
+
+
+@app.command()
+def instrument(
+    target: Annotated[str, typer.Option(help="A URL, or a stdio command to launch.")],
+    scope_file: Annotated[
+        Path | None, typer.Option(help="Scope file authorising this target.")
+    ] = None,
+    image: Annotated[
+        str, typer.Option(help="Container image for stdio targets.")
+    ] = "python:3.12-slim",
+    port: Annotated[int, typer.Option(help="Loopback port your agent connects to.")] = 8931,
+    transcript_out: Annotated[
+        Path, typer.Option(help="Where to write the transcript on exit.")
+    ] = Path("agent-transcript.json"),
+) -> None:
+    """Proxy your server for your own agent, inject a canary, record the transcript."""
+    try:
+        scope = ScopeFile.model_validate_json(scope_file.read_text()) if scope_file else None
+    except (OSError, ValidationError) as exc:
+        typer.echo(f"Could not read scope file: {exc}")
+        raise typer.Exit(code=2) from None
+    try:
+        require_scope(scope, check_id="instrument", target=target, today=date.today())
+    except AuthorizationRequired as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2) from None
+
+    from agent_perimeter.instrument import server
+    from agent_perimeter.instrument.proxy import Proxy
+    from agent_perimeter.scan_runner import build_transport
+
+    transport = build_transport(target, image, {})
+    proxy = Proxy(transport)
+    typer.echo(f"Point your agent at http://{server.LOOPBACK_HOST}:{port} (Ctrl+C to stop).")
+    try:
+        server.serve(proxy, port=port)
+    except OSError as exc:
+        typer.echo(
+            f"Could not listen on {server.LOOPBACK_HOST}:{port}: {exc}. "
+            "Pass --port with a free port."
+        )
+        raise typer.Exit(code=2) from None
+    finally:
+        transcript_out.write_text(
+            json.dumps(proxy.recorder.to_transcript(), indent=2), encoding="utf-8"
+        )
+        transport.close()
+        typer.echo(f"Transcript written to {transcript_out}. Feed it back with --agent-transcript.")
 
 
 def _resolve_operand(value: str, *, database_url: str) -> ToolSnapshot:
