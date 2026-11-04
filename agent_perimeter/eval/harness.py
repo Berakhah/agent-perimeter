@@ -33,7 +33,9 @@ from types import ModuleType
 
 from agent_perimeter._contracts import Claim, Derivation, Method
 from agent_perimeter.checks.all_checks import ALL_CHECKS
+from agent_perimeter.checks.base import Check
 from agent_perimeter.checks.context import ScanContext
+from agent_perimeter.checks.descriptions.llm_judge import LlmJudgeCheck, Verdict
 from agent_perimeter.checks.registry import BaselineStatus, applicable
 from agent_perimeter.discover.enumerate import enumerate_tools
 from agent_perimeter.drift.compare import compare_tools
@@ -43,6 +45,7 @@ from agent_perimeter.model.drift import DriftEvent
 from agent_perimeter.model.feature import BUNDLES, Revision
 from agent_perimeter.model.scope import ScopeFile
 from agent_perimeter.model.snapshot import ToolSnapshot
+from agent_perimeter.scan_runner import compute_ambiguous_tools
 from agent_perimeter.transport.base import TransportError, _reject_header_override
 from agent_perimeter.transport.revision import Fingerprint, fingerprint
 
@@ -178,6 +181,29 @@ def _fingerprint_for_sample() -> Fingerprint:
     )
 
 
+class _ScriptedJudge:
+    """Eval-only stand-in for a model provider: always answers SUSPICIOUS.
+
+    No provider is provisioned (docs/methodology.md), and the shipped
+    UnavailableJudge answers UNDETERMINED for everything. Without a judge
+    that answers, the "providers enabled" lane of the degraded-mode
+    measurement is identical to the disabled one and its ratio cannot fail.
+    This exercises the escalation path, not any real model's accuracy.
+    """
+
+    def classify(self, content: str, schema: type[Verdict]) -> Verdict:
+        return Verdict.SUSPICIOUS
+
+
+def _checks_for(*, models_available: bool) -> tuple[Check, ...]:
+    if not models_available:
+        return ALL_CHECKS
+    return tuple(
+        LlmJudgeCheck(_ScriptedJudge()) if check.id == "descriptions.llm_judge" else check
+        for check in ALL_CHECKS
+    )
+
+
 def _run(
     context: ScanContext,
     *,
@@ -185,7 +211,7 @@ def _run(
     baseline_status: BaselineStatus = BaselineStatus.NONE_ON_RECORD,
 ) -> set[str]:
     runnable, _ = applicable(
-        ALL_CHECKS,
+        _checks_for(models_available=models_available),
         context.fingerprint.features,
         scope=context.scope,
         target=context.target,
@@ -242,6 +268,7 @@ def run_case(case: CorpusCase, *, models_available: bool = False) -> set[str]:
         raw=raw,
         baseline=baseline,
         drift_events=drift_events,
+        ambiguous_tools=compute_ambiguous_tools(tools, target),
     )
     return _run(
         context,
