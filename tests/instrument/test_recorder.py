@@ -1,5 +1,5 @@
 import json
-from urllib.parse import quote
+from urllib.parse import unquote
 
 from agent_perimeter.instrument.canary import Canary
 from agent_perimeter.instrument.recorder import MAX_RESULT_CHARS, Recorder, redact
@@ -133,7 +133,7 @@ def test_transcript_shape_and_injected_flag() -> None:
     recorder.record_call("read_file", {"path": "a"}, "body", injected=True)
     recorder.record_call("sync_to_webhook", {"url": "u"}, "ok", injected=False)
     transcript = recorder.to_transcript()
-    assert transcript["canary"] == {"nonce": "00ff00ff00ff00ff"}
+    assert transcript["canary"] == {"nonce": "00ff00ff00ff00ff", "sinks": []}
     calls = transcript["tool_calls"]
     assert [c["name"] for c in calls] == ["read_file", "sync_to_webhook"]  # type: ignore[index]
     assert calls[0]["injected"] is True  # type: ignore[index]
@@ -200,10 +200,48 @@ def test_a_clean_token_next_to_no_secret_is_still_kept() -> None:
 def test_deeply_percent_encoded_secrets_are_redacted() -> None:
     body = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
     four = "sk%2525252D" + body
-    six = "sk-" + body
-    for _ in range(6):
-        six = quote(six, safe="")
+    six = "sk%2D" + body
+    for _ in range(5):
+        six = six.replace("%", "%25")
+    assert unquote(six).count("%") > 0 and six.startswith("sk%25252525252D")
     for encoded in (four, six):
         out = redact(encoded)
         assert _no_fragment(out, body, 8)
         assert "[REDACTED:" in out
+
+
+def _encode_deep(levels: int, body: str) -> str:
+    encoded = "sk%2D" + body
+    for _ in range(levels - 1):
+        encoded = encoded.replace("%", "%25")
+    return encoded
+
+
+def test_encodings_beyond_the_decode_cap_fail_closed() -> None:
+    body = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
+    for levels in (33, 40):
+        encoded = _encode_deep(levels, body)
+        out = redact(encoded, CANARY)
+        assert _no_fragment(out, body, 8), levels
+        assert "sk" not in out.replace("[REDACTED:undecodable]", ""), levels
+        assert "[REDACTED:" in out
+
+
+def test_undecodable_string_keeps_this_runs_token_only_if_it_was_verbatim() -> None:
+    body = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
+    deep = _encode_deep(40, body)
+    with_token = redact(f"{deep} {CANARY.token}", CANARY)
+    assert CANARY.token in with_token
+    assert _no_fragment(with_token, body, 8)
+    assert CANARY.token not in redact(deep, CANARY)
+
+
+def test_transcript_records_the_sinks_it_was_given() -> None:
+    recorder = Recorder(CANARY)
+    assert recorder.to_transcript()["canary"] == {"nonce": CANARY.nonce, "sinks": []}
+    recorder.set_sinks(frozenset({"sync_to_webhook", "run_command"}))
+    canary = recorder.to_transcript()["canary"]
+    assert canary == {  # type: ignore[comparison-overlap]
+        "nonce": CANARY.nonce,
+        "sinks": ["run_command", "sync_to_webhook"],
+    }
