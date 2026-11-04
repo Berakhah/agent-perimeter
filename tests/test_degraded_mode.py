@@ -18,6 +18,15 @@ def _distinct_firing_check_ids(*, models_available: bool) -> set[str]:
     return fired
 
 
+def test_the_model_lane_is_actually_exercised_by_the_corpus() -> None:
+    """Without this, enabled == disabled and the 90% floor is a tautology:
+    the ratio is 100% whatever the detectors do."""
+    enabled = _distinct_firing_check_ids(models_available=True)
+    disabled = _distinct_firing_check_ids(models_available=False)
+    assert enabled - disabled == {"descriptions.llm_judge"}
+    assert disabled <= enabled
+
+
 def test_degraded_mode_still_produces_findings() -> None:
     enabled = _distinct_firing_check_ids(models_available=True)
     disabled = _distinct_firing_check_ids(models_available=False)

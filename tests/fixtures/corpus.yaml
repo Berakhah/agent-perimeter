@@ -55,6 +55,11 @@ cases:
     revision: "2026-07-28"
     flaw: imperative_injection
     expect_findings: [descriptions.imperative_injection]
+  - id: ambiguous_directive
+    revision: "2026-07-28"
+    flaw: ambiguous_description
+    expect_findings: [descriptions.imperative_injection]
+    note: weak signal only; the deterministic detector flags it and escalates to the judge
   - id: descriptive_prose_control
     revision: "2026-07-28"
     flaw: verbose_description
