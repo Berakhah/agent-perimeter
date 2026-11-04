@@ -233,6 +233,35 @@ def test_a_page_one_failure_skips_drift_visibly_instead_of_removing_every_tool(
     assert {s.reason for s in outcome.skipped} == {SkipReason.LISTING_INCOMPLETE}
 
 
+class _NoToolsCapability:
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        from agent_perimeter.transport.base import TransportError
+
+        if method == "tools/list":
+            raise TransportError("Method not found", code=-32601)
+        return {}
+
+    def close(self) -> None: ...
+
+
+def test_a_server_without_tools_is_complete_compared_and_noted(
+    stub: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_perimeter.checks.all_checks import ALL_CHECKS
+
+    monkeypatch.setattr(
+        "agent_perimeter.scan_runner.build_transport", lambda t, i, e: _NoToolsCapability()
+    )
+    drift_checks = [c for c in ALL_CHECKS if c.requires_baseline]
+    outcome = run_scan(
+        TARGET, ScanMode.PASSIVE, None, checks=drift_checks, baseline=_two_tool_baseline(), now=NOW
+    )
+    assert outcome.listing_complete is True
+    assert any("does not offer tools" in note for note in outcome.notes)
+    assert {e.field for e in outcome.drift_events} == {DriftField.TOOL_REMOVED}
+    assert outcome.skipped == []
+
+
 def test_a_successful_empty_listing_is_complete_and_still_compared(
     stub: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

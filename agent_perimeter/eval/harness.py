@@ -38,7 +38,7 @@ from agent_perimeter.checks.base import Check
 from agent_perimeter.checks.context import ScanContext
 from agent_perimeter.checks.descriptions.llm_judge import LlmJudgeCheck, Verdict
 from agent_perimeter.checks.registry import BaselineStatus, applicable
-from agent_perimeter.discover.enumerate import ToolRecord, enumerate_tools
+from agent_perimeter.discover.enumerate import ToolRecord, list_tools
 from agent_perimeter.drift.compare import compare_tools
 from agent_perimeter.eval.corpus import CorpusCase
 from agent_perimeter.eval.mcptox import sample_tool
@@ -231,14 +231,14 @@ class IncompleteFixtureListing(RuntimeError):
 
 
 def _full_listing(transport: InProcessTransport, target: str, role: str) -> list[ToolRecord]:
-    notes: list[str] = []
-    tools = enumerate_tools(transport, notes)
-    if notes:
+    listing = list_tools(transport)
+    if not listing.complete:
         raise IncompleteFixtureListing(
-            f"{target}: the {role} fixture's tool listing was incomplete ({' '.join(notes)}) "
+            f"{target}: the {role} fixture's tool listing was incomplete "
+            f"({' '.join(listing.notes)}) "
             "Fix the fixture's pagination before scoring it."
         )
-    return tools
+    return listing.tools
 
 
 def run_case(case: CorpusCase, *, models_available: bool = False) -> set[str]:

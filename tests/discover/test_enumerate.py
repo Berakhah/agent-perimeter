@@ -267,3 +267,67 @@ def test_a_reply_without_a_tools_list_is_noted_as_incomplete() -> None:
         assert enumerate_tools(PagedTransport({None: reply}), notes) == []
         assert len(notes) == 1, reply
         assert "no tools list" in notes[0]
+
+
+def test_a_page_one_reply_without_a_tools_list_says_a_re_run_will_not_fix_it() -> None:
+    from agent_perimeter.discover.enumerate import list_tools
+
+    listing = list_tools(PagedTransport({None: {}}))
+    assert listing.complete is False
+    [note] = listing.notes
+    assert '`"tools": []`' in note
+    assert "a plain re-run will not fix it" in note
+    assert "Re-run once the server answers tools/list" not in note
+
+
+class _MethodNotFound:
+    """Rejects tools/list for the cursors in `missing` with JSON-RPC -32601."""
+
+    def __init__(self, pages: dict[str | None, dict[str, object]], missing: set[str | None]):
+        self.pages, self.missing = pages, missing
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        cursor = params.get("cursor") if params else None
+        if cursor in self.missing:
+            msg = "Method not found: tools/list"
+            raise TransportError(msg, code=-32601)
+        return self.pages[cursor]  # type: ignore[index]
+
+    def close(self) -> None: ...
+
+
+def test_page_one_method_not_found_is_a_complete_empty_listing_with_a_factual_note() -> None:
+    from agent_perimeter.discover.enumerate import list_tools
+
+    listing = list_tools(_MethodNotFound({}, {None}))
+    assert listing.tools == []
+    assert listing.complete is True
+    [note] = listing.notes
+    assert "does not offer tools" in note
+    assert "Method not found" in note
+    assert "incomplete" not in note.lower()
+    assert "Re-run" not in note
+
+
+def test_method_not_found_on_a_later_page_stays_incomplete() -> None:
+    from agent_perimeter.discover.enumerate import list_tools
+
+    listing = list_tools(
+        _MethodNotFound({None: {"tools": [{"name": "a"}], "nextCursor": "c2"}}, {"c2"})
+    )
+    assert [t.name for t in listing.tools] == ["a"]
+    assert listing.complete is False
+    assert "page 2" in listing.notes[0]
+
+
+def test_other_transport_errors_on_page_one_stay_incomplete() -> None:
+    from agent_perimeter.discover.enumerate import list_tools
+
+    class Internal(_MethodNotFound):
+        def request(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            msg = "boom"
+            raise TransportError(msg, code=-32603)
+
+    assert list_tools(Internal({}, set())).complete is False
