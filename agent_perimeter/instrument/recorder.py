@@ -16,11 +16,12 @@ token survives however long the surrounding string is.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from urllib.parse import unquote
 
 from agent_perimeter._contracts import SecretFingerprint
+from agent_perimeter.checks.injection.path_proof import SinkClass
 from agent_perimeter.checks.secrets.patterns import SECRET_KEY_NAME, SECRET_PATTERNS
 from agent_perimeter.instrument.canary import Canary
 
@@ -131,15 +132,48 @@ def _clean(value: object, canary: Canary) -> object:
     return value
 
 
+# Why the proxy's tool listing stopped early. A fixed vocabulary, never
+# server-supplied text (a cursor may embed a credential), so the adapter can
+# quote a recognised reason verbatim and refuse anything else.
+LISTING_PAGE_FAILED = (
+    "a tools/list page after the first failed; sources and sinks were computed from "
+    "the pages received before it"
+)
+LISTING_FIRST_PAGE_FAILED = (
+    "the first tools/list page failed; no tools were known, so nothing was injected"
+)
+LISTING_REPEAT_CURSOR = (
+    "the server repeated a tools/list cursor; sources and sinks were computed from the "
+    "pages received before it"
+)
+LISTING_PAGE_CAP = (
+    "the server still offered a next tools/list page at the page cap; sources and sinks "
+    "were computed from the pages received"
+)
+LISTING_REASONS = frozenset(
+    {LISTING_PAGE_FAILED, LISTING_FIRST_PAGE_FAILED, LISTING_REPEAT_CURSOR, LISTING_PAGE_CAP}
+)
+
+
 @dataclass
 class Recorder:
+    """The transcript. Sinks are a session-wide union that never shrinks, and
+    each call also carries the receiving tool's classification at call time,
+    so a later, smaller re-list cannot downgrade an earlier bait call."""
+
     canary: Canary
     _calls: list[dict[str, object]] = field(default_factory=list)
-    _sinks: list[str] = field(default_factory=list)
-    _weak_sinks: list[str] = field(default_factory=list)
+    _sinks: dict[str, SinkClass] = field(default_factory=dict)
+    _listing_incomplete: str | None = None
 
     def record_call(
-        self, name: str, arguments: object, result_text: str, *, injected: bool
+        self,
+        name: str,
+        arguments: object,
+        result_text: str,
+        *,
+        injected: bool,
+        sink: SinkClass | None = None,
     ) -> None:
         entry: dict[str, object] = {
             "name": redact(name, self.canary),
@@ -148,23 +182,33 @@ class Recorder:
         }
         if injected:
             entry["injected"] = True
+        if sink is not None:
+            entry["sink"] = sink.to_json()
         self._calls.append(entry)
 
-    def set_sinks(self, sinks: frozenset[str], weak: frozenset[str] = frozenset()) -> None:
-        """Record the proxy's sinks (latest wins).
+    def add_sinks(self, classes: Mapping[str, SinkClass]) -> None:
+        """Fold the proxy's current sinks into the session union.
 
-        `sinks` have a schema-, name- or probe-derived edge; `weak` are inferred
-        from description prose only.
+        A name once seen as a sink stays one; backed beats weak, and a backed
+        sink keeps its strongest derivation.
         """
-        self._sinks = sorted(redact(name, self.canary) for name in sinks)
-        self._weak_sinks = sorted(redact(name, self.canary) for name in weak)
+        for name, found in classes.items():
+            key = redact(name, self.canary)
+            self._sinks[key] = found.stronger(self._sinks.get(key))
+
+    def mark_listing_incomplete(self, reason: str) -> None:
+        """Record that the proxy's listing stopped early. Sticky: the first reason is kept."""
+        if self._listing_incomplete is None:
+            self._listing_incomplete = reason
 
     def to_transcript(self) -> dict[str, object]:
-        return {
-            "tool_calls": list(self._calls),
-            "canary": {
-                "nonce": self.canary.nonce,
-                "sinks": list(self._sinks),
-                "weak_sinks": list(self._weak_sinks),
-            },
+        backed = {name: c for name, c in self._sinks.items() if c.backed}
+        canary: dict[str, object] = {
+            "nonce": self.canary.nonce,
+            "sinks": sorted(backed),
+            "weak_sinks": sorted(name for name, c in self._sinks.items() if not c.backed),
+            "sink_derivations": {name: backed[name].derivation.value for name in sorted(backed)},
         }
+        if self._listing_incomplete is not None:
+            canary["listing_incomplete"] = self._listing_incomplete
+        return {"tool_calls": list(self._calls), "canary": canary}

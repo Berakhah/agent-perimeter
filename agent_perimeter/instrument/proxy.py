@@ -9,6 +9,20 @@ tool with no privileged sink behind it is never touched.
 Source detection needs every tool, not just the first page: a source on page
 two may have its sink on page one. The proxy therefore accumulates records
 across all pages before computing sources.
+
+The listing is merged exactly as `discover.enumerate_tools` merges it
+(`parse_tools` + `merge_page`): a later page's entry for a name replaces the
+earlier one, and same-page duplicate names are all kept, so a duplicate
+`fetch` whose first copy reads a path is a source here just as it is in
+`injection.path_proof`. Injection and sink classification still key on the
+tool name a tools/call carries, so every copy of a name shares one verdict.
+
+A listing that stops early (a later page fails, a cursor repeats, the page
+cap is hit) keeps what was received, is logged, and is recorded in the
+transcript (`canary.listing_incomplete`) so the adapter can say so. The
+pending cursor is cleared either way: a page that fails once is not retried
+before every tools/call, which used to fail each call before it reached the
+upstream.
 """
 
 from __future__ import annotations
@@ -16,11 +30,23 @@ from __future__ import annotations
 import logging
 import threading
 
-from agent_perimeter.checks.injection.path_proof import find_paths, path_sinks
-from agent_perimeter.discover.enumerate import MAX_TOOL_PAGES, ToolRecord
+from agent_perimeter.checks.injection.path_proof import SinkClass, classify_sinks, find_paths
+from agent_perimeter.discover.enumerate import (
+    MAX_TOOL_PAGES,
+    ToolRecord,
+    merge_page,
+    parse_tools,
+)
 from agent_perimeter.graph.build import build_graph
 from agent_perimeter.instrument.canary import Canary, new_canary
-from agent_perimeter.instrument.recorder import Recorder, redact
+from agent_perimeter.instrument.recorder import (
+    LISTING_FIRST_PAGE_FAILED,
+    LISTING_PAGE_CAP,
+    LISTING_PAGE_FAILED,
+    LISTING_REPEAT_CURSOR,
+    Recorder,
+    redact,
+)
 from agent_perimeter.transport.base import Transport, TransportError
 
 logger = logging.getLogger(__name__)
@@ -30,25 +56,6 @@ SERVER_NAME = "agent-perimeter-instrument"
 
 def _error(message_id: object, code: int, text: str) -> dict[str, object]:
     return {"jsonrpc": "2.0", "id": message_id, "error": {"code": code, "message": text}}
-
-
-def _records_of(listing: dict[str, object]) -> list[ToolRecord]:
-    raw = listing.get("tools")
-    records: list[ToolRecord] = []
-    for entry in raw if isinstance(raw, list) else []:
-        if not isinstance(entry, dict) or "name" not in entry:
-            continue
-        schema = entry.get("inputSchema")
-        annotations = entry.get("annotations")
-        records.append(
-            ToolRecord(
-                name=str(entry["name"]),
-                description=str(entry.get("description", "")),
-                input_schema=schema if isinstance(schema, dict) else {},
-                annotations=annotations if isinstance(annotations, dict) else {},
-            )
-        )
-    return records
 
 
 def _next_cursor(listing: dict[str, object]) -> str | None:
@@ -73,8 +80,12 @@ class Proxy:
         self._upstream = upstream
         self.canary = canary if canary is not None else new_canary()
         self.recorder = Recorder(self.canary)
-        self._records: dict[str, ToolRecord] = {}  # accumulated across pages, by name
+        # Accumulated across pages, merged as discovery merges them.
+        self._records: list[ToolRecord] = []
+        self._index: dict[str, int] = {}  # name -> first-seen slot in _records
+        self._pages = 0  # pages absorbed into the current listing
         self._sources: frozenset[str] = frozenset()
+        self._sinks: dict[str, SinkClass] = {}  # of the current listing
         self._listed = False  # whether any tools/list reply has been absorbed
         self._pending: str | None = None  # nextCursor not yet followed
         self._lock = threading.Lock()  # one session; Transport is not re-entrant
@@ -133,34 +144,45 @@ class Proxy:
         """Fold one tools/list page into the accumulated listing.
 
         A reply to a request without a cursor starts a fresh listing; one with
-        a cursor adds to it. A later page's entry for a name replaces the
-        earlier one.
+        a cursor adds to it (`merge_page`). The recorder's sinks are a session
+        union, so a fresh, smaller listing never removes a sink already seen.
         """
         if cursor is None:
-            self._records = {}
-        for record in _records_of(listing):
-            self._records[record.name] = record
+            self._records, self._index, self._pages = [], {}, 0
+        merge_page(self._records, self._index, parse_tools(listing))
+        self._pages += 1
         self._listed = True
         self._pending = _next_cursor(listing)
-        edges = build_graph(list(self._records.values()))
-        paths = find_paths(edges)
-        self._sources = frozenset(source for source, _ in paths)
-        backed, weak = path_sinks(edges)
-        self.recorder.set_sinks(backed, weak)
+        edges = build_graph(self._records)
+        self._sources = frozenset(source for source, _ in find_paths(edges))
+        self._sinks = classify_sinks(edges)
+        self.recorder.add_sinks(self._sinks)
 
     def _page_through(self, cursor: str | None) -> None:
         """Follow nextCursor from `cursor` (None = first page) until exhausted.
 
         Stops when a cursor repeats or after MAX_TOOL_PAGES requests, so a server
-        that loops or never ends cannot hold the proxy lock indefinitely.
+        that loops or never ends cannot hold the proxy lock indefinitely. A
+        failed page keeps the pages already absorbed, like `enumerate_tools`.
+        Every early stop is logged and recorded in the transcript.
         """
         requested: set[str] = set()
         for _ in range(MAX_TOOL_PAGES):
             params: dict[str, object] | None = {"cursor": cursor} if cursor is not None else None
-            listing = self._upstream.request("tools/list", params)
+            try:
+                listing = self._upstream.request("tools/list", params)
+            except Exception as exc:  # noqa: BLE001 -- any failure: keep what we have, go on
+                self._listing_stopped(cursor, exc)
+                return
             self._absorb(listing, cursor)
             following = _next_cursor(listing)
-            if following is None or following in requested:
+            if following is None:
+                self._pending = None
+                return
+            if following in requested:
+                # The cursor is server-controlled and may embed a credential: never echo it.
+                logger.warning("tools/list cursor repeated; instrument listing is incomplete")
+                self.recorder.mark_listing_incomplete(LISTING_REPEAT_CURSOR)
                 self._pending = None
                 return
             requested.add(following)
@@ -168,6 +190,25 @@ class Proxy:
         logger.warning(
             "tools/list still had a nextCursor after %d pages; instrument listing is incomplete",
             MAX_TOOL_PAGES,
+        )
+        self.recorder.mark_listing_incomplete(LISTING_PAGE_CAP)
+        self._pending = None
+
+    def _listing_stopped(self, cursor: str | None, exc: Exception) -> None:
+        """A tools/list page failed. Later pages keep the earlier ones; a failed
+        first page leaves the listing unlisted so the next call retries it.
+        Either way the tools/call that triggered paging still goes upstream."""
+        first = cursor is None
+        logger.warning(
+            "tools/list page %d failed (%s: %s); instrument listing is incomplete, "
+            "keeping %d tools from earlier pages",
+            1 if first else self._pages + 1,
+            type(exc).__name__,
+            redact(str(exc), self.canary),
+            len(self._records),
+        )
+        self.recorder.mark_listing_incomplete(
+            LISTING_FIRST_PAGE_FAILED if first else LISTING_PAGE_FAILED
         )
         self._pending = None
 
@@ -181,21 +222,30 @@ class Proxy:
         if not self._listed or self._pending is not None:
             self._page_through(self._pending)
         arguments = params.get("arguments", {})
+        # Classified now, against the listing this call was made under: a
+        # later re-list must not change how this call is rated.
+        sink = self._sinks.get(name)
         try:
             result = self._upstream.request("tools/call", params)
         except TransportError as exc:
             # A strict schema may reject the very call that carries the canary;
             # record it anyway, or an agent that obeyed looks clean.
             code = exc.code if exc.code is not None else -32603
-            self.recorder.record_call(name, arguments, f"error {code}: {exc}", injected=False)
+            self.recorder.record_call(
+                name, arguments, f"error {code}: {exc}", injected=False, sink=sink
+            )
             raise
         except Exception as exc:
             self.recorder.record_call(
-                name, arguments, f"error -32603: {type(exc).__name__}: {exc}", injected=False
+                name,
+                arguments,
+                f"error -32603: {type(exc).__name__}: {exc}",
+                injected=False,
+                sink=sink,
             )
             raise
         inject = name in self._sources and result.get("isError") is not True
-        self.recorder.record_call(name, arguments, _text_of(result), injected=inject)
+        self.recorder.record_call(name, arguments, _text_of(result), injected=inject, sink=sink)
         if not inject:
             return result
         content = result.get("content")

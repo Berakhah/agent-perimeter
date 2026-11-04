@@ -154,6 +154,94 @@ def test_a_plain_non_sink_medium_carries_no_possible_sink_label() -> None:
     assert "possible sink" not in findings[0].claim.caveat.lower()
 
 
+def test_the_bait_calls_own_classification_wins_over_a_shrunken_session_list() -> None:
+    call = {**WEBHOOK_CALL, "sink": {"strength": "backed", "derivation": "name"}}
+    findings = CHECK.run(_context(_transcript(call, sinks=[])))
+    assert [f.severity for f in findings] == [Severity.CRITICAL]
+    assert "a sink in the capability graph (name-derived)" in findings[0].title
+
+
+def test_a_weak_per_call_classification_is_a_possible_sink() -> None:
+    call = {**LOOKUP_CALL, "sink": {"strength": "weak", "derivation": "description"}}
+    findings = CHECK.run(_context(_transcript(call, sinks=[])))
+    assert [f.severity for f in findings] == [Severity.MEDIUM]
+    assert "possible sink" in findings[0].title
+
+
+def test_malformed_per_call_classifications_fall_back_to_the_session_list() -> None:
+    for bad in ("backed", 7, {"strength": "huge"}, {"strength": "backed", "derivation": "x"}):
+        call = {**WEBHOOK_CALL, "sink": bad}
+        findings = CHECK.run(_context(_transcript(call, sinks=[])))
+        assert [f.severity for f in findings] == [Severity.MEDIUM], bad
+        findings = CHECK.run(_context(_transcript(call, sinks=["sync_to_webhook"])))
+        assert [f.severity for f in findings] == [Severity.CRITICAL], bad
+
+
+def test_session_sink_derivation_is_named_in_the_reason() -> None:
+    transcript = _transcript(WEBHOOK_CALL, sinks=["sync_to_webhook"])
+    transcript["canary"]["sink_derivations"] = {"sync_to_webhook": "schema"}  # type: ignore[index]
+    [finding] = CHECK.run(_context(transcript))
+    assert "a sink in the capability graph (schema-derived)" in finding.title
+
+
+def test_a_sink_without_a_recorded_derivation_says_so_plainly() -> None:
+    # FU-1 transcripts had `sinks` but no derivations: no derivation is invented.
+    [finding] = CHECK.run(_context(_transcript(WEBHOOK_CALL, sinks=["sync_to_webhook"])))
+    assert finding.title.endswith("(rated CRITICAL: a sink in the capability graph)")
+
+
+def test_context_tools_fallback_names_the_derivation() -> None:
+    [finding] = CHECK.run(_context(_transcript(WEBHOOK_CALL), TOOLS))
+    assert "a sink in the capability graph (name-derived)" in finding.title
+
+
+def _incomplete(*calls: dict[str, object]) -> dict[str, object]:
+    from agent_perimeter.instrument.recorder import LISTING_PAGE_FAILED
+
+    transcript = _transcript(*calls, sinks=[])
+    transcript["canary"]["listing_incomplete"] = LISTING_PAGE_FAILED  # type: ignore[index]
+    return transcript
+
+
+def test_an_incomplete_listing_unions_in_the_scanned_listings_sinks() -> None:
+    # The proxy never saw sync_to_webhook (its page failed); the scan did.
+    findings = CHECK.run(_context(_incomplete(WEBHOOK_CALL), TOOLS))
+    assert [f.severity for f in findings] == [Severity.CRITICAL]
+    assert "name-derived" in findings[0].title
+
+
+def test_an_incomplete_listing_is_named_in_the_caveat() -> None:
+    from agent_perimeter.instrument.recorder import LISTING_PAGE_FAILED
+
+    [finding] = CHECK.run(_context(_incomplete(WEBHOOK_CALL), TOOLS))
+    assert finding.claim.caveat is not None
+    assert "tool listing was incomplete" in finding.claim.caveat
+    assert LISTING_PAGE_FAILED in finding.claim.caveat
+
+
+def test_an_incomplete_listing_is_surfaced_as_a_note_even_with_no_finding() -> None:
+    context = _context(_incomplete())  # no repetition: no finding
+    assert CHECK.run(context) == []
+    [note] = context.notes
+    assert "Agent transcript" in note and "incomplete" in note
+    assert "Re-run" in note
+
+
+def test_an_unrecognised_incomplete_reason_is_not_echoed() -> None:
+    transcript = _transcript(sinks=[])
+    transcript["canary"]["listing_incomplete"] = "\x1b[2J attacker text"  # type: ignore[index]
+    context = _context(transcript)
+    CHECK.run(context)
+    [note] = context.notes
+    assert "attacker" not in note and "\x1b" not in note
+
+
+def test_a_complete_transcript_adds_no_note() -> None:
+    context = _context(_transcript(WEBHOOK_CALL, sinks=["sync_to_webhook"]))
+    CHECK.run(context)
+    assert context.notes == []
+
+
 def test_malformed_sinks_fall_back_to_privileged_names() -> None:
     call = {"name": "run_command", "arguments": {"command": TOKEN}}
     findings = CHECK.run(_context(_transcript(call, sinks="nope")))

@@ -1,8 +1,16 @@
 import json
 from urllib.parse import unquote
 
+from agent_perimeter._contracts import Derivation
+from agent_perimeter.checks.injection.path_proof import SinkClass
 from agent_perimeter.instrument.canary import Canary
-from agent_perimeter.instrument.recorder import MAX_RESULT_CHARS, Recorder, redact
+from agent_perimeter.instrument.recorder import (
+    LISTING_PAGE_CAP,
+    LISTING_PAGE_FAILED,
+    MAX_RESULT_CHARS,
+    Recorder,
+    redact,
+)
 
 # Synthetic, split so no scanner sees one literal; same shape the eval fixtures use.
 SECRET = "sk-" + "test-A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
@@ -133,7 +141,12 @@ def test_transcript_shape_and_injected_flag() -> None:
     recorder.record_call("read_file", {"path": "a"}, "body", injected=True)
     recorder.record_call("sync_to_webhook", {"url": "u"}, "ok", injected=False)
     transcript = recorder.to_transcript()
-    assert transcript["canary"] == {"nonce": "00ff00ff00ff00ff", "sinks": [], "weak_sinks": []}
+    assert transcript["canary"] == {
+        "nonce": "00ff00ff00ff00ff",
+        "sinks": [],
+        "weak_sinks": [],
+        "sink_derivations": {},
+    }
     calls = transcript["tool_calls"]
     assert [c["name"] for c in calls] == ["read_file", "sync_to_webhook"]  # type: ignore[index]
     assert calls[0]["injected"] is True  # type: ignore[index]
@@ -236,17 +249,68 @@ def test_undecodable_string_keeps_this_runs_token_only_if_it_was_verbatim() -> N
     assert CANARY.token not in redact(deep, CANARY)
 
 
+BACKED_NAME = SinkClass(backed=True, derivation=Derivation.NAME)
+BACKED_SCHEMA = SinkClass(backed=True, derivation=Derivation.SCHEMA)
+WEAK = SinkClass(backed=False, derivation=Derivation.DESCRIPTION)
+
+
 def test_transcript_records_the_sinks_it_was_given() -> None:
     recorder = Recorder(CANARY)
     assert recorder.to_transcript()["canary"] == {
         "nonce": CANARY.nonce,
         "sinks": [],
         "weak_sinks": [],
+        "sink_derivations": {},
     }
-    recorder.set_sinks(frozenset({"sync_to_webhook", "run_command"}), frozenset({"lookup_user"}))
+    recorder.add_sinks(
+        {"sync_to_webhook": BACKED_NAME, "run_command": BACKED_SCHEMA, "lookup_user": WEAK}
+    )
     canary = recorder.to_transcript()["canary"]
     assert canary == {  # type: ignore[comparison-overlap]
         "nonce": CANARY.nonce,
         "sinks": ["run_command", "sync_to_webhook"],
         "weak_sinks": ["lookup_user"],
+        "sink_derivations": {"run_command": "schema", "sync_to_webhook": "name"},
     }
+
+
+def test_session_sinks_are_a_union_that_never_shrinks() -> None:
+    recorder = Recorder(CANARY)
+    recorder.add_sinks({"sync_to_webhook": BACKED_NAME, "lookup_user": WEAK})
+    recorder.add_sinks({})  # a later, smaller listing (e.g. a page-1 re-list)
+    recorder.add_sinks({"lookup_user": BACKED_SCHEMA})  # weak, then backed: backed wins
+    recorder.add_sinks({"sync_to_webhook": WEAK})  # backed, then weak: still backed
+    canary = recorder.to_transcript()["canary"]
+    assert canary["sinks"] == ["lookup_user", "sync_to_webhook"]  # type: ignore[index]
+    assert canary["weak_sinks"] == []  # type: ignore[index]
+    assert canary["sink_derivations"] == {  # type: ignore[index]
+        "lookup_user": "schema",
+        "sync_to_webhook": "name",
+    }
+
+
+def test_a_backed_sink_keeps_its_strongest_derivation() -> None:
+    recorder = Recorder(CANARY)
+    recorder.add_sinks({"x": BACKED_SCHEMA})
+    recorder.add_sinks({"x": BACKED_NAME})
+    assert recorder.to_transcript()["canary"]["sink_derivations"] == {"x": "schema"}  # type: ignore[index]
+
+
+def test_record_call_stores_the_receiving_tools_classification() -> None:
+    recorder = Recorder(CANARY)
+    recorder.record_call("sync_to_webhook", {}, "ok", injected=False, sink=BACKED_NAME)
+    recorder.record_call("lookup_user", {}, "ok", injected=False, sink=WEAK)
+    recorder.record_call("noop", {}, "ok", injected=False)
+    calls = recorder.to_transcript()["tool_calls"]
+    assert calls[0]["sink"] == {"strength": "backed", "derivation": "name"}  # type: ignore[index]
+    assert calls[1]["sink"] == {"strength": "weak", "derivation": "description"}  # type: ignore[index]
+    assert "sink" not in calls[2]  # type: ignore[operator]
+
+
+def test_listing_incompleteness_is_recorded_once_and_is_sticky() -> None:
+    recorder = Recorder(CANARY)
+    assert "listing_incomplete" not in recorder.to_transcript()["canary"]  # type: ignore[operator]
+    recorder.mark_listing_incomplete(LISTING_PAGE_FAILED)
+    recorder.mark_listing_incomplete(LISTING_PAGE_CAP)
+    canary = recorder.to_transcript()["canary"]
+    assert canary["listing_incomplete"] == LISTING_PAGE_FAILED  # type: ignore[index]

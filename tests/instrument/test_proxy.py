@@ -6,6 +6,11 @@ import pytest
 from agent_perimeter.discover.enumerate import MAX_TOOL_PAGES
 from agent_perimeter.instrument.canary import Canary
 from agent_perimeter.instrument.proxy import Proxy
+from agent_perimeter.instrument.recorder import (
+    LISTING_PAGE_CAP,
+    LISTING_PAGE_FAILED,
+    LISTING_REPEAT_CURSOR,
+)
 from agent_perimeter.transport.base import TransportError
 
 CANARY = Canary(nonce="00ff00ff00ff00ff")
@@ -348,3 +353,129 @@ def test_transcript_records_the_sinks_the_proxy_computed() -> None:
     proxy.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     canary = proxy.recorder.to_transcript()["canary"]
     assert canary["sinks"] == ["sync_to_webhook"]  # type: ignore[index]
+    assert canary["sink_derivations"] == {"sync_to_webhook": "name"}  # type: ignore[index]
+
+
+# --- sinks at bait time (final review #2) ------------------------------------
+
+SOURCE_PAGE = {"tools": [TOOLS[0]], "nextCursor": "c2"}  # read_file (source)
+SINK_PAGE = {"tools": [TOOLS[1]]}  # sync_to_webhook (sink)
+
+
+def test_a_page_one_relist_after_the_bait_keeps_the_rating_critical() -> None:
+    from agent_perimeter.checks.injection.agent_adapter import CHECK
+    from tests.checks.injection.test_agent_adapter import _context
+
+    upstream = PagedTransport(
+        {None: SOURCE_PAGE, "c2": SINK_PAGE},
+        {"read_file": _ok("hello"), "sync_to_webhook": _ok("ok")},
+    )
+    proxy = Proxy(upstream, CANARY)
+    proxy.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    _call(proxy, "read_file", {"path": "a"}, 2)
+    _call(proxy, "sync_to_webhook", {"url": CANARY.token}, 3)
+    proxy.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/list"})  # page 1 only again
+    transcript = proxy.recorder.to_transcript()
+    assert transcript["canary"]["sinks"] == ["sync_to_webhook"]  # type: ignore[index]
+    bait = transcript["tool_calls"][1]  # type: ignore[index]
+    assert bait["sink"] == {"strength": "backed", "derivation": "name"}
+    [finding] = CHECK.run(_context(transcript))
+    assert finding.severity.value == "critical"
+    assert "a sink in the capability graph (name-derived)" in finding.title
+
+
+# --- incomplete proxy listings (final review #3) -----------------------------
+
+
+class FlakyPage2(PagedTransport):
+    """Page 1 points at c2; requesting c2 raises a TransportError."""
+
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        if method == "tools/list" and params and params.get("cursor") == "c2":
+            self.calls.append((method, params))
+            raise TransportError("page 2 down")
+        return super().request(method, params)
+
+
+BOTH_THEN_C2 = {"tools": TOOLS, "nextCursor": "c2"}
+
+
+def test_a_page_n_error_keeps_page_one_and_later_calls_still_reach_upstream() -> None:
+    upstream = FlakyPage2(
+        {None: BOTH_THEN_C2}, {"read_file": _ok("hello"), "sync_to_webhook": _ok("ok")}
+    )
+    proxy = Proxy(upstream, CANARY)
+    first = _call(proxy, "read_file", {"path": "a"}, 1)
+    second = _call(proxy, "sync_to_webhook", {"url": CANARY.token}, 2)
+    assert first is not None and "result" in first, first
+    assert _texts(first) == ["hello", CANARY.text]  # page 1's source still gets the canary
+    assert second is not None and "result" in second, second
+    # Page 2 is tried once, not before every call.
+    assert [m for m, _ in upstream.calls].count("tools/list") == 2
+    assert [m for m, _ in upstream.calls].count("tools/call") == 2
+    transcript = proxy.recorder.to_transcript()
+    assert [c["name"] for c in transcript["tool_calls"]] == ["read_file", "sync_to_webhook"]  # type: ignore[index]
+    assert transcript["canary"]["listing_incomplete"] == LISTING_PAGE_FAILED  # type: ignore[index]
+    assert "page 2 down" not in str(transcript)
+
+
+def test_a_page_n_error_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    upstream = FlakyPage2({None: BOTH_THEN_C2}, {"read_file": _ok("hello")})
+    with caplog.at_level(logging.WARNING):
+        _call(Proxy(upstream, CANARY), "read_file", {"path": "a"})
+    assert "instrument listing is incomplete" in caplog.text
+
+
+def test_the_page_cap_is_recorded_in_the_transcript() -> None:
+    class Endless(PagedTransport):
+        def request(
+            self, method: str, params: dict[str, object] | None = None
+        ) -> dict[str, object]:
+            self.calls.append((method, params))
+            if method == "tools/list":
+                return {"tools": [], "nextCursor": f"c{len(self.calls)}"}
+            return self.results[str((params or {})["name"])]
+
+    proxy = Proxy(Endless({}, {"read_file": _ok("hello")}), CANARY)
+    _call(proxy, "read_file", {"path": "a"})
+    canary = proxy.recorder.to_transcript()["canary"]
+    assert canary["listing_incomplete"] == LISTING_PAGE_CAP  # type: ignore[index]
+
+
+def test_a_repeated_cursor_is_recorded_in_the_transcript() -> None:
+    upstream = PagedTransport(
+        {None: {"tools": [], "nextCursor": "loop"}, "loop": {"tools": [], "nextCursor": "loop"}},
+        {"read_file": _ok("hello")},
+    )
+    proxy = Proxy(upstream, CANARY)
+    _call(proxy, "read_file", {"path": "a"})
+    canary = proxy.recorder.to_transcript()["canary"]
+    assert canary["listing_incomplete"] == LISTING_REPEAT_CURSOR  # type: ignore[index]
+    assert "loop" not in str(canary)
+
+
+def test_a_complete_listing_records_no_incompleteness() -> None:
+    upstream = PagedTransport({None: PAGE_1, "c2": PAGE_2}, {"read_file": _ok("hello")})
+    proxy = Proxy(upstream, CANARY)
+    _call(proxy, "read_file", {"path": "a"})
+    assert "listing_incomplete" not in proxy.recorder.to_transcript()["canary"]  # type: ignore[operator]
+
+
+# --- duplicate names (final review #9) ---------------------------------------
+
+
+def test_same_page_duplicate_names_are_all_kept_like_discovery() -> None:
+    # Discovery keeps both copies of `fetch`, so path_proof sees it as a source
+    # (its first copy reads a path). Last-wins keying would drop that copy.
+    fetch_reads = {
+        "name": "fetch",
+        "description": "Fetch.",
+        "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}},
+    }
+    fetch_plain = {"name": "fetch", "description": "Fetch.", "inputSchema": {"type": "object"}}
+    upstream = PagedTransport(
+        {None: {"tools": [fetch_reads, fetch_plain, TOOLS[1]]}}, {"fetch": _ok("data")}
+    )
+    reply = _call(Proxy(upstream, CANARY), "fetch", {"path": "a"})
+    assert reply is not None
+    assert _texts(reply) == ["data", CANARY.text]
