@@ -137,3 +137,45 @@ def test_transcript_shape_and_injected_flag() -> None:
     assert [c["name"] for c in calls] == ["read_file", "sync_to_webhook"]  # type: ignore[index]
     assert calls[0]["injected"] is True  # type: ignore[index]
     assert "injected" not in calls[1]  # type: ignore[operator]
+
+
+# --- residual review findings ------------------------------------------------
+
+
+def _no_fragment(text: str, secret: str, size: int = 12) -> bool:
+    return all(secret[i : i + size] not in text for i in range(len(secret) - size + 1))
+
+
+def test_secrets_encoded_at_different_depths_are_all_redacted() -> None:
+    first = "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
+    second = "Z9y8X7w6V5u4T3s2R1q0P9o8N7m6L5k4"
+    out = redact("a=sk%2D" + first + "&b=sk%252D" + second)
+    for secret in (first, second):
+        assert _no_fragment(out, secret)
+    assert out.count("[REDACTED:") == 2
+
+
+def test_a_password_that_starts_like_the_canary_is_fully_redacted() -> None:
+    password = "AP-CANARY-" + "c0ffee" * 6
+    out = _recorded({"password": password})
+    assert "c0ffee" not in out
+    assert "AP-CANARY-" not in out
+
+
+def test_this_runs_token_under_a_secret_named_key_is_kept() -> None:
+    out = _recorded({"token": CANARY.token})
+    assert CANARY.token in out
+
+
+def test_another_runs_token_under_a_secret_named_key_is_redacted() -> None:
+    other = Canary(nonce="ffeeddccbbaa9988")
+    out = _recorded({"token": other.token})
+    assert other.nonce not in out
+    assert "AP-CANARY-" not in out
+
+
+def test_redact_preserves_a_token_only_when_given_its_canary() -> None:
+    # "desk-" + token reads as an openai-shaped "sk-..." without .
+    text = f"https://x.test/desk-{CANARY.token}"
+    assert CANARY.token in redact(text, CANARY)
+    assert CANARY.token not in redact(text)

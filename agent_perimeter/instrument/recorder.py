@@ -22,7 +22,7 @@ from urllib.parse import unquote
 
 from agent_perimeter._contracts import SecretFingerprint
 from agent_perimeter.checks.secrets.patterns import SECRET_KEY_NAME, SECRET_PATTERNS
-from agent_perimeter.instrument.canary import PREFIX, Canary
+from agent_perimeter.instrument.canary import Canary
 
 MAX_RESULT_CHARS = 2048
 _MAX_DECODE_ROUNDS = 3  # %253D -> %3D -> =
@@ -37,8 +37,6 @@ _UNANCHORED: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
 # SECRET_KEY_NAME plus the header-style names it does not cover.
 _AUTH_KEY_NAME = re.compile(r"(^|[_-])auth([_-]|$)|authori[sz]ation|cookie", re.IGNORECASE)
 
-_CANARY_TOKEN = re.compile(re.escape(PREFIX) + r"[0-9a-f]{16}")
-
 
 def _is_secret_key(key: str) -> bool:
     return bool(SECRET_KEY_NAME.search(key) or _AUTH_KEY_NAME.search(key))
@@ -52,24 +50,26 @@ def _replacer(name: str) -> Callable[[re.Match[str]], str]:
     return _sub
 
 
-def _redact_patterns(text: str) -> str:
-    # Canary tokens are split out first so a boundary-free pattern
-    # (e.g. "desk-AP-CANARY-..." reading as "sk-...") cannot swallow one.
-    pieces = _CANARY_TOKEN.split(text)
-    tokens = _CANARY_TOKEN.findall(text)
+def _redact_patterns(text: str, canary: Canary | None) -> str:
+    # This run's canary token is split out first so a boundary-free pattern
+    # (e.g. "desk-AP-CANARY-..." reading as "sk-...") cannot swallow one. Only
+    # the exact token is preserved, never a lookalike.
+    pieces = text.split(canary.token) if canary is not None else [text]
     redacted: list[str] = []
-    for index, piece in enumerate(pieces):
+    for piece in pieces:
         for name, pattern in _UNANCHORED:
             piece = pattern.sub(_replacer(name), piece)
         redacted.append(piece)
-        if index < len(tokens):
-            redacted.append(tokens[index])
-    return "".join(redacted)
+    separator = canary.token if canary is not None else ""
+    return separator.join(redacted)
 
 
-def redact(text: str) -> str:
-    """Replace every recognised credential in `text`, including percent-encoded ones."""
-    plain = _redact_patterns(text)
+def redact(text: str, canary: Canary | None = None) -> str:
+    """Replace every recognised credential in `text`, including percent-encoded ones.
+
+    Only `canary`'s exact token is preserved; None preserves nothing.
+    """
+    plain = _redact_patterns(text, canary)
     decoded = text
     for _ in range(_MAX_DECODE_ROUNDS):
         if "%" not in decoded:
@@ -78,37 +78,39 @@ def redact(text: str) -> str:
         if step == decoded:
             break
         decoded = step
-        cleaned = _redact_patterns(decoded)
-        if cleaned != decoded:
-            # Decoding revealed a secret: keep only the redacted decoded form,
-            # so the raw secret survives in neither encoding.
-            return cleaned
-    return plain
+    # Decode fully before judging, so a secret one level deeper than another is
+    # not left encoded. If decoding revealed anything, keep only the redacted
+    # decoded form, so the raw secret survives in neither encoding.
+    cleaned = _redact_patterns(decoded, canary)
+    return cleaned if cleaned != decoded and decoded != text else plain
 
 
-def _secret_value(value: object) -> str:
-    """The stand-in for a value under a secret-named key; only canary tokens are kept."""
-    tokens = _CANARY_TOKEN.findall(str(value))
-    return " ".join(["[REDACTED:secret-key]", *tokens])
+def _secret_value(value: object, canary: Canary) -> str:
+    """The stand-in for a value under a secret-named key; only this run's token is kept."""
+    if canary.token in str(value):
+        return f"[REDACTED:secret-key] {canary.token}"
+    return "[REDACTED:secret-key]"
 
 
-def _clean_key(key: object) -> object:
-    return redact(key) if isinstance(key, str) else key
+def _clean_key(key: object, canary: Canary) -> object:
+    return redact(key, canary) if isinstance(key, str) else key
 
 
-def _clean_entry(key: object, item: object) -> object:
+def _clean_entry(key: object, item: object, canary: Canary) -> object:
     if isinstance(key, str) and _is_secret_key(key):
-        return _secret_value(item)
-    return _clean(item)
+        return _secret_value(item, canary)
+    return _clean(item, canary)
 
 
-def _clean(value: object) -> object:
+def _clean(value: object, canary: Canary) -> object:
     if isinstance(value, str):
-        return redact(value)
+        return redact(value, canary)
     if isinstance(value, dict):
-        return {_clean_key(key): _clean_entry(key, item) for key, item in value.items()}
+        return {
+            _clean_key(key, canary): _clean_entry(key, item, canary) for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [_clean(item) for item in value]
+        return [_clean(item, canary) for item in value]
     return value
 
 
@@ -121,9 +123,9 @@ class Recorder:
         self, name: str, arguments: object, result_text: str, *, injected: bool
     ) -> None:
         entry: dict[str, object] = {
-            "name": redact(name),
-            "arguments": _clean(arguments),
-            "result": redact(result_text)[:MAX_RESULT_CHARS],
+            "name": redact(name, self.canary),
+            "arguments": _clean(arguments, self.canary),
+            "result": redact(result_text, self.canary)[:MAX_RESULT_CHARS],
         }
         if injected:
             entry["injected"] = True
