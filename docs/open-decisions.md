@@ -292,3 +292,9 @@ graph-sink change was ruled out of that wave on purpose.
   baseline and `--snapshot` refuses it (exit 2). The scan itself still runs.
   Only a successful reply carrying `"tools": []` is a complete, empty
   listing. A later page with no `tools` list stops paging the same way.
+  **Round 2 (2026-11-04).** A page-1 JSON-RPC `-32601` (Method not found)
+  means the server has no tools capability: a complete, empty listing (drift
+  compared, snapshot written) with an informational note. Completeness now
+  comes from `list_tools(...).complete`, not from whether notes exist, so an
+  informational note never marks a listing incomplete. `-32601` on a later
+  page is still an early stop.

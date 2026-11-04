@@ -326,19 +326,35 @@ def test_sarif_results_handles_none_and_missing_runs() -> None:
 
 
 def test_drift_verdict() -> None:
-    assert drift_verdict(_sarif(), first_run=True, rc=0) == "none"
-    assert drift_verdict(_sarif(_result(DRIFT_CHECK_ID)), first_run=True, rc=0) == "none"
-    assert drift_verdict(_sarif(_result("x")), first_run=False, rc=0) == "false"
-    assert drift_verdict(_sarif(_result(DRIFT_CHECK_ID)), first_run=False, rc=0) == "true"
-    assert drift_verdict(_sarif(_result(DRIFT_CHECK_ID)), first_run=False, rc=3) == "true"
-    assert drift_verdict(None, first_run=False, rc=0) == "false"
+    def verdict(sarif: dict[str, Any] | None, *, first_run: bool, rc: int) -> str:
+        return drift_verdict(sarif, first_run=first_run, rc=rc, drift_selected=True)
+
+    assert verdict(_sarif(), first_run=True, rc=0) == "none"
+    assert verdict(_sarif(_result(DRIFT_CHECK_ID)), first_run=True, rc=0) == "none"
+    assert verdict(_sarif(_result("x")), first_run=False, rc=0) == "false"
+    assert verdict(_sarif(_result(DRIFT_CHECK_ID)), first_run=False, rc=0) == "true"
+    assert verdict(_sarif(_result(DRIFT_CHECK_ID)), first_run=False, rc=3) == "true"
+    assert verdict(None, first_run=False, rc=0) == "false"
 
 
 def test_drift_verdict_is_unknown_when_a_gate_run_exits_without_comparing() -> None:
     # Exit 2: e.g. the CLI refused an incomplete tool listing; drift never ran.
-    assert drift_verdict(_sarif(), first_run=False, rc=2) == "unknown"
-    assert drift_verdict(None, first_run=False, rc=2) == "unknown"
-    assert drift_verdict(_sarif(_result("x")), first_run=False, rc=1) == "unknown"
+    for sarif, rc in ((_sarif(), 2), (None, 2), (_sarif(_result("x")), 1)):
+        assert drift_verdict(sarif, first_run=False, rc=rc, drift_selected=True) == "unknown"
+
+
+def test_drift_verdict_is_unknown_when_only_excluded_the_drift_check() -> None:
+    assert drift_verdict(_sarif(), first_run=False, rc=0, drift_selected=False) == "unknown"
+
+
+def test_a_gate_run_whose_only_excludes_drift_reports_unknown(tmp_path: Path) -> None:
+    _existing_baseline(tmp_path)
+    rc = main(environ=_gh(tmp_path, only="descriptions.unicode_anomaly"), run=FakeRun(0, _sarif()))
+    assert rc == 0
+    assert _outputs(tmp_path)["drift"] == "unknown"
+    summary = (tmp_path / "gh_summary").read_text()
+    assert "| Drift | unknown |" in summary
+    assert "`only` excluded drift.description_drift" in summary
 
 
 def test_a_refused_gate_run_reports_unknown_drift_and_fails_even_with_a_soft_gate(

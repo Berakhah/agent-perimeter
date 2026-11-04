@@ -26,7 +26,7 @@ from agent_perimeter.checks.all_checks import ALL_CHECKS, CheckOutcome, run_chec
 from agent_perimeter.checks.base import Check
 from agent_perimeter.checks.context import ScanContext
 from agent_perimeter.checks.registry import BaselineStatus, Skipped, applicable
-from agent_perimeter.discover.enumerate import ToolRecord, enumerate_tools
+from agent_perimeter.discover.enumerate import ToolRecord, list_tools
 from agent_perimeter.drift.compare import compare_tools
 from agent_perimeter.graph.build import build_graph
 from agent_perimeter.model.drift import DriftEvent
@@ -246,10 +246,12 @@ def run_scan(
         if extra_raw:
             raw.update(extra_raw)
 
-        notes: list[str] = []
-        tools = enumerate_tools(transport, notes)
-        # Only enumerate_tools' own notes decide this; checks may add more below.
-        listing_complete = not notes
+        listing = list_tools(transport)
+        tools = listing.tools
+        notes: list[str] = list(listing.notes)
+        # From the listing itself, not from whether notes exist: a note may be
+        # informational (no tools capability), and checks add more below.
+        listing_complete = listing.complete
         ambiguous = compute_ambiguous_tools(tools, target)
 
         snapshot = ToolSnapshot.from_tools(target, tools, taken_at=now)

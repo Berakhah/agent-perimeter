@@ -265,6 +265,34 @@ def test_snapshot_after_a_page_one_failure_is_refused_and_not_written(
     assert "page 1 of tools/list failed" in result.stdout
 
 
+class _NoToolsCapability(_Listing):
+    def request(self, method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        from agent_perimeter.transport.base import TransportError
+
+        if method == "tools/list":
+            raise TransportError("Method not found", code=-32601)
+        return super().request(method, params)
+
+
+def test_snapshot_of_a_server_without_tools_is_written_and_drift_gates(
+    tmp_path: Path, stub: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "agent_perimeter.scan_runner.build_transport", lambda t, i, e: _NoToolsCapability()
+    )
+    out = tmp_path / "snap.json"
+    result = runner.invoke(app, ["scan", "--target", TARGET, "--snapshot", str(out)])
+    assert result.exit_code == 0, result.stdout
+    assert ToolSnapshot.model_validate_json(out.read_text(encoding="utf-8")).tools == []
+    assert "does not offer tools" in result.stdout
+    # Against a one-tool baseline the removal is real drift: the gate compares.
+    base = _baseline_file(tmp_path)
+    gated = runner.invoke(
+        app, ["scan", "--target", TARGET, "--baseline", str(base), "--fail-on-drift"]
+    )
+    assert gated.exit_code == 3, gated.stdout
+
+
 def test_drift_gate_on_an_incomplete_listing_fails_closed(tmp_path: Path, truncated: None) -> None:
     base = _baseline_file(tmp_path)
     result = runner.invoke(
