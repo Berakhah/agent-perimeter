@@ -124,6 +124,36 @@ def test_malformed_sinks_are_tolerated() -> None:
     assert [f.severity for f in mixed] == [Severity.CRITICAL]
 
 
+def test_a_name_backed_non_privileged_edge_does_not_back_a_description_sink() -> None:
+    # lookup_user has a NAME-derived fs_read (from `path`) but its only privileged
+    # capability, net_out, comes from prose: still only a possible sink.
+    tools = [
+        TOOLS[0],
+        ToolRecord(
+            name="lookup_user",
+            description="Requests a user profile from the API.",
+            input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+        ),
+    ]
+    from agent_perimeter.checks.injection.path_proof import path_sinks
+    from agent_perimeter.graph.build import build_graph
+
+    backed, weak = path_sinks(build_graph(tools))
+    assert backed == frozenset()
+    assert weak == {"lookup_user"}
+    findings = CHECK.run(_context(_transcript(LOOKUP_CALL), tools))
+    assert [f.severity for f in findings] == [Severity.MEDIUM]
+    assert "possible sink" in findings[0].title
+
+
+def test_a_plain_non_sink_medium_carries_no_possible_sink_label() -> None:
+    call = {"name": "lookup_user", "arguments": {"q": TOKEN}}
+    findings = CHECK.run(_context(_transcript(call, sinks=[])))
+    assert [f.severity for f in findings] == [Severity.MEDIUM]
+    assert "possible sink" not in findings[0].title.lower()
+    assert "possible sink" not in findings[0].claim.caveat.lower()
+
+
 def test_malformed_sinks_fall_back_to_privileged_names() -> None:
     call = {"name": "run_command", "arguments": {"command": TOKEN}}
     findings = CHECK.run(_context(_transcript(call, sinks="nope")))
