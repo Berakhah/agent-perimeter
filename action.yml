@@ -33,13 +33,17 @@ inputs:
   baseline:
     description: >-
       Committed tool snapshot to diff against. When the file does not exist
-      the action writes this scan's snapshot there and exits 0; commit it.
+      the action writes this scan's snapshot there; commit it. If the tool
+      listing was incomplete, nothing is written and the step exits 2.
     default: .agent-perimeter/baseline.json
   snapshot:
     description: Where this scan's snapshot is written on a gate run.
     default: .agent-perimeter/current.json
   fail-on-drift:
-    description: "`true` to exit 3 when any tool changed since `baseline`."
+    description: >-
+      `true` to exit 3 when any tool changed since `baseline`. `false` only
+      stops drift from failing the job; an exit-2 refusal (e.g. an incomplete
+      tool listing, so nothing was compared) still fails it.
     default: "true"
   sarif:
     description: Where to write SARIF 2.1.0.
@@ -62,7 +66,10 @@ outputs:
     description: "`true` when this run wrote the baseline because none existed."
     value: ${{ steps.scan.outputs.baseline-created }}
   drift:
-    description: "`none` on a first run; else `true`/`false` from the SARIF, independent of `fail-on-drift`."
+    description: >-
+      `none` on a first run; else `true`/`false` from the SARIF, independent of
+      `fail-on-drift`; `unknown` when the scan exited non-zero with no drift
+      result, so no comparison can be claimed.
     value: ${{ steps.scan.outputs.drift }}
   finding-count:
     description: Number of SARIF results.

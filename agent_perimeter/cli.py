@@ -153,11 +153,24 @@ def scan(
         typer.Option(help="Snapshot from an earlier scan of this target to diff against."),
     ] = None,
     snapshot: Annotated[
-        Path | None, typer.Option(help="Write this scan's tool snapshot here.")
+        Path | None,
+        typer.Option(
+            help=(
+                "Write this scan's tool snapshot here. The scan exits 2 without writing it "
+                "when the tool listing was incomplete (a tools/list page failed, page 1 "
+                "included), since a partial listing is never a baseline."
+            )
+        ),
     ] = None,
     fail_on_drift: Annotated[
         bool,
-        typer.Option("--fail-on-drift", help="Exit 3 if any tool changed since --baseline."),
+        typer.Option(
+            "--fail-on-drift",
+            help=(
+                "Exit 3 if any tool changed since --baseline; exits 2 if the listing was "
+                "incomplete and nothing was compared."
+            ),
+        ),
     ] = False,
 ) -> None:
     try:

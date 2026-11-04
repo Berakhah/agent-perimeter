@@ -275,6 +275,16 @@ def test_drift_gate_on_an_incomplete_listing_fails_closed(tmp_path: Path, trunca
     assert "drift gate tripped" not in result.stdout
 
 
+def test_scan_help_names_the_exit_2_refusals() -> None:
+    import re
+
+    result = runner.invoke(app, ["scan", "--help"], env={"COLUMNS": "200", "NO_COLOR": "1"})
+    assert result.exit_code == 0
+    text = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", result.stdout).replace("│", " ").split())
+    assert "exits 2 without writing it when the tool listing was incomplete" in text
+    assert "exits 2 if the listing was incomplete and nothing was compared" in text
+
+
 def test_unreadable_baseline_is_a_usage_error(tmp_path: Path) -> None:
     bad = tmp_path / "bad.json"
     bad.write_text("{not json", encoding="utf-8")
