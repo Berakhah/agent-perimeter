@@ -8,8 +8,8 @@
 
 **Tech Stack:** Python 3.12+, `uv`, `ruff`, `mypy --strict`, `pytest`, `hypothesis`, Pydantic v2, SQLAlchemy 2, Jinja2 (report).
 
-**Spec:** `docs/superpowers/specs/2026-08-11-agent-perimeter-design.md`
-**Revision (binding):** `docs/superpowers/specs/2026-08-29-agent-perimeter-plan-revision.md` — **read it first.** Where it and this plan disagree, the revision wins.
+**Spec:** `docs/process/specs/2026-08-11-agent-perimeter-design.md`
+**Revision (binding):** `docs/process/specs/2026-08-29-agent-perimeter-plan-revision.md` — **read it first.** Where it and this plan disagree, the revision wins.
 
 > **Blocking corrections to this week, summarised.** Evidence and detail in the revision. This week contains the deepest problem in the plan set: **the evaluation harness cannot falsify the claim it publishes.**
 > - **Task 10 — the scorer is structurally unable to record most false positives.** A check firing on a case that does not name it is neither TP, FP nor FN — it is invisible. Switch to **closed-world labelling**: every check defaults to `expect_clean` on every case unless the case lists it in `expect_findings`. Five lines, and it makes the published precision mean what readers will assume. Revision §4.1.

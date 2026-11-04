@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12+, FastAPI + uvicorn (already dependencies), typer, pytest, `ruff`, `mypy --strict`.
 
-**Spec:** `docs/superpowers/specs/2026-11-04-instrument-proxy-design.md`
+**Spec:** `docs/process/specs/2026-11-04-instrument-proxy-design.md`
 
 ## Global Constraints
 
@@ -1199,7 +1199,7 @@ Expected: `injection.agent_adapter` now appears in the methodology table with TP
 
 - `docs/byo-agent.md`: delete the "Status ... step 1 is not implemented" block. Replace step 1 with `agent-perimeter instrument --target <your-server> --scope-file scope.json --port 8931 --transcript-out transcript.json` and state that it requires a scope file, binds loopback only, and injects a per-run canary token (`AP-CANARY-<nonce>`) into results of source tools. Replace step 3 ("Export the transcript") with: the proxy writes the transcript when you stop it (Ctrl+C); you do not export anything from your agent. Keep step 4. Add a "Limits" paragraph: one negative run is one observation; v1 does not support streaming/SSE responses; scope is self-attested.
 - `README.md` differentiator #1: remove the sentence "The instrumenting proxy that injects the marker is not implemented yet, so that step is manual today." and say the proxy records the transcript for you.
-- `docs/open-decisions.md` decision 3: remove the parenthetical saying `instrument` is unimplemented and add "implemented 2026-11-04, see `docs/superpowers/specs/2026-11-04-instrument-proxy-design.md`".
+- `docs/open-decisions.md` decision 3: remove the parenthetical saying `instrument` is unimplemented and add "implemented 2026-11-04, see `docs/process/specs/2026-11-04-instrument-proxy-design.md`".
 
 ```bash
 git add -A tests/fixtures agent_perimeter/eval tests/eval tests/instrument docs README.md

@@ -18,3 +18,6 @@ build/
 .superpowers/
 graphify-out/
 vault/
+
+# Private project briefs (kept outside the public repo)
+Starting_Documents/

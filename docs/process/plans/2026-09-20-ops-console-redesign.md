@@ -22,7 +22,7 @@ hand-written `.bok-*` CSS in `globals.css`), Playwright + `@axe-core/playwright`
 for testing (no unit-test harness exists; every RED/GREEN cycle in this
 plan is a Playwright test against a real route).
 
-**Spec:** `docs/superpowers/specs/2026-09-20-ops-console-design.md`
+**Spec:** `docs/process/specs/2026-09-20-ops-console-design.md`
 
 ## Global Constraints
 
@@ -350,7 +350,7 @@ Create `web/src/lib/_bok-viz.tsx`:
  * decorative-only layer with no shared state or props with the rest of the
  * library). Every component here is `aria-hidden="true"`: the numbers it
  * renders already exist as accessible text elsewhere on the page (spec
- * `docs/superpowers/specs/2026-09-20-ops-console-design.md` §5).
+ * `docs/process/specs/2026-09-20-ops-console-design.md` §5).
  */
 
 export type StatTileTone = "critical" | "high" | "medium" | "low" | "neutral";
@@ -752,7 +752,7 @@ git commit -m "feat(web): add Sparkline, wire into drift screen"
 ## Task 6: Full suite verification and design record
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-09-20-ops-console-design.md` (status line)
+- Modify: `docs/process/specs/2026-09-20-ops-console-design.md` (status line)
 - Create: none (documentation update only)
 
 **Interfaces:** none — verification task.
@@ -783,7 +783,7 @@ spec's rollout order (§6):
 
 - [ ] **Step 4: Update the spec's status line**
 
-Change `docs/superpowers/specs/2026-09-20-ops-console-design.md` line 4 from:
+Change `docs/process/specs/2026-09-20-ops-console-design.md` line 4 from:
 
 ```
 **Status:** brainstormed, plan pending execution
@@ -792,13 +792,13 @@ Change `docs/superpowers/specs/2026-09-20-ops-console-design.md` line 4 from:
 to:
 
 ```
-**Status:** implemented <today's date> (plan `docs/superpowers/plans/2026-09-20-ops-console-redesign.md`)
+**Status:** implemented <today's date> (plan `docs/process/plans/2026-09-20-ops-console-redesign.md`)
 ```
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-09-20-ops-console-design.md
+git add docs/process/specs/2026-09-20-ops-console-design.md
 git commit -m "docs(spec): mark ops console redesign implemented"
 ```
 
