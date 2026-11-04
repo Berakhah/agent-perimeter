@@ -8,6 +8,7 @@ checked, not merely defaulted.
 from __future__ import annotations
 
 import ipaddress
+import socket
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
@@ -67,4 +68,9 @@ def create_app(proxy: Proxy) -> FastAPI:
 
 def serve(proxy: Proxy, *, port: int, host: str = LOOPBACK_HOST) -> None:
     assert_loopback(host)
+    # uvicorn swallows a bind failure into sys.exit(3); probe first so the
+    # caller gets a real OSError it can turn into an actionable message.
+    family = socket.AF_INET6 if ipaddress.ip_address(host).version == 6 else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as probe:
+        probe.bind((host, port))
     uvicorn.run(create_app(proxy), host=host, port=port, log_level="warning")

@@ -85,3 +85,58 @@ def test_authorised_run_serves_on_loopback_and_writes_the_transcript(
     assert result.exit_code == 0, result.output
     assert seen == {"port": 9123, "host": "127.0.0.1"}
     assert json.loads(out.read_text())["tool_calls"] == []
+
+
+def test_busy_port_gets_the_port_message_and_exit_2(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import socket
+
+    fake = FakeTransport()
+    monkeypatch.setattr("agent_perimeter.scan_runner.build_transport", lambda *_a, **_k: fake)
+    scope = _scope(tmp_path / "s.json")
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        result = runner.invoke(
+            cli.app,
+            [
+                "instrument",
+                "--target",
+                TARGET,
+                "--scope-file",
+                str(scope),
+                "--port",
+                str(port),
+                "--transcript-out",
+                str(tmp_path / "t.json"),
+            ],
+        )
+    assert result.exit_code == 2, result.output
+    assert str(port) in result.output
+    assert "--port" in result.output
+    assert fake.closed
+
+
+def test_unwritable_transcript_still_closes_the_transport(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fake = FakeTransport()
+    monkeypatch.setattr("agent_perimeter.scan_runner.build_transport", lambda *_a, **_k: fake)
+    monkeypatch.setattr(server, "serve", lambda *_a, **_k: None)
+    scope = _scope(tmp_path / "s.json")
+    result = runner.invoke(
+        cli.app,
+        [
+            "instrument",
+            "--target",
+            TARGET,
+            "--scope-file",
+            str(scope),
+            "--transcript-out",
+            str(tmp_path / "missing-dir" / "t.json"),
+        ],
+    )
+    assert fake.closed
+    assert "Could not write transcript" in result.output

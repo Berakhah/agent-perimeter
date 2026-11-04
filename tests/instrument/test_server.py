@@ -44,3 +44,32 @@ def test_non_loopback_hosts_are_refused(host: str) -> None:
 
 def test_loopback_host_is_accepted() -> None:
     assert_loopback("127.0.0.1")
+
+
+def test_serve_raises_oserror_on_a_busy_port() -> None:
+    import socket
+
+    from agent_perimeter.instrument.server import serve
+
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        with pytest.raises(OSError):
+            serve(Proxy(FakeTransport(), CANARY), port=busy.getsockname()[1])
+
+
+def test_serve_refuses_non_loopback_before_reaching_uvicorn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_perimeter.instrument import server
+
+    def _fail(*_a: object, **_k: object) -> None:
+        raise AssertionError("uvicorn.run was reached with a non-loopback host")
+
+    monkeypatch.setattr(server.uvicorn, "run", _fail)
+    with pytest.raises(ValueError, match="loopback"):
+        server.serve(
+            Proxy(FakeTransport(), CANARY),
+            port=0,
+            host="0.0.0.0",  # noqa: S104 -- must be refused
+        )
