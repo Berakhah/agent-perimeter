@@ -25,6 +25,7 @@ from agent_perimeter.checks.secrets.patterns import SECRET_KEY_NAME, SECRET_PATT
 from agent_perimeter.instrument.canary import Canary
 
 MAX_RESULT_CHARS = 2048
+_UNDECODABLE = "[REDACTED:undecodable]"
 _MAX_DECODE_ROUNDS = 32  # safety cap; decoding runs to a fixpoint, each round shortens
 
 # The shared patterns anchor on \b for scanner precision (docs/methodology.md
@@ -86,6 +87,12 @@ def redact(text: str, canary: Canary | None = None) -> str:
         if step == decoded:
             break
         decoded = step
+    if "%" in decoded and unquote(decoded) != decoded:
+        # Still decoding after the cap: a deeper encoding than any real client
+        # sends. Fail closed rather than persist a body that may hold a secret.
+        if canary is not None and canary.token in text:
+            return f"{_UNDECODABLE} {canary.token}"
+        return _UNDECODABLE
     # Decode fully before judging, so a secret one level deeper than another is
     # not left encoded. If decoding revealed anything, keep only the redacted
     # decoded form, so the raw secret survives in neither encoding.
@@ -126,6 +133,7 @@ def _clean(value: object, canary: Canary) -> object:
 class Recorder:
     canary: Canary
     _calls: list[dict[str, object]] = field(default_factory=list)
+    _sinks: list[str] = field(default_factory=list)
 
     def record_call(
         self, name: str, arguments: object, result_text: str, *, injected: bool
@@ -139,5 +147,12 @@ class Recorder:
             entry["injected"] = True
         self._calls.append(entry)
 
+    def set_sinks(self, sinks: frozenset[str]) -> None:
+        """Record the sink names the proxy's capability graph computed (latest wins)."""
+        self._sinks = sorted(redact(name, self.canary) for name in sinks)
+
     def to_transcript(self) -> dict[str, object]:
-        return {"tool_calls": list(self._calls), "canary": {"nonce": self.canary.nonce}}
+        return {
+            "tool_calls": list(self._calls),
+            "canary": {"nonce": self.canary.nonce, "sinks": list(self._sinks)},
+        }
