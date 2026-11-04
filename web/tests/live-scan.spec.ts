@@ -83,6 +83,23 @@ test("scan notes from the terminal frame are shown next to the skip summary", as
   await expect(skipped).toContainText(/tool listing was incomplete/i);
 });
 
+// The panel is marked by its heading, not a coloured side-tab accent: every
+// edge carries the same neutral 1px border.
+test("the scan notes panel has a uniform neutral border, no side-tab accent", async ({ page }) => {
+  await page.goto("/scans/1?fixture=incomplete");
+  const notes = page.getByTestId("scan-notes");
+  await expect(notes).toBeVisible({ timeout: 10_000 });
+  const edges = await notes.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return {
+      left: [s.borderLeftWidth, s.borderLeftColor],
+      top: [s.borderTopWidth, s.borderTopColor],
+    };
+  });
+  expect(edges.left).toEqual(edges.top);
+  expect(edges.left[0]).toBe("1px");
+});
+
 test("a scan with no notes renders no notes section", async ({ page }) => {
   await page.goto("/scans/1?fixture=streaming");
   await expect(page.getByTestId("terminal-frame")).toBeVisible({ timeout: 10_000 });

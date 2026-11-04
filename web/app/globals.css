@@ -765,13 +765,14 @@ body {
   color: var(--neutral-700);
 }
 /* Scan notes (final-review fix #4): a truncated listing is a caveat on the
-   whole run, so it sits under the terminal summary, marked like a skipped
-   row (left rule) rather than an error. Text stays --neutral-700, the
-   contrast-checked body tone used by .bok-scan-progress above. */
+   whole run, so it sits under the terminal summary in a plain panel with the
+   same neutral border on every edge. The "Scan notes" heading marks it; no
+   coloured side accent, which would read as a severity it does not carry.
+   Text stays --neutral-700, the contrast-checked body tone used by
+   .bok-scan-progress above. */
 .bok-scan-notes {
   margin-top: var(--density-gap);
   border: 1px solid var(--neutral-200);
-  border-left: 2px solid var(--severity-medium);
   border-radius: var(--radius-control);
   padding: var(--density-gap);
   background: var(--surface-1);
