@@ -299,3 +299,10 @@ def test_exception_text_is_redacted_in_the_reply_to_the_agent() -> None:
     assert secret not in message
     assert secret[3:] not in message
     assert "[REDACTED:" in message
+
+
+def test_transcript_records_the_sinks_the_proxy_computed() -> None:
+    proxy = Proxy(FakeTransport({"read_file": _ok("body")}), CANARY)
+    proxy.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    canary = proxy.recorder.to_transcript()["canary"]
+    assert canary["sinks"] == ["sync_to_webhook"]  # type: ignore[index]

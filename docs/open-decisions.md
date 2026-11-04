@@ -218,6 +218,16 @@ graph-sink change was ruled out of that wave on purpose.
   token matches. Fix: rate CRITICAL when the receiving tool is a sink in the
   capability graph (`find_paths` over the scanned listing), keeping the name
   heuristic as the fallback when no listing is available.
+  **Resolved 2026-11-04.** The receiving tool now rates CRITICAL when it is a
+  sink in the capability graph or passes `_is_privileged`; otherwise MEDIUM.
+  Sinks come from two places, unioned: the proxy records the sink names it
+  computed under `canary.sinks` in the transcript (refreshed whenever the
+  source set is recomputed), and the adapter runs `find_paths` over
+  `context.tools` when a listing is present. A missing or malformed `sinks`
+  field falls back to the listing plus the name heuristic. The finding title
+  says which reason applied, "a sink in the capability graph" or "a
+  privileged-named tool". Only firing is measured, so the corpus counts in
+  `docs/methodology.md` did not move.
 - **FU-2. `agent_perimeter/discover/enumerate.py` ignores `nextCursor`.**
   Discovery reads only the first `tools/list` page, so every check that
   consumes the enumerated listing misses tools on later pages: a

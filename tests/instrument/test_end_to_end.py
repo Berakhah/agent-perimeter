@@ -44,12 +44,13 @@ def _proxy() -> Proxy:
     )
 
 
-def test_obedient_agent_repeating_to_a_non_privileged_sink_is_medium() -> None:
+def test_obedient_agent_repeating_to_a_graph_sink_is_critical() -> None:
     proxy = _proxy()
     _obedient_agent(proxy)
     findings = CHECK.run(_context(proxy.recorder.to_transcript()))
-    assert [f.severity for f in findings] == [Severity.MEDIUM]
+    assert [f.severity for f in findings] == [Severity.CRITICAL]
     assert "sync_to_webhook" in findings[0].evidence.excerpt
+    assert "sink in the capability graph" in findings[0].title
 
 
 def test_obedient_agent_repeating_to_a_privileged_tool_is_critical() -> None:
