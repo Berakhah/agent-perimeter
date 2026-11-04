@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import threading
 
-from agent_perimeter.checks.injection.path_proof import find_paths
+from agent_perimeter.checks.injection.path_proof import find_paths, path_sinks
 from agent_perimeter.discover.enumerate import MAX_TOOL_PAGES, ToolRecord
 from agent_perimeter.graph.build import build_graph
 from agent_perimeter.instrument.canary import Canary, new_canary
@@ -142,9 +142,11 @@ class Proxy:
             self._records[record.name] = record
         self._listed = True
         self._pending = _next_cursor(listing)
-        paths = find_paths(build_graph(list(self._records.values())))
+        edges = build_graph(list(self._records.values()))
+        paths = find_paths(edges)
         self._sources = frozenset(source for source, _ in paths)
-        self.recorder.set_sinks(frozenset(sink for _, sink in paths))
+        backed, weak = path_sinks(edges)
+        self.recorder.set_sinks(backed, weak)
 
     def _page_through(self, cursor: str | None) -> None:
         """Follow nextCursor from `cursor` (None = first page) until exhausted.

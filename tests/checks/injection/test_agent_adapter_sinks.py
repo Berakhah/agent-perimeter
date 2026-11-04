@@ -32,6 +32,17 @@ TOOLS = [
 ]
 
 
+WEAK_TOOLS = [
+    TOOLS[0],
+    ToolRecord(
+        name="lookup_user",
+        description="Requests a user profile from the API.",
+        input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+    ),
+]
+LOOKUP_CALL = {"name": "lookup_user", "arguments": {"q": TOKEN}}
+
+
 def _transcript(*calls: dict[str, object], sinks: object = None) -> dict[str, object]:
     canary: dict[str, object] = {"nonce": NONCE}
     if sinks is not None:
@@ -45,6 +56,44 @@ def test_recorded_sinks_make_a_non_privileged_name_critical() -> None:
     assert "sink in the capability graph" in findings[0].title
     assert findings[0].claim.derivation is Derivation.ARTIFACT
     assert findings[0].claim.method is Method.DETERMINISTIC
+
+
+def test_graph_edges_for_the_fixtures_are_as_assumed() -> None:
+    from agent_perimeter.checks.injection.path_proof import path_sinks
+    from agent_perimeter.graph.build import build_graph
+
+    assert path_sinks(build_graph(TOOLS))[0] == {"sync_to_webhook"}
+    backed, weak = path_sinks(build_graph(WEAK_TOOLS))
+    assert backed == frozenset()
+    assert weak == {"lookup_user"}
+
+
+def test_description_only_sink_from_context_tools_stays_medium_and_is_named() -> None:
+    findings = CHECK.run(_context(_transcript(LOOKUP_CALL), WEAK_TOOLS))
+    assert [f.severity for f in findings] == [Severity.MEDIUM]
+    assert "inferred from the tool's description" in findings[0].title
+    assert "not confirmed" in findings[0].claim.caveat
+
+
+def test_description_only_sink_in_weak_sinks_stays_medium_and_is_named() -> None:
+    transcript = _transcript(LOOKUP_CALL, sinks=[])
+    transcript["canary"]["weak_sinks"] = ["lookup_user"]  # type: ignore[index]
+    findings = CHECK.run(_context(transcript))
+    assert [f.severity for f in findings] == [Severity.MEDIUM]
+    assert "possible sink" in findings[0].title
+
+
+def test_transcript_sinks_present_ignore_context_tools() -> None:
+    # Another target's listing must not upgrade this transcript's severity.
+    findings = CHECK.run(_context(_transcript(WEBHOOK_CALL, sinks=[]), TOOLS))
+    assert [f.severity for f in findings] == [Severity.MEDIUM]
+
+
+def test_empty_sinks_plus_privileged_tool_is_critical_by_name() -> None:
+    call = {"name": "run_command", "arguments": {"command": TOKEN}}
+    findings = CHECK.run(_context(_transcript(call, sinks=[]), TOOLS))
+    assert [f.severity for f in findings] == [Severity.CRITICAL]
+    assert "privileged-named tool" in findings[0].title
 
 
 def test_context_tools_alone_make_a_graph_sink_critical() -> None:

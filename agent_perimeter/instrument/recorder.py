@@ -90,6 +90,8 @@ def redact(text: str, canary: Canary | None = None) -> str:
     if "%" in decoded and unquote(decoded) != decoded:
         # Still decoding after the cap: a deeper encoding than any real client
         # sends. Fail closed rather than persist a body that may hold a secret.
+        # The token is kept only if it appeared verbatim; a deep-encoded token
+        # is lost, which is the safe direction.
         if canary is not None and canary.token in text:
             return f"{_UNDECODABLE} {canary.token}"
         return _UNDECODABLE
@@ -134,6 +136,7 @@ class Recorder:
     canary: Canary
     _calls: list[dict[str, object]] = field(default_factory=list)
     _sinks: list[str] = field(default_factory=list)
+    _weak_sinks: list[str] = field(default_factory=list)
 
     def record_call(
         self, name: str, arguments: object, result_text: str, *, injected: bool
@@ -147,12 +150,21 @@ class Recorder:
             entry["injected"] = True
         self._calls.append(entry)
 
-    def set_sinks(self, sinks: frozenset[str]) -> None:
-        """Record the sink names the proxy's capability graph computed (latest wins)."""
+    def set_sinks(self, sinks: frozenset[str], weak: frozenset[str] = frozenset()) -> None:
+        """Record the proxy's sinks (latest wins).
+
+        `sinks` have a schema-, name- or probe-derived edge; `weak` are inferred
+        from description prose only.
+        """
         self._sinks = sorted(redact(name, self.canary) for name in sinks)
+        self._weak_sinks = sorted(redact(name, self.canary) for name in weak)
 
     def to_transcript(self) -> dict[str, object]:
         return {
             "tool_calls": list(self._calls),
-            "canary": {"nonce": self.canary.nonce, "sinks": list(self._sinks)},
+            "canary": {
+                "nonce": self.canary.nonce,
+                "sinks": list(self._sinks),
+                "weak_sinks": list(self._weak_sinks),
+            },
         }

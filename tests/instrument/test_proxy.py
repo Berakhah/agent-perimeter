@@ -189,6 +189,29 @@ def test_source_on_page_two_with_sink_on_page_one_gets_canary() -> None:
     assert _texts(reply) == ["hello", CANARY.text]
 
 
+def test_sinks_are_refreshed_after_the_second_tools_list_page() -> None:
+    proxy = Proxy(PagedTransport({None: PAGE_1, "c2": PAGE_2}, {}), CANARY)
+    proxy.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    # Page 1 holds only the sink: no source yet, so no path and no sinks.
+    assert proxy.recorder.to_transcript()["canary"]["sinks"] == []  # type: ignore[index]
+    proxy.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"cursor": "c2"}})
+    assert proxy.recorder.to_transcript()["canary"]["sinks"] == ["sync_to_webhook"]  # type: ignore[index]
+
+
+def test_description_only_sink_is_recorded_as_weak_not_as_a_sink() -> None:
+    weak = {
+        "name": "lookup_user",
+        "description": "Requests a user profile from the API.",
+        "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}},
+    }
+    upstream = PagedTransport({None: {"tools": [TOOLS[0], weak]}}, {})
+    proxy = Proxy(upstream, CANARY)
+    proxy.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+    canary = proxy.recorder.to_transcript()["canary"]
+    assert canary["sinks"] == []  # type: ignore[index]
+    assert canary["weak_sinks"] == ["lookup_user"]  # type: ignore[index]
+
+
 def test_lazy_fetch_follows_cursors_so_a_page_two_source_gets_canary() -> None:
     upstream = PagedTransport({None: PAGE_1, "c2": PAGE_2}, {"read_file": _ok("hello")})
     reply = _call(Proxy(upstream, CANARY), "read_file", {"path": "a"})
