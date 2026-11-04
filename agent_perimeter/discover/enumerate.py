@@ -6,9 +6,15 @@ finding for `static/` to report. Enumeration returns what it got.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from agent_perimeter.transport.base import Transport, TransportError
+
+logger = logging.getLogger(__name__)
+
+
+MAX_TOOL_PAGES = 100
 
 
 @dataclass(frozen=True)
@@ -20,27 +26,69 @@ class ToolRecord:
 
 
 def enumerate_tools(transport: Transport) -> list[ToolRecord]:
-    try:
-        listing = transport.request("tools/list")
-    except TransportError:
-        return []
+    """List every tool, following `nextCursor` across pages.
 
-    raw_tools = listing.get("tools")
-    if not isinstance(raw_tools, list):
-        return []
-
+    A later page's entry for a name seen on an earlier page replaces it, keeping
+    first-seen order. Duplicate names within one page are all kept. Paging
+    stops when the cursor is absent, repeats, or MAX_TOOL_PAGES is reached;
+    the last two are logged, since the listing may then be incomplete.
+    A TransportError on page 1 yields no tools; on a later page it keeps what
+    earlier pages returned.
+    """
     records: list[ToolRecord] = []
-    for entry in raw_tools:
-        if not isinstance(entry, dict) or "name" not in entry:
-            continue
-        schema = entry.get("inputSchema")
-        annotations = entry.get("annotations")
-        records.append(
-            ToolRecord(
-                name=str(entry["name"]),
-                description=str(entry.get("description", "")),
-                input_schema=schema if isinstance(schema, dict) else {},
-                annotations=annotations if isinstance(annotations, dict) else {},
-            )
+    index: dict[str, int] = {}  # name -> position of its first-seen record
+    cursor: str | None = None
+    seen: set[str] = set()
+    for page in range(1, MAX_TOOL_PAGES + 1):
+        params: dict[str, object] | None = {"cursor": cursor} if cursor is not None else None
+        try:
+            listing = transport.request("tools/list", params)
+        except TransportError as exc:
+            if page > 1:
+                logger.warning(
+                    "tools/list page %d failed (%s); keeping %d tools from earlier pages",
+                    page,
+                    exc,
+                    len(records),
+                )
+            break
+        raw_tools = listing.get("tools")
+        if isinstance(raw_tools, list):
+            earlier = dict(index)
+            for entry in raw_tools:
+                record = _parse(entry)
+                if record is None:
+                    continue
+                if record.name in earlier:
+                    records[earlier[record.name]] = record
+                else:
+                    # Same-page duplicates are kept: drift and rug-pull checks key on them.
+                    index.setdefault(record.name, len(records))
+                    records.append(record)
+        following = listing.get("nextCursor")
+        if not isinstance(following, str) or not following:
+            break
+        if following in seen:
+            logger.warning("tools/list cursor repeated; listing may be incomplete")
+            break
+        seen.add(following)
+        cursor = following
+    else:
+        logger.warning(
+            "tools/list still had a nextCursor after %d pages; listing is incomplete",
+            MAX_TOOL_PAGES,
         )
     return records
+
+
+def _parse(entry: object) -> ToolRecord | None:
+    if not isinstance(entry, dict) or "name" not in entry:
+        return None
+    schema = entry.get("inputSchema")
+    annotations = entry.get("annotations")
+    return ToolRecord(
+        name=str(entry["name"]),
+        description=str(entry.get("description", "")),
+        input_schema=schema if isinstance(schema, dict) else {},
+        annotations=annotations if isinstance(annotations, dict) else {},
+    )

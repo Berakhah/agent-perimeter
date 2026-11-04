@@ -224,3 +224,12 @@ graph-sink change was ruled out of that wave on purpose.
   project-wide false negative on paginated servers. The instrument proxy
   already follows cursors (with repeat-cursor loop protection) and is the
   model for the fix.
+  **Resolved 2026-11-04.** `enumerate_tools` now follows `nextCursor`; a later
+  page's entry for a name seen on an earlier page replaces it, first-seen
+  order kept; duplicate names within one page are all kept, as drift keys on
+  them.
+  Paging stops on an absent or non-string cursor, a repeated cursor, or
+  `MAX_TOOL_PAGES` (100); the last two log a warning, as the listing may then
+  be incomplete. A `TransportError` on page 1 still yields no tools; on a later
+  page the earlier pages' tools are kept. The proxy's `_page_through` shares
+  the same cap, so a hostile upstream cannot keep it paging under its lock.
