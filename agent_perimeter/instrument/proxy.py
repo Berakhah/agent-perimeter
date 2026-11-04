@@ -139,9 +139,9 @@ class Proxy:
             self._records[record.name] = record
         self._listed = True
         self._pending = _next_cursor(listing)
-        self._sources = frozenset(
-            source for source, _ in find_paths(build_graph(list(self._records.values())))
-        )
+        paths = find_paths(build_graph(list(self._records.values())))
+        self._sources = frozenset(source for source, _ in paths)
+        self.recorder.set_sinks(frozenset(sink for _, sink in paths))
 
     def _page_through(self, cursor: str | None) -> None:
         """Follow nextCursor from `cursor` (None = first page) until exhausted.

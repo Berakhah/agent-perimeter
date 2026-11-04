@@ -9,6 +9,7 @@ from agent_perimeter.checks.injection.agent_adapter import (
     INSTRUMENTED_MARKER,
     load_transcript,
 )
+from agent_perimeter.discover.enumerate import ToolRecord
 from agent_perimeter.model.feature import Revision
 from agent_perimeter.transport.revision import Fingerprint
 
@@ -20,7 +21,9 @@ class NullTransport:
     def close(self) -> None: ...
 
 
-def _context(transcript: dict[str, object] | None) -> ScanContext:
+def _context(
+    transcript: dict[str, object] | None, tools: list[ToolRecord] | None = None
+) -> ScanContext:
     raw: dict[str, dict[str, object]] = {}
     if transcript is not None:
         raw["_agent_transcript"] = transcript
@@ -42,6 +45,7 @@ def _context(transcript: dict[str, object] | None) -> ScanContext:
             ),
         ),
         raw=raw,
+        tools=list(tools or []),
     )
 
 
