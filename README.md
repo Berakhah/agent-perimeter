@@ -31,6 +31,16 @@ per-revision check matrix, a CWE and a published taxonomy entry (OWASP LLM
 Top 10, OWASP MCP Top 10, CoSAI, NSA CSI, MITRE ATLAS) on every finding, and
 a reproduction command a skeptic can run.
 
+## How a scan runs
+
+```mermaid
+flowchart LR
+    A[Scope file] --> B{Authorised?}
+    B -- no --> X[Refuse, exit 2]
+    B -- yes --> C[Discover the MCP server] --> D[Capability graph] --> E[Checks] --> F[Findings with reproductions] --> G[SARIF, HTML, CI drift gate]
+```
+
+
 ## Before you scan anything: the scope-file requirement
 
 **An active probe against a server you do not own or have not been
