@@ -77,7 +77,7 @@ All details sourced from `agent_perimeter/census/tier3.py` module docstring and 
 - `uv run pytest tests/docs/` wired into CI with a descriptive name
 
 ### ⚠️ Minor Considerations (Not Blockers)
-1. User email (77killuazoldic@gmail.com) is used as the contact address per user context — this is correct and matches project memory
+1. User email (maintainer-email-redacted) is used as the contact address per user context — this is correct and matches project memory
 2. The policy focuses on the scanner's probing behavior; product liability, legal jurisdiction, warranty disclaimers are out of scope per brief
 3. Secret validation is explicitly forbidden ("never validate it against a live service"), implemented as a text assertion in the policy
 
@@ -123,10 +123,10 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 
 ### Finding 1: Hardcoded Personal Email Address (FIXED)
 
-**Issue:** Both `docs/security.md:5` and `SECURITY.md:3` published the real personal email address `<77killuazoldic@gmail.com>` as the permanent public security contact. This violates the established codebase pattern of using unfilled placeholders for all identity references (see `agent_perimeter/cli.py:29`, `agent_perimeter/census/fetch.py:26`, etc., which all use `USER` placeholder).
+**Issue:** Both `docs/security.md:5` and `SECURITY.md:3` published the real personal email address `<maintainer-email-redacted>` as the permanent public security contact. This violates the established codebase pattern of using unfilled placeholders for all identity references (see `agent_perimeter/cli.py:29`, `agent_perimeter/census/fetch.py:26`, etc., which all use `USER` placeholder).
 
 **Fix Applied:**
-- Replaced `<77killuazoldic@gmail.com>` with `<security@USER-PLACEHOLDER.example>` in both files
+- Replaced `<maintainer-email-redacted>` with `<security@USER-PLACEHOLDER.example>` in both files
 - Maintains `<...@...>` regex pattern expected by test
 - Follows established codebase placeholder convention (`https://github.com/USER/agent-perimeter`)
 - Added mention of optional GitHub private advisories and PGP encryption in reporting section
