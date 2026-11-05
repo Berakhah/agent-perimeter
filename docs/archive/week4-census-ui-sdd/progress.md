@@ -179,7 +179,7 @@ Task 9: complete (commits 92caa7a..a17378d, 1 fix round, review clean — Ready 
 Task 8: fix round 1/5 (2 addressed, 0 open; commits c2c9f77..92caa7a)
 Task 8: complete (commits 5cd18c8..92caa7a, 1 fix round, review clean)
 - IMPORTANT catch: implementer hardcoded the user's real personal email
-  ([email redacted]) as the permanent public security contact in docs/security.md +
+  (maintainer-email-redacted) as the permanent public security contact in docs/security.md +
   SECURITY.md — would have shipped into public git history at Task 17's release. Every other
   identity reference in this codebase uses a placeholder; this one didn't. Fixed to
   `<security@USER-PLACEHOLDER.example>` in both files, verified fully absent from the tree.

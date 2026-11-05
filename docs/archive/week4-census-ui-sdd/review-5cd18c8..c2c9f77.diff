@@ -47,7 +47,7 @@ index 0000000..bb28842
 @@ -0,0 +1,5 @@
 +# Security Policy
 +
-+Agent Perimeter is a security posture scanner for MCP servers. If you discover a vulnerability in Agent Perimeter itself, please report it to <[email redacted]> rather than opening a public issue. We will acknowledge receipt within 24 hours and provide a clear timeline for remediation.
++Agent Perimeter is a security posture scanner for MCP servers. If you discover a vulnerability in Agent Perimeter itself, please report it to <maintainer-email-redacted> rather than opening a public issue. We will acknowledge receipt within 24 hours and provide a clear timeline for remediation.
 +
 +For our coordinated disclosure policy for findings discovered *in scanned servers*, see [docs/security.md](docs/security.md).
 diff --git a/docs/security.md b/docs/security.md
@@ -60,7 +60,7 @@ index 0000000..6a36c9f
 +
 +## Reporting a vulnerability in Agent Perimeter
 +
-+If you discover a security vulnerability in Agent Perimeter, please report it directly to <[email redacted]>. We acknowledge receipt within 24 hours and will provide a clear timeline for remediation or a detailed explanation of why we assess it as not a vulnerability. Please do not disclose the issue publicly until we have released a fix or made a public statement.
++If you discover a security vulnerability in Agent Perimeter, please report it directly to <maintainer-email-redacted>. We acknowledge receipt within 24 hours and will provide a clear timeline for remediation or a detailed explanation of why we assess it as not a vulnerability. Please do not disclose the issue publicly until we have released a fix or made a public statement.
 +
 +## What we do when we find something in your server
 +

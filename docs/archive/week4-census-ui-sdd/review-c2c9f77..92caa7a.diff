@@ -16,7 +16,7 @@ index bb28842..c407227 100644
 @@ -1,5 +1,5 @@
  # Security Policy
  
--Agent Perimeter is a security posture scanner for MCP servers. If you discover a vulnerability in Agent Perimeter itself, please report it to <[email redacted]> rather than opening a public issue. We will acknowledge receipt within 24 hours and provide a clear timeline for remediation.
+-Agent Perimeter is a security posture scanner for MCP servers. If you discover a vulnerability in Agent Perimeter itself, please report it to <maintainer-email-redacted> rather than opening a public issue. We will acknowledge receipt within 24 hours and provide a clear timeline for remediation.
 +Agent Perimeter is a security posture scanner for MCP servers. If you discover a vulnerability in Agent Perimeter itself, please report it to <security@USER-PLACEHOLDER.example> rather than opening a public issue. We will acknowledge receipt within 24 hours and provide a clear timeline for remediation.
  
  For our coordinated disclosure policy for findings discovered *in scanned servers*, see [docs/security.md](docs/security.md).
@@ -29,7 +29,7 @@ index 6a36c9f..45ef809 100644
  
  ## Reporting a vulnerability in Agent Perimeter
  
--If you discover a security vulnerability in Agent Perimeter, please report it directly to <[email redacted]>. We acknowledge receipt within 24 hours and will provide a clear timeline for remediation or a detailed explanation of why we assess it as not a vulnerability. Please do not disclose the issue publicly until we have released a fix or made a public statement.
+-If you discover a security vulnerability in Agent Perimeter, please report it directly to <maintainer-email-redacted>. We acknowledge receipt within 24 hours and will provide a clear timeline for remediation or a detailed explanation of why we assess it as not a vulnerability. Please do not disclose the issue publicly until we have released a fix or made a public statement.
 +If you discover a security vulnerability in Agent Perimeter, please report it directly to <security@USER-PLACEHOLDER.example>. We acknowledge receipt within 24 hours and will provide a clear timeline for remediation or a detailed explanation of why we assess it as not a vulnerability. You may use GitHub private advisories or PGP encryption if desired. Please do not disclose the issue publicly until we have released a fix or made a public statement.
  
  ## What we do when we find something in your server
