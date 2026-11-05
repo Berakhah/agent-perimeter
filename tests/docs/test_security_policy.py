@@ -29,6 +29,11 @@ def test_secrets_bypass_the_embargo_clock() -> None:
 
 
 def test_root_pointer_carries_the_same_contact() -> None:
-    contact = re.search(r"<([^>]+@[^>]+)>", POLICY.read_text(encoding="utf-8"))
+    contact = re.search(r"\((https://github\.com/[^)]+/security/advisories/new)\)", POLICY.read_text(encoding="utf-8"))
     assert contact is not None
     assert contact.group(1) in Path("SECURITY.md").read_text(encoding="utf-8")
+
+
+def test_no_personal_email_is_published() -> None:
+    for doc in (POLICY, Path("SECURITY.md")):
+        assert not re.search(r"[\w.+-]+@[\w-]+\.[a-z]{2,}", doc.read_text(encoding="utf-8"))
