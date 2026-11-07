@@ -33,7 +33,7 @@ a reproduction command a skeptic can run.
 
 ## How this was built
 
-I designed it, wrote the specifications and evaluation criteria, directed the implementation, and reviewed and tested the changes. Claude Code generated a substantial part of the code under my direction. Counted on 7 Nov 2026: 248 of 259 commits were made through my second account, [@Berakhah-sys](https://github.com/Berakhah-sys), and 190 carry a `Co-Authored-By: Claude` trailer. Work started on 11 Aug 2026 in a local repository; that history was pushed here when the repository was created on 29 Aug 2026.
+I designed it, wrote the specifications with Claude Code, set the evaluation criteria, directed the implementation, and reviewed and tested the changes. Claude Code generated a substantial part of the code under my direction. Counted on 7 Nov 2026: 248 of 259 commits were made through my second account, [@Berakhah-sys](https://github.com/Berakhah-sys), and 190 carry a `Co-Authored-By: Claude` trailer. Work started on 11 Aug 2026 in a local repository; that history was pushed here when the repository was created on 29 Aug 2026.
 
 ## How a scan runs
 
