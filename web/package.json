@@ -15,7 +15,7 @@
     "@tanstack/react-virtual": "^3.14.10",
     "diff": "^9.0.0",
     "motion": "^13.4.0",
-    "next": "15.5.25",
+    "next": "15.5.28",
     "react": "19.1.0",
     "react-dom": "19.1.0"
   },
@@ -28,9 +28,17 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "15.5.25",
+    "eslint-config-next": "15.5.28",
     "serve": "^14.2.5",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.23"
+    },
+    "serve": {
+      "compression": "1.8.2"
+    }
   }
 }
