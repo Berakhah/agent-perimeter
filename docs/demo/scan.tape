@@ -1,6 +1,7 @@
-# Records docs/demo/scan.gif: a ~15 s terminal capture of a real scan
-# producing SARIF. Not yet recorded. Needs vhs (https://github.com/charmbracelet/vhs)
-# and Docker running, then from the repo root:
+# Records docs/demo/scan.gif: a ~15 s terminal capture of a real scan producing SARIF.
+# .github/workflows/demo-gif.yml records it on a runner and commits the GIF to the branch.
+# To record locally instead you need vhs (https://github.com/charmbracelet/vhs) and Docker,
+# then from the repo root:
 #   docker build -t agent-perimeter-fixture:demo tests/fixtures/servers
 #   vhs docs/demo/scan.tape
 Output docs/demo/scan.gif

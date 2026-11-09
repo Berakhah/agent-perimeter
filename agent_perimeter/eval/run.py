@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from agent_perimeter.eval.corpus import CORPUS_VERSION, CorpusCase, load_corpus
+from agent_perimeter.eval.corpus import CorpusCase, corpus_version, load_corpus
 from agent_perimeter.eval.harness import run_case
 from agent_perimeter.eval.mcptox import (
     MCPTOX_REUSE_NOTE,
@@ -49,7 +49,8 @@ def _observe(cases: list[CorpusCase]) -> dict[str, set[str]]:
 def run_evaluation(*, include_mcptox: bool = True) -> tuple[list[CheckScore], str]:
     cases = load_corpus()
     provenance_lines = [
-        f"Local corpus: `tests/fixtures/corpus.yaml` version {CORPUS_VERSION}, {len(cases)} cases.",
+        f"Local corpus: `tests/fixtures/corpus.yaml` version {corpus_version()}, "
+        f"{len(cases)} cases.",
     ]
 
     mcptox_path = os.environ.get("AP_MCPTOX_PATH")

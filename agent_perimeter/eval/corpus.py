@@ -9,6 +9,7 @@ decide the verdict.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 import yaml
@@ -46,10 +47,18 @@ def _load(path: Path) -> tuple[str, list[CorpusCase]]:
     return str(payload["version"]), cases
 
 
-CORPUS_VERSION, _CASES = _load(CORPUS_YAML)
+@cache
+def _default() -> tuple[str, list[CorpusCase]]:
+    # Read on first use, never at import: the corpus lives in the git checkout's tests/, which
+    # an installed wheel doesn't have, and the HTML report imports this module's types.
+    return _load(CORPUS_YAML)
+
+
+def corpus_version() -> str:
+    return _default()[0]
 
 
 def load_corpus(path: Path | None = None) -> list[CorpusCase]:
     if path is None:
-        return list(_CASES)
+        return list(_default()[1])
     return _load(path)[1]

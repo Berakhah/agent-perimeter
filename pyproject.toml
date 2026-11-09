@@ -1,9 +1,25 @@
 [project]
 name = "agent-perimeter"
-version = "0.1.0"
-description = "Security posture scanner for MCP servers and tool-using agents"
+version = "1.2.0"
+description = "Security posture scanner for MCP servers and tool-using agents, with SARIF output and a drift gate"
+readme = "docs/pypi-readme.md"
 requires-python = ">=3.12"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Bereket Tilahun" }]
+keywords = ["mcp", "model-context-protocol", "security", "sarif", "agents", "scanner"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6.0",
@@ -17,6 +33,13 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Berakhah/agent-perimeter"
+Documentation = "https://github.com/Berakhah/agent-perimeter#readme"
+Changelog = "https://github.com/Berakhah/agent-perimeter/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Berakhah/agent-perimeter/issues"
+Security = "https://github.com/Berakhah/agent-perimeter/security/policy"
 
 [project.scripts]
 agent-perimeter = "agent_perimeter.cli:app"
@@ -33,8 +56,13 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+# What a source build needs, nothing else: no tests/fixtures (deliberately flawed servers
+# and fake credentials), no web/, no census data. Those stay in the git repo.
+include = ["/agent_perimeter", "/README.md", "/docs/pypi-readme.md", "/LICENSE", "/NOTICE", "/pyproject.toml"]
 
 [tool.ruff]
 line-length = 100

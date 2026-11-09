@@ -1,0 +1,55 @@
+name: demo-gif
+
+# Records docs/demo/scan.gif from docs/demo/scan.tape on a runner that has Docker, and commits
+# the GIF back to the branch it ran on. Run it from the Actions tab (any branch but main), or
+# push a change to the tape on a branch. It never runs on main, so it can't push there.
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [main]
+    paths:
+      - docs/demo/scan.tape
+      - .github/workflows/demo-gif.yml
+
+permissions:
+  contents: write  # commit the recorded GIF to this branch
+
+concurrency:
+  group: demo-gif-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+
+      # The same install a user runs, from this checkout.
+      - name: Install the CLI
+        run: |
+          uv tool install .
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      # The fixture server the tape scans: one planted flaw, no secrets, runs in the CLI's
+      # locked-down container on this runner's Docker daemon.
+      - name: Build the fixture image
+        run: docker build -t agent-perimeter-fixture:demo tests/fixtures/servers
+
+      - uses: charmbracelet/vhs-action@f6d7db07a432fcd3b06772628d36a57f96d95dcf # v2.1.1
+        with:
+          path: docs/demo/scan.tape
+
+      - name: Commit the GIF if it changed
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          rm -f demo.sarif
+          git add docs/demo/scan.gif
+          if git diff --cached --quiet; then echo "GIF unchanged"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "docs(demo): record scan.gif from scan.tape"
+          git push origin "HEAD:${BRANCH}"
