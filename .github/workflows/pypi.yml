@@ -1,11 +1,11 @@
 name: pypi
 # Publishes a tagged release to PyPI through trusted publishing (OIDC), so no API token is
 # stored anywhere. One-time setup:
-#   1. On pypi.org, add a pending trusted publisher for project "agent-perimeter":
+#   1. On pypi.org, add a pending trusted publisher for project "agent-perimeter-scan":
 #      owner Berakhah, repo agent-perimeter, workflow pypi.yml, environment pypi.
 #   2. In this repo, create the "pypi" environment with a required reviewer.
 # Each release: [project].version in pyproject.toml must equal the tag without its "v"
-# (1.2.0 for v1.2.0). The guard below refuses to publish when they disagree.
+# (1.2.1 for v1.2.1). The guard below refuses to publish when they disagree.
 on:
   workflow_dispatch:
     inputs:

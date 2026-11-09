@@ -1,6 +1,6 @@
 [project]
-name = "agent-perimeter"
-version = "1.2.0"
+name = "agent-perimeter-scan"
+version = "1.2.1"
 description = "Security posture scanner for MCP servers and tool-using agents, with SARIF output and a drift gate"
 readme = "docs/pypi-readme.md"
 requires-python = ">=3.12"
@@ -58,6 +58,10 @@ dev = [
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# The distribution is agent-perimeter-scan; the import package stays agent_perimeter.
+packages = ["agent_perimeter"]
 
 [tool.hatch.build.targets.sdist]
 # What a source build needs, nothing else: no tests/fixtures (deliberately flawed servers

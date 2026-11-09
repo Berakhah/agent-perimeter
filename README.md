@@ -13,12 +13,12 @@
 Needs Python 3.12+ and [uv](https://docs.astral.sh/uv/). Scan an MCP server **you own or are authorised to test**:
 
 ```bash
-uv tool install agent-perimeter      # or: pipx install agent-perimeter
+uv tool install agent-perimeter-scan      # or: pipx install agent-perimeter-scan
 agent-perimeter scan --target https://your-server.example/mcp --sarif perimeter.sarif --html perimeter.html
 ```
 
 Without PyPI access, install from the release tag instead:
-`uv tool install git+https://github.com/Berakhah/agent-perimeter@v1.2.0`.
+`uv tool install git+https://github.com/Berakhah/agent-perimeter@v1.2.1`.
 
 Passive mode is the default. Active probes refuse to run without a [scope file](#before-you-scan-anything-the-scope-file-requirement). Stdio targets run inside a locked-down container, so they need Docker. In CI, use the [GitHub Action](#use-as-a-github-action), or copy a ready-made workflow from [`examples/`](examples/).
 
