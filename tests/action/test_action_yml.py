@@ -127,9 +127,28 @@ def test_selftest_workflow_exercises_first_run_clean_rerun_and_drift() -> None:
 
 def test_release_workflow_moves_the_v1_tag_on_v1_releases_only() -> None:
     wf = _workflow(RELEASE)
-    assert wf[True] == {"release": {"types": ["published"]}}
+    assert wf[True]["release"] == {"types": ["published"]}
+    assert set(wf[True]) == {"release", "workflow_dispatch"}
     assert wf["permissions"]["contents"] == "write"
     job = wf["jobs"]["move-major-tag"]
+    assert "github.event_name == 'release'" in job["if"]
     assert "startsWith(github.event.release.tag_name, 'v1.')" in job["if"]
     runs = "\n".join(s.get("run", "") for s in job["steps"])
     assert "git tag -f v1" in runs and "git push -f origin v1" in runs
+
+
+def test_a_manual_release_is_gated_before_it_tags_anything() -> None:
+    """The dispatch path creates a tag, so every guard has to run before `gh release create`."""
+    wf = _workflow(RELEASE)
+    assert wf[True]["workflow_dispatch"]["inputs"]["version"]["required"] is True
+    job = wf["jobs"]["cut-release"]
+    assert job["if"] == "github.event_name == 'workflow_dispatch'"
+    runs = [s.get("run", "") for s in job["steps"]]
+    create = next(i for i, r in enumerate(runs) if "gh release create" in r)
+    guards = "\n".join(runs[:create])
+    assert "refs/heads/main" in guards  # main only
+    assert "^1\\.[0-9]+\\.[0-9]+$" in guards  # v1.x.y only
+    assert "pyproject.toml" in guards  # version matches the package
+    assert "--workflow ci.yml" in guards and "--status success" in guards  # ci green on this commit
+    assert '--target "$GITHUB_SHA"' in runs[create]  # tags exactly the checked commit
+    assert any("git tag -f v1" in r for r in runs[create + 1 :])
