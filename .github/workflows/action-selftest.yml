@@ -64,6 +64,10 @@ jobs:
           baseline: selftest/baseline.json
           snapshot: selftest/current.json
           sarif: selftest/drifted.sarif
+          # This fixture is drifted on purpose; its findings are assertions
+          # below, not alerts about this repository. Runs (1) and (2) still
+          # exercise the upload path.
+          upload-sarif: "false"
 
       - name: Assert the drift gate tripped and the SARIF names the drift check
         run: |

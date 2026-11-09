@@ -1,9 +1,50 @@
 # Agent Perimeter
 
-Security posture scanner for MCP servers and tool-using agents.
+**Scan an MCP server or tool-using agent and get findings you can reproduce: each one carries a CWE, a published taxonomy entry, and the exact command that shows it.** Output is SARIF for GitHub code scanning, an HTML report, and a drift gate that fails CI when a tool's description changes after you approved it.
 
-> *"You wired an agent into your internal systems. I will show you, with a
-> reproduction for each finding, exactly what an attacker can make it do."*
+![An Agent Perimeter HTML report: one Medium finding (revision.cache_scope, CWE-524) with its evidence and reproduction command, the capability graph, and the scanner's own measured precision and recall](docs/evidence/print-report.png)
+
+[![ci](https://github.com/Berakhah/agent-perimeter/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Berakhah/agent-perimeter/actions/workflows/ci.yml) [![action-selftest](https://github.com/Berakhah/agent-perimeter/actions/workflows/action-selftest.yml/badge.svg?branch=main)](https://github.com/Berakhah/agent-perimeter/actions/workflows/action-selftest.yml) [![release](https://img.shields.io/github/v/release/Berakhah/agent-perimeter)](https://github.com/Berakhah/agent-perimeter/releases) [![license](https://img.shields.io/github/license/Berakhah/agent-perimeter)](LICENSE)
+
+**Proof point:** on 14 Sep 2026 it ran a passive census of the whole official MCP Registry (31,953 entries, 0 pagination failures). In a seeded random sample of packaged servers, 0 of 302 classifiable artifacts showed evidence of supporting MCP revision 2026-07-28 (95% Wilson CI 0.0–1.3%). `analysis/census_analysis.py` reproduces every figure from `records.csv`. [Report](docs/census/2026-09-14/census.html) · [method and caveats](docs/census/CHANGELOG.md).
+
+## Quickstart in 60 seconds
+
+Needs Python 3.12+ and [uv](https://docs.astral.sh/uv/). Scan an MCP server **you own or are authorised to test**:
+
+```bash
+uv tool install git+https://github.com/Berakhah/agent-perimeter@v1.1.0
+agent-perimeter scan --target https://your-server.example/mcp --sarif perimeter.sarif --html perimeter.html
+```
+
+Passive mode is the default. Active probes refuse to run without a [scope file](#before-you-scan-anything-the-scope-file-requirement). Stdio targets run inside a locked-down container, so they need Docker. In CI, use the [GitHub Action](#use-as-a-github-action).
+
+## How a scan runs
+
+```mermaid
+flowchart LR
+    A[Scope file] --> B{Authorised?}
+    B -- no --> X[Refuse, exit 2]
+    B -- yes --> C[Discover the MCP server] --> D[Capability graph] --> E[Checks] --> F[Findings with reproductions] --> G[SARIF, HTML, CI drift gate]
+```
+
+
+## Status
+
+What is finished: the CLI, the GitHub Action (`v1`, `v1.1.0`), SARIF and HTML output, drift detection, the census pipeline, and the API and web UI behind Docker Compose.
+
+What isn't:
+
+- **Not on PyPI yet.** Install from the git tag as shown above. A trusted-publishing workflow is prepared ([`.github/workflows/pypi.yml`](.github/workflows/pypi.yml)) but has never run.
+- **Precision and recall are measured on the project's own 26-case fixture corpus** ([table](docs/methodology.md#measured-precision-and-recall)), where every check scores 1.00. That shows the checks do what they claim on known cases. It is not a field false-positive rate. The external MCPTox benchmark has not been run.
+- **The census is passive and static.** 56% of registry entries are remote-only and have no artifact to examine, and the live-discover stratum was dropped on purpose because it could not satisfy the scope-file rule ([why](docs/census/CHANGELOG.md)).
+- No bundled agent and no model calls. Injection findings prove the path exists; whether *your* agent follows it is measured only if you supply a transcript ([docs/byo-agent.md](docs/byo-agent.md)).
+
+## How this was built
+
+I designed it, wrote the specifications with Claude Code, set the evaluation criteria, directed the implementation, and reviewed and tested the changes. Claude Code generated a substantial part of the code under my direction. Counted on 7 Nov 2026: 248 of 259 commits were made through my second account, [@Berakhah-sys](https://github.com/Berakhah-sys), and 190 carry a `Co-Authored-By: Claude` trailer. Work started on 11 Aug 2026 in a local repository; that history was pushed here when the repository was created on 29 Aug 2026.
+
+## Why it is different
 
 Two things set Agent Perimeter apart from the static scanners and runtime
 proxies that already exist for MCP (inventoried in
@@ -30,20 +71,6 @@ Underneath both: explicit MCP protocol-revision negotiation with a
 per-revision check matrix, a CWE and a published taxonomy entry (OWASP LLM
 Top 10, OWASP MCP Top 10, CoSAI, NSA CSI, MITRE ATLAS) on every finding, and
 a reproduction command a skeptic can run.
-
-## How this was built
-
-I designed it, wrote the specifications with Claude Code, set the evaluation criteria, directed the implementation, and reviewed and tested the changes. Claude Code generated a substantial part of the code under my direction. Counted on 7 Nov 2026: 248 of 259 commits were made through my second account, [@Berakhah-sys](https://github.com/Berakhah-sys), and 190 carry a `Co-Authored-By: Claude` trailer. Work started on 11 Aug 2026 in a local repository; that history was pushed here when the repository was created on 29 Aug 2026.
-
-## How a scan runs
-
-```mermaid
-flowchart LR
-    A[Scope file] --> B{Authorised?}
-    B -- no --> X[Refuse, exit 2]
-    B -- yes --> C[Discover the MCP server] --> D[Capability graph] --> E[Checks] --> F[Findings with reproductions] --> G[SARIF, HTML, CI drift gate]
-```
-
 
 ## Before you scan anything: the scope-file requirement
 
@@ -76,7 +103,7 @@ Run the same request over HTTP with no scope file and the API refuses it
 with `422 authorization_required`, naming the missing field — never a silent
 skip, never a `500`.
 
-## Quickstart
+## Run the full stack (API + web UI)
 
 ```bash
 git clone https://github.com/Berakhah/agent-perimeter.git && cd agent-perimeter
