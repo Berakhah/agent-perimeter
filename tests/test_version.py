@@ -17,7 +17,7 @@ PACKAGE = Path(agent_perimeter.__file__).parent
 
 
 def test_dunder_version_is_the_installed_distribution_version() -> None:
-    assert agent_perimeter.__version__ == version("agent-perimeter")
+    assert agent_perimeter.__version__ == version("agent-perimeter-scan")
 
 
 def test_no_call_site_hardcodes_a_tool_version() -> None:

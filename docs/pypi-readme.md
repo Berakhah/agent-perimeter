@@ -13,7 +13,7 @@ it.
 Needs Python 3.12+. Scan a server **you own or are authorised to test**:
 
 ```bash
-uv tool install agent-perimeter      # or: pipx install agent-perimeter
+uv tool install agent-perimeter-scan      # or: pipx install agent-perimeter-scan
 agent-perimeter scan --target https://your-server.example/mcp --sarif perimeter.sarif --html perimeter.html
 ```
 

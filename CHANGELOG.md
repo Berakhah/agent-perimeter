@@ -5,10 +5,22 @@ package and the GitHub Action share one version; `@v1` follows the newest `v1.x.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-09
+
+First release on PyPI, under the distribution name `agent-perimeter-scan`:
+`uv tool install agent-perimeter-scan`. PyPI refused `agent-perimeter` as too similar to an
+existing project. The command, the import package (`agent_perimeter`) and the Action are
+unchanged; `uses: Berakhah/agent-perimeter@v1` picks it up.
+
+### Changed
+
+- The Python distribution is named `agent-perimeter-scan`. `agent_perimeter.__version__` reads
+  the installed version under that name.
+
 ## [1.2.0] - 2026-11-09
 
-First release on PyPI: `uv tool install agent-perimeter`. No change to `action.yml`'s inputs or
-outputs; `uses: Berakhah/agent-perimeter@v1` picks it up.
+Not published to PyPI; see 1.2.1. No change to `action.yml`'s inputs or outputs;
+`uses: Berakhah/agent-perimeter@v1` picks it up.
 
 ### Added
 
