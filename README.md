@@ -2,7 +2,7 @@
 
 **Scan an MCP server or tool-using agent and get findings you can reproduce: each one carries a CWE, a published taxonomy entry, and the exact command that shows it.** Output is SARIF for GitHub code scanning, an HTML report, and a drift gate that fails CI when a tool's description changes after you approved it.
 
-![An Agent Perimeter HTML report: one Medium finding (revision.cache_scope, CWE-524) with its evidence and reproduction command, the capability graph, and the scanner's own measured precision and recall](docs/evidence/print-report.png)
+![A terminal recording: agent-perimeter scans a fixture server with one planted flaw, reports one critical finding (descriptions.imperative_injection), writes SARIF, and jq prints the SARIF result](docs/demo/scan.gif)
 
 [![ci](https://github.com/Berakhah/agent-perimeter/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Berakhah/agent-perimeter/actions/workflows/ci.yml) [![action-selftest](https://github.com/Berakhah/agent-perimeter/actions/workflows/action-selftest.yml/badge.svg?branch=main)](https://github.com/Berakhah/agent-perimeter/actions/workflows/action-selftest.yml) [![release](https://img.shields.io/github/v/release/Berakhah/agent-perimeter)](https://github.com/Berakhah/agent-perimeter/releases) [![license](https://img.shields.io/github/license/Berakhah/agent-perimeter)](LICENSE)
 
@@ -21,6 +21,10 @@ Without PyPI access, install from the release tag instead:
 `uv tool install git+https://github.com/Berakhah/agent-perimeter@v1.2.0`.
 
 Passive mode is the default. Active probes refuse to run without a [scope file](#before-you-scan-anything-the-scope-file-requirement). Stdio targets run inside a locked-down container, so they need Docker. In CI, use the [GitHub Action](#use-as-a-github-action), or copy a ready-made workflow from [`examples/`](examples/).
+
+The HTML report (`--html`) puts each finding's evidence and reproduction command next to the capability graph and the scanner's own measured precision and recall:
+
+![An Agent Perimeter HTML report: one Medium finding (revision.cache_scope, CWE-524) with its evidence and reproduction command, the capability graph, and the scanner's own measured precision and recall](docs/evidence/print-report.png)
 
 ## How a scan runs
 
