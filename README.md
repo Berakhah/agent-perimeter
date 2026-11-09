@@ -13,11 +13,14 @@
 Needs Python 3.12+ and [uv](https://docs.astral.sh/uv/). Scan an MCP server **you own or are authorised to test**:
 
 ```bash
-uv tool install git+https://github.com/Berakhah/agent-perimeter@v1.1.0
+uv tool install agent-perimeter      # or: pipx install agent-perimeter
 agent-perimeter scan --target https://your-server.example/mcp --sarif perimeter.sarif --html perimeter.html
 ```
 
-Passive mode is the default. Active probes refuse to run without a [scope file](#before-you-scan-anything-the-scope-file-requirement). Stdio targets run inside a locked-down container, so they need Docker. In CI, use the [GitHub Action](#use-as-a-github-action).
+Without PyPI access, install from the release tag instead:
+`uv tool install git+https://github.com/Berakhah/agent-perimeter@v1.2.0`.
+
+Passive mode is the default. Active probes refuse to run without a [scope file](#before-you-scan-anything-the-scope-file-requirement). Stdio targets run inside a locked-down container, so they need Docker. In CI, use the [GitHub Action](#use-as-a-github-action), or copy a ready-made workflow from [`examples/`](examples/).
 
 ## How a scan runs
 
@@ -31,11 +34,10 @@ flowchart LR
 
 ## Status
 
-What is finished: the CLI, the GitHub Action (`v1`, `v1.1.0`), SARIF and HTML output, drift detection, the census pipeline, and the API and web UI behind Docker Compose.
+What is finished: the CLI (on PyPI from 1.2.0), the GitHub Action (`v1`, tracking the newest `v1.x.y`), SARIF and HTML output, drift detection, the census pipeline, and the API and web UI behind Docker Compose.
 
 What isn't:
 
-- **Not on PyPI yet.** Install from the git tag as shown above. A trusted-publishing workflow is prepared ([`.github/workflows/pypi.yml`](.github/workflows/pypi.yml)) but has never run.
 - **Precision and recall are measured on the project's own 26-case fixture corpus** ([table](docs/methodology.md#measured-precision-and-recall)), where every check scores 1.00. That shows the checks do what they claim on known cases. It is not a field false-positive rate. The external MCPTox benchmark has not been run.
 - **The census is passive and static.** 56% of registry entries are remote-only and have no artifact to examine, and the live-discover stratum was dropped on purpose because it could not satisfy the scope-file rule ([why](docs/census/CHANGELOG.md)).
 - No bundled agent and no model calls. Injection findings prove the path exists; whether *your* agent follows it is measured only if you supply a transcript ([docs/byo-agent.md](docs/byo-agent.md)).
@@ -216,7 +218,8 @@ Soft gate — annotate instead of fail:
 ```
 
 The action installs the scanner from its own checkout (`@v1` tracks the
-latest `v1.x.y` release); nothing is published to PyPI or a registry.
+latest `v1.x.y` release), so a pinned action ref and the code it runs can't
+disagree. [`examples/`](examples/) has a complete workflow to copy.
 stdio targets run in the same locked-down container the CLI uses, on the
 runner's Docker daemon — use an `ubuntu-*` runner.
 
