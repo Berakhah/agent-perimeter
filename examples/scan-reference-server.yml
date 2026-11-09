@@ -1,0 +1,61 @@
+# Copy to .github/workflows/ in your own repo.
+#
+# Scans the MCP project's public reference server (@modelcontextprotocol/server-everything)
+# on every push and weekly, and uploads the findings to GitHub code scanning
+# (Security -> Code scanning). The server runs inside your own runner, in the scanner's
+# locked-down container: nothing is sent to a remote MCP server.
+#
+# To scan your own stdio server instead, replace the image build below with yours.
+# For a server you host, delete the image steps and set `target:` to its URL (passive mode,
+# the default, only lists tools; active probes need a scope file).
+name: mcp-scan
+on:
+  push: { branches: [main] }
+  pull_request:
+  schedule: [{ cron: "23 5 * * 1" }]
+
+permissions:
+  contents: read
+  security-events: write  # SARIF upload; set upload-sarif: "false" to drop this
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # The scanner runs stdio servers with no network, so the server is installed into an
+      # image first. Pinned to an exact version: a new release of the server is a change you
+      # should see as drift, not pick up silently.
+      - name: Build the server image
+        run: |
+          docker build -t mcp-reference-server:2.1.0 - <<'DOCKERFILE'
+          FROM node:22-slim
+          RUN npm install -g @modelcontextprotocol/server-everything@2.1.0
+          USER node
+          ENTRYPOINT ["mcp-server-everything", "stdio"]
+          DOCKERFILE
+
+      - id: scan
+        uses: Berakhah/agent-perimeter@v1
+        with:
+          image: mcp-reference-server:2.1.0
+          html: agent-perimeter.html
+          # First run writes .agent-perimeter/baseline.json: commit it. After that, the job
+          # fails (exit 3) when any tool's description, schema or annotations change.
+          fail-on-drift: "true"
+
+      - name: Keep the HTML report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-perimeter-report
+          path: agent-perimeter.html
+          if-no-files-found: ignore
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "Findings: ${{ steps.scan.outputs.finding-count }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Drift: ${{ steps.scan.outputs.drift }}" >> "$GITHUB_STEP_SUMMARY"

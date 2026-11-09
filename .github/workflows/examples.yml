@@ -1,0 +1,58 @@
+name: examples
+
+# Runs the steps of examples/scan-reference-server.yml against the action in this commit
+# (`uses: ./` instead of `@v1`), so a broken example fails here before anyone copies it.
+# Keep the steps in sync with that file; only the `uses:` line and the SARIF upload differ.
+on:
+  pull_request:
+    paths: ["examples/**", "action.yml", "agent_perimeter/**", ".github/workflows/examples.yml"]
+  push:
+    branches: [main]
+    paths: ["examples/**", "action.yml", ".github/workflows/examples.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reference-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Build the server image
+        run: |
+          docker build -t mcp-reference-server:2.1.0 - <<'DOCKERFILE'
+          FROM node:22-slim
+          RUN npm install -g @modelcontextprotocol/server-everything@2.1.0
+          USER node
+          ENTRYPOINT ["mcp-server-everything", "stdio"]
+          DOCKERFILE
+
+      # No upload here: this repo's code scanning is for this repo's code, not for findings
+      # about a third-party fixture (that is why the fixture uploads were removed in #7).
+      - id: scan
+        uses: ./
+        with:
+          image: mcp-reference-server:2.1.0
+          html: agent-perimeter.html
+          sarif: reference-server.sarif
+          baseline: ${{ runner.temp }}/baseline.json
+          upload-sarif: "false"
+
+      - name: The example produced a report and a baseline
+        env:
+          COUNT: ${{ steps.scan.outputs.finding-count }}
+          CREATED: ${{ steps.scan.outputs.baseline-created }}
+        run: |
+          test -s reference-server.sarif
+          test -s agent-perimeter.html
+          test "$CREATED" = "true"
+          jq -e '.version == "2.1.0" and (.runs | length) == 1' reference-server.sarif
+          {
+            echo "### Reference server (server-everything 2.1.0)"
+            echo "Findings: $COUNT"
+            echo
+            jq -r '.runs[0].results[] | "- `\(.ruleId)` (\(.level)): \(.message.text)"' reference-server.sarif
+          } >> "$GITHUB_STEP_SUMMARY"
