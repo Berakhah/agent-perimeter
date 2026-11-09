@@ -23,6 +23,7 @@ from typing import Annotated
 import typer
 from pydantic import ValidationError
 
+from agent_perimeter import __version__
 from agent_perimeter._contracts import Severity
 from agent_perimeter.checks.registry import summarise_skips
 from agent_perimeter.drift.render import for_terminal
@@ -325,7 +326,7 @@ def scan(
                 to_sarif(
                     findings,
                     target=target,
-                    tool_version="0.1.0",
+                    tool_version=__version__,
                     fingerprint=result,
                     workspace=workspace,
                     notes=outcome.notes,

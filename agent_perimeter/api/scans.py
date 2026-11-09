@@ -30,6 +30,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy import select
 
+from agent_perimeter import __version__
 from agent_perimeter.api.drift import BaselineLookup, load_baseline
 from agent_perimeter.api.schemas import ScanRequest, ScopeFileInput
 from agent_perimeter.api.state import AppState
@@ -223,7 +224,7 @@ def _persist(
                 feature_set_json=sorted(f.value for f in outcome.fingerprint.features),
                 finished_at=datetime.now(UTC),
                 mode=scan_request.mode.value,
-                tool_version="0.1.0",
+                tool_version=__version__,
                 listing_complete=outcome.listing_complete,
             )
             session.add(scan_row)
@@ -404,7 +405,7 @@ def get_sarif(scan_id: str, request: Request) -> dict[str, object]:
     return to_sarif(
         outcome.findings,
         target=scan_request.target,
-        tool_version="0.1.0",
+        tool_version=__version__,
         fingerprint=outcome.fingerprint,
         workspace=workspace,
         notes=outcome.notes,
