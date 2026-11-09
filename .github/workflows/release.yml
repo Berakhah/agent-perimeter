@@ -1,15 +1,80 @@
 name: release
+
+# Two ways in:
+#   - publishing a release in the UI (tick "Publish to Marketplace" there) moves v1 to it;
+#   - a manual run from main with a version input checks that ci passed on main's head and that
+#     pyproject.toml says that version, creates the release with the CHANGELOG section as notes,
+#     tagging that exact commit, then moves v1. A release created this way can still be listed on
+#     the Marketplace afterwards by editing it in the UI.
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, without the v (for example 1.2.0)
+        required: true
 
 permissions:
   contents: write
+  actions: read  # look up the ci result for the commit being released
 
 jobs:
+  cut-release:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with: { fetch-depth: 0 }
+
+      - name: Release main only, a well-formed v1.x.y, matching pyproject.toml
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main" || { echo "::error::Run this from main, not $GITHUB_REF."; exit 1; }
+          [[ "$VERSION" =~ ^1\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must look like 1.2.3, got $VERSION."; exit 1; }
+          declared=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          test "$declared" = "$VERSION" || { echo "::error::pyproject.toml says $declared, not $VERSION."; exit 1; }
+
+      - name: ci passed on this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          n="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+                --commit "$GITHUB_SHA" --status success --json databaseId --jq 'length')"
+          if [ "${n:-0}" -lt 1 ]; then
+            echo "::error::No successful ci run for $GITHUB_SHA. Merge through a green PR first."
+            exit 1
+          fi
+
+      - name: Notes from CHANGELOG.md
+        run: |
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          grep -q '[^[:space:]]' notes.md || { echo "::error::CHANGELOG.md has no '## [$VERSION]' section."; exit 1; }
+
+      - name: Create the release at this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --title "v$VERSION" --notes-file notes.md --target "$GITHUB_SHA"
+
+      # A release created with GITHUB_TOKEN does not trigger the `release: published` job below,
+      # so this run moves v1 itself.
+      - name: Point v1 at this release
+        run: |
+          git fetch --tags --force
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f v1 "v$VERSION"
+          git push -f origin v1
+
   move-major-tag:
     # `uses: Berakhah/agent-perimeter@v1` must follow the newest v1.x.y.
-    if: startsWith(github.event.release.tag_name, 'v1.')
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v1.')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
