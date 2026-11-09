@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   test:
@@ -24,11 +23,9 @@ jobs:
         run: uv run pytest tests/docs/ --no-cov
       - name: Validate SARIF golden against 2.1.0 schema
         run: uv run pytest tests/report/test_sarif.py -v --no-cov
-      - name: Upload SARIF sample to code scanning
-        if: github.event_name == 'push'
-        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
-        with:
-          sarif_file: tests/report/golden/basic_scan.sarif.json
+      # The golden SARIF describes a deliberately flawed fixture. Uploading it
+      # put fixture findings into this repo's own Security tab as open alerts,
+      # so it is schema-checked above and no longer uploaded.
       - name: Regenerate the precision/recall table
         run: uv run python -m agent_perimeter.eval.run --write docs/methodology.md
       - name: Fail if the published table is stale
