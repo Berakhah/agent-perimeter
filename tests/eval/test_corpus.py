@@ -1,12 +1,12 @@
 from collections import Counter
 
-from agent_perimeter.eval.corpus import CORPUS_VERSION, load_corpus
+from agent_perimeter.eval.corpus import corpus_version, load_corpus
 
 
 def test_corpus_loads_and_is_versioned() -> None:
     cases = load_corpus()
     assert cases
-    assert CORPUS_VERSION
+    assert corpus_version()
 
 
 def test_case_ids_are_unique() -> None:

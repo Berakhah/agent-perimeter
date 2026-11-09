@@ -42,6 +42,10 @@ outputs; `uses: Berakhah/agent-perimeter@v1` picks it up.
 - Reports now carry the installed package version. SARIF `tool.driver.version` and the scan
   record's `tool_version` were hardcoded to `0.1.0`; they read `agent_perimeter.__version__`,
   which comes from the package metadata, and a test fails if a literal comes back.
+- `--html` crashed in any installed copy (the Action, and a PyPI install): importing the report
+  renderer read `tests/fixtures/corpus.yaml`, which only exists in a git checkout. The corpus is
+  now read on first use, and a test imports the CLI and renders a report from a copy of the
+  package with no `tests/` beside it. Found by the new `examples` workflow.
 - The eval never scores a fixture whose listing stopped early, and the degraded-mode floor test
   can now fail.
 
