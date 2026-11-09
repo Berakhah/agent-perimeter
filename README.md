@@ -38,7 +38,7 @@ flowchart LR
 
 ## Status
 
-What is finished: the CLI (on PyPI from 1.2.0), the GitHub Action (`v1`, tracking the newest `v1.x.y`), SARIF and HTML output, drift detection, the census pipeline, and the API and web UI behind Docker Compose.
+What is finished: the CLI (on PyPI as `agent-perimeter-scan` from 1.2.1), the GitHub Action (`v1`, tracking the newest `v1.x.y`), SARIF and HTML output, drift detection, the census pipeline, and the API and web UI behind Docker Compose.
 
 What isn't:
 
